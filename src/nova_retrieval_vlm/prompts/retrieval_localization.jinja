@@ -23,13 +23,13 @@ Image coordinate system:
 • All x coordinates must be in [0, {{ width | int - 1 }}]; y in [0, {{ height | int - 1 }}].
 
 Response rules (STRICT):
-1. Return **valid JSON only** – no markdown, no extra keys, no commentary.
+1. Return **valid JSON only** - no markdown, no extra keys, no commentary.
 2. Up to **3** bounding boxes. Omit detections with confidence < 0.05.
 3. Use exactly the label string "anomaly" for every box.
 4. If no abnormality is present, return empty lists for boxes, labels, scores.
 5. Boxes MUST follow the schema above (x1< x2, y1< y2). Width/height format is INVALID.
 
-Example (illustrative – adapt):
+Example (illustrative - adapt):
 {
   "image_id": {{ image_id }},
   "boxes": [[50, 30, 120, 180]],

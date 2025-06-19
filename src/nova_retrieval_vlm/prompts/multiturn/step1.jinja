@@ -1,11 +1,11 @@
-{# STEP 1 – Initial observations and differential diagnosis #}
+{# STEP 1 - Initial observations and differential diagnosis #}
 You are an expert neuroradiology assistant.
 
 TASK: Carefully examine the MRI image provided by the user and complete *STEP 1*.
 
 Image dimensions: {{ width }}×{{ height }} pixels (origin at top-left (0, 0); bottom-right at ({{ width | int - 1 }}, {{ height | int - 1 }})).
 
-# Pay special attention to *contralateral symmetry* – for paired structures (cortex, basal ganglia, white-matter tracts, vessels) the left and right sides should appear mirror-symmetric; any asymmetry (signal, size, or shape) is a potential abnormality that must be reported.
+# Pay special attention to *contralateral symmetry* - for paired structures (cortex, basal ganglia, white-matter tracts, vessels) the left and right sides should appear mirror-symmetric; any asymmetry (signal, size, or shape) is a potential abnormality that must be reported.
 
 Return a **JSON object only** (no Markdown) with the following keys:
 {
