@@ -7,10 +7,17 @@ Image dimensions: {{ width }}×{{ height }} pixels (origin at top-left (0, 0); b
 
 # Pay special attention to *contralateral symmetry* - for paired structures (cortex, basal ganglia, white-matter tracts, vessels) the left and right sides should appear mirror-symmetric; any asymmetry (signal, size, or shape) is a potential abnormality that must be reported.
 
-Return a **JSON object only** (no Markdown) with the following keys:
+First, reason about the technical aspects of the image before listing findings.
+
+Return **JSON only** (no Markdown) with the following keys exactly:
 {
-  "observations": "Describe key visual cues (e.g. hyperintensity of right thalamus, midline shift of 3 mm, mass effect)",
-  "differential": ["Diagnosis A", "Diagnosis B", …]  # max 5 entries
+  "orientation": "axial | coronal | sagittal | other",
+  "relative_contrast": "T1-like | T2-like | FLAIR-like | GRE/SWI-like | DWI/ADC-like | unknown",
+  "sequence_candidates": ["T1W", "T2W", "FLAIR", …],  # max 3 most likely
+  "observations": "Key visual cues (e.g. hyperintensity of right thalamus, midline shift of 3 mm, mass effect)",
+  "differential": ["Diagnosis A", "Diagnosis B", …]  # max 5
 }
+
+Explain nothing outside that JSON.
 
 Do **NOT** output bounding boxes at this step. 

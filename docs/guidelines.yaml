@@ -74,8 +74,8 @@ settings:
     - "traumatic brain injury"
     - tbi
     - concussion
-  exclude_keywords:
-    - chest
+  # exclude_keywords:
+  #   - chest
     # - lung
     # - thoracic
     # - abdomen

@@ -111,6 +111,8 @@ def ingest_nice(
         )
     ]
     exclude_keywords = [kw.lower() for kw in settings.get('exclude_keywords', [])]
+    # Pre-compile word-boundary regexes for faster exclusion checks later.
+    exclude_patterns = [re.compile(rf"\b{re.escape(kw)}\b", re.IGNORECASE) for kw in exclude_keywords]
 
     crawl_depth = int(settings.get('crawl_depth', 2))
     request_delay = float(settings.get('request_delay', 1.0))  # seconds between requests per domain
@@ -209,6 +211,9 @@ def ingest_nice(
                 try:
                     raw_html = out_file.read_text(errors='ignore')
                     soup = BeautifulSoup(raw_html, 'html.parser')
+                    # Remove common navigation / peripheral sections
+                    for tag in soup(['nav', 'header', 'footer', 'aside']):
+                        tag.decompose()
                     text = soup.get_text(separator=' ')
                     ext = '.html'
                 except Exception:
@@ -218,6 +223,9 @@ def ingest_nice(
             try:
                 raw_html = out_file.read_text(errors='ignore')
                 soup = BeautifulSoup(raw_html, 'html.parser')
+                # Remove common navigation / peripheral sections
+                for tag in soup(['nav', 'header', 'footer', 'aside']):
+                    tag.decompose()
                 text = soup.get_text(separator=' ')
             except Exception as e:
                 print(f"Warning: HTML parsing failed for {url}: {e}")
@@ -247,7 +255,7 @@ def ingest_nice(
             if verbose:
                 print("  ✗ skipped (no include keywords)")
             continue
-        if exclude_keywords and any(ex_kw in lowered for ex_kw in exclude_keywords):
+        if exclude_patterns and any(p.search(lowered) for p in exclude_patterns):
             if verbose:
                 print("  ✗ skipped (exclude keyword matched)")
             continue
