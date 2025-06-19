@@ -24,4 +24,87 @@ sources:
 
 settings:
   chunk_size: 1000
-  chunk_overlap: 200 
+  chunk_overlap: 200
+  include_keywords:
+    - mri
+    - magnetic resonance
+    - brain
+    - cerebral
+    - neuro
+    - neuroradiology
+    - intracranial
+    - head
+    # Common brain pathologies / anomalies
+    - tumor
+    - tumour
+    - neoplasm
+    - mass
+    - lesion
+    - lesions
+    - glioma
+    - glioblastoma
+    - meningioma
+    - metastasis
+    - metastases
+    - stroke
+    - ischemia
+    - ischaemia
+    - hemorrhage
+    - haemorrhage
+    - aneurysm
+    - aneurysms
+    - avm
+    - arteriovenous malformation
+    - infarct
+    - infarction
+    - tia
+    - "transient ischemic"
+    - demyelination
+    - demyelinating
+    - "multiple sclerosis"
+    - ms
+    - leukodystrophy
+    - dementia
+    - alzheimer
+    - parkinson
+    - huntington
+    - epilepsy
+    - seizure
+    - seizures
+    - encephalitis
+    - meningitis
+    - abscess
+    - infection
+    - encephalopathy
+    - hydrocephalus
+    - ventriculomegaly
+    - atrophy
+    - "white matter"
+    - "traumatic brain injury"
+    - tbi
+    - concussion
+  exclude_keywords:
+    - chest
+    - lung
+    - thoracic
+    - abdomen
+    - abdominal
+    - pelvis
+    - pelvic
+    - prostate
+    - cardiac
+    - heart
+    - liver
+    - kidney
+    - renal
+    - pancreas
+    - breast
+    - musculoskeletal
+    - shoulder
+    - knee
+    - hip
+    - ankle
+    - foot
+    - wrist
+    - hand
+    - elbow 
