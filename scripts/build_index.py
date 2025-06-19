@@ -25,12 +25,16 @@ def main():
         "--output-dir", type=str, required=True,
         help="Directory to write BM25 and FAISS indexes"
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Print verbose crawl progress"
+    )
     args = parser.parse_args()
 
     build_indexes(
         config_yaml=args.config,
         raw_dir=args.raw_dir,
         output_dir=Path(args.output_dir),
+        verbose=args.verbose,
     )
     print(f"Built indexes under {args.output_dir}")
 

@@ -35,7 +35,7 @@ class BM25Retriever:
         docs = [json.loads(line) for line in open(index_path / 'bm25_docs.jsonl')]
 
         if InMemoryDocumentStore is None or HS_BM25 is None:
-            raise ImportError("haystack not available – BM25Retriever cannot be instantiated.")
+            raise ImportError("haystack not available - BM25Retriever cannot be instantiated.")
 
         store = InMemoryDocumentStore()
         hay_docs = [Document(content=d['text'], meta=d) for d in docs]

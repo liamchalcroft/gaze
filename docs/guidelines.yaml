@@ -7,24 +7,15 @@ mriquestions_urls:
 aan_urls:
   - https://www.aan.com/practice/guidelines
 acr_urls:
-  - https://www.acr.org/Clinical-Resources/Clinical-Tools-and-Reference
-
-sources:
-  - name: "American College of Radiology Brain MRI Guidelines"
-    url: "https://www.acr.org/-/media/ACR/Files/Practice-Parameters/MR-Brain.pdf"
-    type: "pdf"
-
-  - name: "European Society of Neuroradiology Guidelines"
-    url: "https://www.esnr.org/en/guidelines-and-statements/"
-    type: "html"
-
-  - name: "Royal College of Radiologists Neuroimaging Guidelines"
-    url: "https://www.rcr.ac.uk/publication/ischaemic-stroke-and-transient-ischaemic-attack-diagnosis-investigation-and-immediate"
-    type: "html"
+  - https://www.acr.org/Clinical-Resources/Practice-Parameters-and-Technical-Standards
+rcr_urls:
+  - https://www.rcr.ac.uk/our-services/all-our-publications/clinical-radiology-publications/
 
 settings:
   chunk_size: 1000
   chunk_overlap: 200
+  crawl_depth: 2
+  request_delay: 2
   include_keywords:
     - mri
     - magnetic resonance
@@ -85,26 +76,26 @@ settings:
     - concussion
   exclude_keywords:
     - chest
-    - lung
-    - thoracic
-    - abdomen
-    - abdominal
-    - pelvis
-    - pelvic
-    - prostate
-    - cardiac
-    - heart
-    - liver
-    - kidney
-    - renal
-    - pancreas
-    - breast
-    - musculoskeletal
-    - shoulder
-    - knee
-    - hip
-    - ankle
-    - foot
-    - wrist
-    - hand
-    - elbow 
+    # - lung
+    # - thoracic
+    # - abdomen
+    # - abdominal
+    # - pelvis
+    # - pelvic
+    # - prostate
+    # - cardiac
+    # - heart
+    # - liver
+    # - kidney
+    # - renal
+    # - pancreas
+    # - breast
+    # - musculoskeletal
+    # - shoulder
+    # - knee
+    # - hip
+    # - ankle
+    # - foot
+    # - wrist
+    # - hand
+    # - elbow 

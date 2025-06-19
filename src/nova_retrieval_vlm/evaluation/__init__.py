@@ -50,7 +50,7 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
     
     if task == 'localization':
         # Import will raise ImportError with a normal traceback if torch or
-        # torchvision are missing – we let it propagate so the user sees the
+        # torchvision are missing - we let it propagate so the user sees the
         # concrete root-cause instead of a custom wrapper.
         from nova_retrieval_vlm.evaluation.detection import evaluate_detection  # noqa: E501
 
@@ -133,5 +133,5 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
     return result_metrics
 
 
-# No fallback stubs – missing optional dependencies will raise the original
+# No fallback stubs - missing optional dependencies will raise the original
 # ImportError so that issues surface immediately during testing/runs. 

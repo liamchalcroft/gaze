@@ -4,7 +4,7 @@ source "$(dirname "$0")/_common_env.sh"
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# NOVA VLM – FULL BENCHMARK SUITE
+# NOVA VLM - FULL BENCHMARK SUITE
 # -----------------------------------------------------------------------------
 # This script evaluates **both** approaches (baseline, multiturn) across the
 # three NOVA tasks (localization, caption, diagnosis) on a configurable list of

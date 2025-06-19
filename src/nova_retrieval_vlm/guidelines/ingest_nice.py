@@ -1,28 +1,41 @@
 from __future__ import annotations
 import os
+import hashlib
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Set
 import yaml
 import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import xml.etree.ElementTree as ET
+import time
+import re
 
 def ingest_nice(
     config_yaml: str,
     raw_dir: str,
+    *,
+    verbose: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    Ingest NICE guideline documents from URLs specified in a YAML file.
+    Ingest radiology guideline documents whose seed URLs are defined in
+    `docs/guidelines.yaml` (or another compatible YAML file).
+
+    The YAML can hold multiple top-level lists e.g. `nice_urls`, `acr_urls`,
+    `rcr_urls`, etc.  This function will gather all those seed URLs, crawl
+    each site (via its sitemap where available), download any HTML/PDF found,
+    filter for brain-related content, chunk the text and return it ready for
+    indexing.
 
     Args:
-        config_yaml: Path to YAML file with key 'nice_urls' listing URLs.
-        raw_dir: Directory to save raw downloaded files.
+        config_yaml: Path to the guidelines YAML configuration.
+        raw_dir: Directory where raw downloaded files will be cached.
+        verbose: Whether to print verbose output during the crawling process.
 
     Returns:
-        List of dicts with keys: doc_id, chunk_id, text.
+        A list of dicts with keys: `doc_id`, `chunk_id`, and `text`.
     """
     with open(config_yaml, 'r') as f:
         cfg = yaml.safe_load(f)
@@ -30,12 +43,16 @@ def ingest_nice(
     # 1. Collect seed URLs from known top-level keys and the optional
     #    structured  `sources:` list.
     # ------------------------------------------------------------------
+    # These top-level YAML keys each hold a list of seed URLs we want to ingest.
+    # If you add another guidelines provider to `docs/guidelines.yaml`, remember
+    # to include the new key here so it gets picked up automatically.
     source_keys = [
-        'nice_urls',
-        'radiopaedia_urls',
-        'mriquestions_urls',
-        'aan_urls',
-        'acr_urls',
+        'nice_urls',            # National Institute for Health and Care Excellence
+        'radiopaedia_urls',     # Radiopaedia reference articles
+        'mriquestions_urls',    # MRIquestions educational pages
+        'aan_urls',             # American Academy of Neurology guidelines
+        'acr_urls',             # American College of Radiology (ACR) resources
+        'rcr_urls',             # Royal College of Radiologists (RCR) resources
     ]
 
     urls: list[str] = []
@@ -95,12 +112,36 @@ def ingest_nice(
     ]
     exclude_keywords = [kw.lower() for kw in settings.get('exclude_keywords', [])]
 
+    crawl_depth = int(settings.get('crawl_depth', 2))
+    request_delay = float(settings.get('request_delay', 1.0))  # seconds between requests per domain
+
+    # Pre-compiled patterns for URLs we intentionally skip (heavy search pages etc.)
+    skip_regex = re.compile(r"(\?|=|/search|/page/)", re.IGNORECASE)
+
     docs: List[Dict[str, Any]] = []
 
-    for url in urls:
-        doc_id = url.rstrip('/').split('/')[-1]
+    # ------------------------------------------------------------------
+    # 3. Breadth-first crawl within each domain up to `crawl_depth`.
+    # ------------------------------------------------------------------
+    queue: List[Tuple[str, int]] = [(u, 0) for u in urls]
+    visited: Set[str] = set()
+
+    while queue:
+        url, depth = queue.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+
+        if verbose:
+            print(f"[crawl] depth={depth} queue={len(queue)} → {url}")
+
+        parsed = urlparse(url)
+        base_domain = f"{parsed.scheme}://{parsed.netloc}"
+
+        # Unique file name based on URL hash (avoids clashes)
+        doc_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
         ext = '.pdf' if url.lower().endswith('.pdf') else '.html'
-        out_file = Path(raw_dir) / f"{doc_id}{ext}"
+        out_file = Path(raw_dir) / f"{doc_hash}{ext}"
 
         # --------------------------------------------------------------
         # Download if needed
@@ -111,40 +152,108 @@ def ingest_nice(
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.8",
             }
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 406 and "radiopaedia.org" in url:
-                alt_url = url.replace("radiopaedia.org", "www.radiopaedia.org")
-                resp = requests.get(alt_url, headers=headers, timeout=10)
+
+            # Respect per-domain delay
+            time.sleep(request_delay)
+            try:
+                resp = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+            except Exception as e:
+                print(f"Warning: request failed for {url}: {e}")
+                continue
 
             if not resp.ok:
-                print(f"Warning: skipping URL {url}, status code {resp.status_code}")
+                if resp.status_code == 429:
+                    # Too many requests – back off and retry once after delay*5
+                    print(f"Rate-limited (429) – backing off and retrying {url}")
+                    time.sleep(request_delay * 5)
+                    try:
+                        resp = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+                    except Exception:
+                        continue
+                    if not resp.ok:
+                        print(f"Warning: still failing {url}, status code {resp.status_code}")
+                        continue
+                else:
+                    print(f"Warning: skipping URL {url}, status code {resp.status_code}")
+                    continue
+
+            # If final URL after redirects contains search/query params, skip to avoid crawler traps
+            final_url = str(resp.url)
+            if skip_regex.search(final_url):
                 continue
+
+            # Update extension based on actual Content-Type header
+            content_type = resp.headers.get('Content-Type', '').lower()
+            if 'pdf' in content_type and ext != '.pdf':
+                ext = '.pdf'
+                out_file = Path(raw_dir) / f"{doc_hash}{ext}"
+            elif 'html' in content_type and ext != '.html':
+                ext = '.html'
+                out_file = Path(raw_dir) / f"{doc_hash}{ext}"
+
+            if verbose:
+                print(f"  ↳ downloaded → {out_file.name} ({len(resp.content)//1024} KB)")
             out_file.write_bytes(resp.content)
 
         # --------------------------------------------------------------
         # Extract raw text
         # --------------------------------------------------------------
+        text = ""
+        soup: BeautifulSoup | None = None
         if ext == '.pdf':
-            reader = PdfReader(str(out_file))
-            text = ''.join(page.extract_text() or '' for page in reader.pages)
+            try:
+                reader = PdfReader(str(out_file))
+                text = ''.join(page.extract_text() or '' for page in reader.pages)
+            except Exception as e:
+                # Fallback: treat as HTML/text if PDF parsing fails
+                try:
+                    raw_html = out_file.read_text(errors='ignore')
+                    soup = BeautifulSoup(raw_html, 'html.parser')
+                    text = soup.get_text(separator=' ')
+                    ext = '.html'
+                except Exception:
+                    print(f"Warning: unable to extract text from {url}: {e}")
+                    continue
         else:
-            soup = BeautifulSoup(out_file.read_text(), 'html.parser')
-            text = soup.get_text(separator=' ')
+            try:
+                raw_html = out_file.read_text(errors='ignore')
+                soup = BeautifulSoup(raw_html, 'html.parser')
+                text = soup.get_text(separator=' ')
+            except Exception as e:
+                print(f"Warning: HTML parsing failed for {url}: {e}")
+                continue
+
+        # --------------------------------------------------------------
+        # If HTML and we still have depth budget, enqueue internal links.
+        # --------------------------------------------------------------
+        if soup is not None and depth < crawl_depth:
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                new_url = urljoin(url, href)
+                if new_url.startswith(base_domain) and new_url not in visited:
+                    # Skip mailto:, javascript:, etc.
+                    if (new_url.startswith('http')
+                        and 'mailto:' not in new_url
+                        and 'javascript:' not in new_url
+                        and not skip_regex.search(new_url)):
+                        queue.append((new_url, depth + 1))
 
         # --------------------------------------------------------------
         # Relevance filter — skip document if it does **not** mention at
         # least one include_keyword or if it contains any exclude_keyword.
         # --------------------------------------------------------------
         lowered = text.lower()
-        if not any(kw in lowered for kw in include_keywords):
-            # No required keywords present → irrelevant (e.g. lung CT)
+        if include_keywords and not any(kw in lowered for kw in include_keywords):
+            if verbose:
+                print("  ✗ skipped (no include keywords)")
             continue
         if exclude_keywords and any(ex_kw in lowered for ex_kw in exclude_keywords):
-            # Explicitly excluded topic → skip
+            if verbose:
+                print("  ✗ skipped (exclude keyword matched)")
             continue
 
         # ------------------------------------------------------------------
-        # 3. Text chunking – allow YAML to override default parameters.
+        # 4. Text chunking – allow YAML to override default parameters.
         # ------------------------------------------------------------------
         chunk_size = settings.get('chunk_size', 512)
         chunk_overlap = settings.get('chunk_overlap', 64)
@@ -155,5 +264,6 @@ def ingest_nice(
         )
         chunks = splitter.split_text(text)
         for idx, chunk in enumerate(chunks):
-            docs.append({'doc_id': doc_id, 'chunk_id': idx, 'text': chunk})
+            docs.append({'doc_id': doc_hash, 'chunk_id': idx, 'text': chunk})
+
     return docs

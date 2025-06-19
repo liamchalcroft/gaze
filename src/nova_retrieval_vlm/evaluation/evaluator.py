@@ -35,7 +35,7 @@ class Evaluator:  # pylint: disable=too-few-public-methods
     level similarity ratio between *prediction* and *reference* strings.  The
     resulting value is returned as a **score** in the interval \[0, 1\].  For
     structured tasks such as *localization* this evaluator obviously cannot
-    capture spatial accuracy – callers are expected to provide a specialised
+    capture spatial accuracy - callers are expected to provide a specialised
     evaluator instead.  Nevertheless, this minimal version keeps the overall
     pipeline functional.
     """
@@ -54,7 +54,7 @@ class Evaluator:  # pylint: disable=too-few-public-methods
         """
         if not reference:
             # If we do not have a ground-truth reference we cannot meaningfully
-            # evaluate – default to 0.0 so that downstream aggregation works.
+            # evaluate - default to 0.0 so that downstream aggregation works.
             return {"score": 0.0}
 
         # *SequenceMatcher* operates at character level.  To obtain a slightly

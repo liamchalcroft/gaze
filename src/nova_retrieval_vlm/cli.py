@@ -35,9 +35,9 @@ try:
 
     load_dotenv()
     logger.debug("Loaded environment variables from .env file (python-dotenv).")
-except ModuleNotFoundError:  # pragma: no cover – optional dependency
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
     logger.warning(
-        "python-dotenv not installed – skipping automatic '.env' loading. "
+        "python-dotenv not installed - skipping automatic '.env' loading. "
         "Environment variables must be set explicitly."
     )
 
@@ -113,14 +113,14 @@ def main(cfg: Config) -> None:
     logger.info(f"Looking for pre-processed arrow dataset under: {local_path}")
 
     if local_path.exists():
-        # Preferred fast-path – load the arrow file we previously generated
+        # Preferred fast-path - load the arrow file we previously generated
         hf_ds = load_dataset("arrow", data_files=str(local_path / "data-00000-of-00001.arrow"))["train"]
         logger.info("Loaded cached arrow dataset with %d samples", len(hf_ds))
     else:
         # Fallback: use the HuggingFace dataset that was already downloaded by
         # NovaDataset (exposed via dl.dataset.dataset).
         logger.warning(
-            "Cached arrow dataset not found – falling back to in-memory HF dataset."
+            "Cached arrow dataset not found - falling back to in-memory HF dataset."
         )
         # dl.dataset is an instance of NovaDataset; we expose the underlying HF
         # dataset via the public attribute `dataset`.
@@ -209,7 +209,7 @@ def main(cfg: Config) -> None:
             diagnosis = rec.get("final_diagnosis") or rec.get("diagnosis", "")
             fr.write(json.dumps({"boxes": boxes, "labels": labels, "scores": scores, "caption": caption, "diagnosis": diagnosis, "ground_truth_image_idx": i}) + '\n')
     
-    # Overall evaluation – propagate ImportError so that missing metric
+    # Overall evaluation - propagate ImportError so that missing metric
     # dependencies cause an explicit crash (fail-fast policy).
     metrics = evaluate(str(preds_file), str(refs_file), task=cfg.task)
     logger.info(f"Overall evaluation metrics: {metrics}")
@@ -266,7 +266,7 @@ def process_batch(
 ):
     """Process a single batch from the dataloader."""
     # ------------------------------------------------------------------
-    # Persist the image at its ORIGINAL resolution – critical for proper
+    # Persist the image at its ORIGINAL resolution - critical for proper
     # bounding-box visualisation.  We therefore reload the image directly
     # from the HuggingFace dataset (which retains the full-size image) and
     # bypass any resize transforms that were applied for model ingestion.
@@ -353,7 +353,7 @@ def process_batch(
                     return json.loads(m.group(0))
                 except json.JSONDecodeError:
                     pass
-        # Final fallback – return raw text so that downstream still works.
+        # Final fallback - return raw text so that downstream still works.
         logger.warning("Unable to parse model output as JSON for image %d", batch_idx)
         return {"raw": payload, "boxes": [], "labels": [], "scores": []}
 
@@ -375,7 +375,7 @@ def process_batch(
     save_reference(img_folder, batch_idx, hf_ds)
     
     # ---------------------------------------------------------------------
-    # Visualisation – draw GT & predicted bounding-boxes
+    # Visualisation - draw GT & predicted bounding-boxes
     # ---------------------------------------------------------------------
 
     def _draw_boxes(img_path: Path, gt: list[Any], pred: list[Any], out_path: Path):
@@ -383,7 +383,7 @@ def process_batch(
 
         The helper is now tolerant to various box formats:
 
-        1. [x1, y1, x2, y2] – preferred.
+        1. [x1, y1, x2, y2] - preferred.
         2. Dicts with keys (x1,y1,x2,y2) or (x,y,width,height).
         Invalid or incomplete entries are silently skipped.
         """
@@ -437,7 +437,7 @@ def process_batch(
 
         if legend_elements:
             leg = ax.legend(handles=legend_elements, loc='upper right', fontsize='x-small', frameon=False)
-            # Improve readability – bright text with thin black outline
+            # Improve readability - bright text with thin black outline
             for text in leg.get_texts():
                 text.set_color('yellow')
                 text.set_path_effects([
@@ -513,7 +513,7 @@ def evaluate_prediction(img_folder: Path, task: str):
         json.dump(single_metrics, f, indent=2)
 
 # ======================================================================
-# Experimental multi-turn controller – *stub* version.
+# Experimental multi-turn controller - *stub* version.
 # ----------------------------------------------------------------------
 # For now it simply proxies to the baseline `process_batch`.  We keep a
 # separate entry-point so that future work can implement the full dialogue
@@ -543,7 +543,7 @@ def process_batch_multiturn(
     3. Early-stopping criteria and final answer extraction.
     """
 
-    logger.debug("[multiturn] Delegating to baseline processor – no extra rounds yet.")
+    logger.debug("[multiturn] Delegating to baseline processor - no extra rounds yet.")
     # ------------------------------------------------------------------
     # 1. Prepare common resources (image path, retrieval passages, etc.)
     # ------------------------------------------------------------------
@@ -696,7 +696,7 @@ def process_batch_multiturn(
         evaluate_prediction(img_folder, task)
 
     logger.info(
-        "[multiturn] Image %d processed – tokens: %.0f, cost: $%.4f + $%.4f + $%.4f (turns 1-3)",
+        "[multiturn] Image %d processed - tokens: %.0f, cost: $%.4f + $%.4f + $%.4f (turns 1-3)",
         batch_idx,
         log1.tokens + log2.tokens + log3.tokens,
         log1.cost,
