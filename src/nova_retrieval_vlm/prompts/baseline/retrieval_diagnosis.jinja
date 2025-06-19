@@ -1,0 +1,15 @@
+IMPORTANT: respond only with valid JSON:
+{
+  "reasoning": "<step-by-step reasoning>",
+  "diagnoses": ["Dx1", "Dx2", ...]
+}
+You are an expert neuroradiology assistant.
+First provide step-by-step reasoning based on the MRI image and clinical history below, then list your top-5 diagnostic hypotheses in order of likelihood.
+
+Image: {{ img_path }}
+Clinical history: {{ clinical_history }}
+
+Here are source guideline excerpts that may help:
+{% for p in passages %}
+- {{ p }}
+{% endfor %} 

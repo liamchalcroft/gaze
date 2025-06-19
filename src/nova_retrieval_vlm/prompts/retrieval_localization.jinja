@@ -1,0 +1,40 @@
+IMPORTANT: respond only with valid JSON matching this schema:
+{
+  "boxes": [[x1, y1, x2, y2], ...],
+  "labels": ["label1", ...]
+}
+You are an expert neuroradiology assistant.
+Analyze the following MRI image (dimensions: {{ width }}×{{ height }} pixels) to identify and localize all abnormalities.
+
+Image: {{ img_path }}
+
+Here are source guideline excerpts that may help:
+{% for p in passages %}
+- {{ p }}
+{% endfor %}
+
+#  Bounding boxes MUST be absolute pixel coordinates as
+#  [x1, y1, x2, y2] (top-left to bottom-right). Ensure x2 > x1 and y2 > y1.
+#  Do NOT output [x, y, width, height]. 
+
+Image coordinate system:
+• Origin (0, 0) is the top-left corner.
+• Bottom-right corner is ({{ width | int - 1 }}, {{ height | int - 1 }}).
+• All x coordinates must be in [0, {{ width | int - 1 }}]; y in [0, {{ height | int - 1 }}].
+
+Response rules (STRICT):
+1. Return **valid JSON only** – no markdown, no extra keys, no commentary.
+2. Up to **3** bounding boxes. Omit detections with confidence < 0.05.
+3. Use exactly the label string "anomaly" for every box.
+4. If no abnormality is present, return empty lists for boxes, labels, scores.
+5. Boxes MUST follow the schema above (x1< x2, y1< y2). Width/height format is INVALID.
+
+Example (illustrative – adapt):
+{
+  "image_id": {{ image_id }},
+  "boxes": [[50, 30, 120, 180]],
+  "labels": ["anomaly"],
+  "scores": [0.91]
+}
+
+Return ONLY the JSON. 

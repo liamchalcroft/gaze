@@ -1,0 +1,27 @@
+nice_urls:
+  - https://www.nice.org.uk/guidance
+radiopaedia_urls:
+  - https://radiopaedia.org/articles
+mriquestions_urls:
+  - https://mriquestions.com
+aan_urls:
+  - https://www.aan.com/practice/guidelines
+acr_urls:
+  - https://www.acr.org/Clinical-Resources/Clinical-Tools-and-Reference
+
+sources:
+  - name: "American College of Radiology Brain MRI Guidelines"
+    url: "https://www.acr.org/-/media/ACR/Files/Practice-Parameters/MR-Brain.pdf"
+    type: "pdf"
+
+  - name: "European Society of Neuroradiology Guidelines"
+    url: "https://www.esnr.org/en/guidelines-and-statements/"
+    type: "html"
+
+  - name: "Royal College of Radiologists Neuroimaging Guidelines"
+    url: "https://www.rcr.ac.uk/publication/ischaemic-stroke-and-transient-ischaemic-attack-diagnosis-investigation-and-immediate"
+    type: "html"
+
+settings:
+  chunk_size: 1000
+  chunk_overlap: 200 

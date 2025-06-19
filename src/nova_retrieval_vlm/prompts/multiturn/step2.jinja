@@ -1,0 +1,24 @@
+{# STEP 2 – Final decision with bounding boxes #}
+You are still analysing the **same MRI**.
+
+{% if passages %}
+Below are clinical-guideline excerpts relevant to the provisional differential diagnoses:
+{% for p in passages %}• {{ p }}
+{% endfor %}
+{% else %}
+_No relevant guideline excerpts found._
+{% endif %}
+
+Return the **final JSON** following this exact schema (no Markdown):
+{
+  "image_id": {{ image_id }},
+  "boxes": [[x1, y1, x2, y2], …],
+  "labels": ["anomaly", …],
+  "scores": [0.0-1.0, …]
+}
+
+Rules:
+• Up to 3 boxes; omit detections with confidence < 0.05.
+• Use the label "anomaly" only (single-class setup).
+• Coordinates must satisfy 0≤x<{{ width }}, 0≤y<{{ height }}, and x2>x1, y2>y1.
+• Output **valid JSON only**. 

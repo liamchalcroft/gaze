@@ -1,0 +1,1 @@
+# Prompt templates for nova_retrieval_vlm 

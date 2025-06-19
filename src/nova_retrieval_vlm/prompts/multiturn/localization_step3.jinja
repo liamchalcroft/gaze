@@ -1,0 +1,15 @@
+{# STEP 3 – Task-specific output: LOCALIZATION #}
+IMPORTANT: respond only with valid JSON:
+{
+  "image_id": {{ image_id }},
+  "boxes": [[x1, y1, x2, y2], …],
+  "labels": ["anomaly", …],
+  "scores": [0-1 float, …]
+}
+
+Rules:
+• Up to 3 boxes; omit detections with confidence < 0.05.
+• Use label "anomaly" only.
+• Coordinates must satisfy 0≤x<{{ width }}, 0≤y<{{ height }}, and x2>x1, y2>y1.
+
+Use everything you have observed and concluded so far (including guideline excerpts) to place precise boundaries around the anomaly/anomalies. 
