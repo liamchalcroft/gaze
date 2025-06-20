@@ -1,15 +1,37 @@
 {# STEP 3 - Task-specific output: LOCALIZATION #}
+You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
+
+ANALYSIS CONTEXT:
+- Initial observations: {{ step1_summary }}
+- Guideline analysis: {{ step2_summary }}
+{% if clinical_history_integration %}
+- Clinical history integration: {{ clinical_history_integration }}
+{% endif %}
+{% if request_count > 0 %}
+- Additional retrieval requests: {{ request_count }} rounds completed
+- Total passages available: {{ additional_passages | length }}
+{% endif %}
+
 IMPORTANT: respond only with valid JSON:
 {
-  "image_id": {{ image_id }},
-  "boxes": [[x1, y1, x2, y2], …],
-  "labels": ["anomaly", …],
-  "scores": [0-1 float, …]
+  "boxes": [[x1, y1, x2, y2], ...],
+  "labels": ["anomaly", ...],
+  "scores": [0.8, 0.6, ...],
+  "overall_confidence": 0.0-1.0,
+  "normal_regions": "Description of normal areas",
+  "uncertainty_areas": "Areas where localization is unclear",
+  "retrieval_impact": "How did the iterative retrieval process improve your localization accuracy?"
 }
 
-Rules:
-• Up to 3 boxes; omit detections with confidence < 0.05.
-• Use label "anomaly" only.
-• Coordinates must satisfy 0≤x<{{ width }}, 0≤y<{{ height }}, and x2>x1, y2>y1.
+Identify and localize all abnormalities in the MRI using bounding boxes with precise coordinates.
 
-Use everything you have observed and concluded so far (including guideline excerpts) to place precise boundaries around the anomaly/anomalies. 
+CRITICAL REQUIREMENTS:
+- Use normalized coordinates (0-1) for bounding boxes
+- Provide confidence scores for each detected abnormality
+- Use exactly the label "anomaly" for every box
+- If no abnormalities are detected, return empty boxes array
+- If localization is uncertain, explain why
+- Leverage clinical guidelines and additional retrieved information
+- Acknowledge how the iterative retrieval process influenced your final localization
+
+This task is critical for patient care. Double-check your answer before submitting. 

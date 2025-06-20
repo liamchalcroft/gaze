@@ -1,7 +1,43 @@
 {# STEP 3 - Task-specific output: DIAGNOSIS #}
+You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
+
+ANALYSIS CONTEXT:
+- Initial observations: {{ step1_summary }}
+- Guideline analysis: {{ step2_summary }}
+{% if clinical_history_integration %}
+- Clinical history integration: {{ clinical_history_integration }}
+{% endif %}
+{% if request_count > 0 %}
+- Additional retrieval requests: {{ request_count }} rounds completed
+- Total passages available: {{ additional_passages | length }}
+{% endif %}
+
 IMPORTANT: respond only with valid JSON:
 {
-  "diagnoses": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"]
+  "diagnoses": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"],
+  "confidence_scores": [0.8, 0.6, 0.4, 0.2, 0.1],
+  "justifications": [
+    "Dx1 is most likely because...",
+    "Dx2 is possible due to...",
+    "Dx3 could explain...",
+    "Dx4 is less likely but...",
+    "Dx5 is included because..."
+  ],
+  "overall_confidence": 0.0-1.0,
+  "unknown_anomaly": "If findings don't match known diagnoses, describe here. Otherwise: null",
+  "uncertainty_reasons": "If uncertain, explain why. If confident, state 'High confidence in differential.'",
+  "retrieval_impact": "How did the iterative retrieval process improve your diagnostic confidence?"
 }
 
-Leverage the observations, differential list, and guideline facts to rank your top-5 diagnostic hypotheses in order of likelihood. 
+Leverage ALL available information: observations, differential list, clinical guidelines, and any additional retrieved passages to rank your top-5 diagnostic hypotheses in order of likelihood.
+
+CRITICAL REQUIREMENTS:
+- Provide confidence scores (0-1) for each diagnosis
+- Justify each diagnosis based on findings, clinical history, and guideline evidence
+- If more than one diagnosis is plausible, rank them by likelihood
+- If findings don't match any known diagnosis, state "Unknown anomaly" and describe features
+- Use precise clinical terminology, even for rare conditions
+- If uncertain, explain what additional information would help
+- Acknowledge how the iterative retrieval process influenced your final diagnosis
+
+This task is critical for patient care. Double-check your answer before submitting. 

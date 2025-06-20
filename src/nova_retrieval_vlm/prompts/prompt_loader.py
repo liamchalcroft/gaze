@@ -23,7 +23,7 @@ def load_prompt(
         template_name: Name of the template file (e.g., 'baseline.jinja').
         img_path: Path to the image to include.
         passages: List of retrieved passages.
-        metadata: Dictionary of example metadata (e.g., clinical_history).
+        metadata: Dictionary of example metadata (e.g., clinical_history, step summaries, request count).
 
     Returns:
         Rendered prompt string.
@@ -37,4 +37,11 @@ def load_prompt(
         image_id=md.get("image_id", ""),
         width=md.get("width", ""),
         height=md.get("height", ""),
+        # Additional parameters for iterative retrieval
+        step1_summary=md.get("step1_summary", ""),
+        step2_summary=md.get("step2_summary", ""),
+        clinical_history_integration=md.get("clinical_history_integration", ""),
+        request_count=md.get("request_count", 0),
+        additional_passages=md.get("additional_passages", []),
+        retrieval_history=md.get("retrieval_history", []),
     ) 

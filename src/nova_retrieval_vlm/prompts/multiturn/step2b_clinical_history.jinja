@@ -1,0 +1,40 @@
+{# STEP 2b - Clinical History Integration #}
+You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
+
+{% if clinical_history %}
+CLINICAL HISTORY:
+{{ clinical_history }}
+{% else %}
+No clinical history provided.
+{% endif %}
+
+TASK: Integrate the clinical history with your imaging findings to refine your analysis.
+
+Return **JSON only** (no Markdown) with the following keys exactly:
+{
+  "history_relevance": "How does the clinical history relate to the imaging findings?",
+  "refined_differential": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"],
+  "differential_confidence": [0.8, 0.6, 0.4, 0.2, 0.1],
+  "differential_justifications": [
+    "Dx1: Most likely given history of... and imaging showing...",
+    "Dx2: Possible due to...",
+    "Dx3: Could explain...",
+    "Dx4: Less likely but...",
+    "Dx5: Included because..."
+  ],
+  "history_conflicts": "Any conflicts between history and imaging? If none: 'No conflicts identified.'",
+  "additional_history_needed": "What additional clinical information would help?",
+  "clinical_correlation": "How well do the imaging findings correlate with the clinical presentation?",
+  "urgency_assessment": "low | moderate | high | critical",
+  "urgency_reason": "Why this urgency level?"
+}
+
+CRITICAL REQUIREMENTS:
+- Re-rank your differential diagnosis based on clinical history
+- Provide confidence scores for each diagnosis
+- Justify each diagnosis considering both imaging and clinical factors
+- Identify any red flags or urgent findings
+- If clinical history doesn't match imaging findings, explain why
+- Use precise clinical terminology
+
+This integration step is crucial for accurate diagnostic reasoning. Are you sure that's your final answer? If not, review your reasoning. 

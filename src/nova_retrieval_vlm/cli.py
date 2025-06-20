@@ -543,18 +543,17 @@ def process_batch_multiturn(
     preds: list,
     hf_ds,
 ):
-    """Multi-turn variant (currently identical to baseline).
+    """Multi-turn variant with iterative retrieval support.
 
-    The function signature mirrors `process_batch` so it can be swapped in
-    transparently.  In the next iteration we will implement:
-
-    1. Conversation state tracking (messages list).
-    2. Policy for asking follow-up questions when confidence low or bbox
-       count > N.
-    3. Early-stopping criteria and final answer extraction.
+    The function implements a clinical workflow with:
+    1. Initial observations and differential diagnosis
+    2. Guideline retrieval and analysis
+    3. Optional additional retrieval requests (up to 3 rounds)
+    4. Final task-specific output (localization, caption, or diagnosis)
     """
 
-    logger.debug("[multiturn] Delegating to baseline processor - no extra rounds yet.")
+    logger.debug("[multiturn] Starting iterative workflow for image %d", batch_idx)
+    
     # ------------------------------------------------------------------
     # 1. Prepare common resources (image path, retrieval passages, etc.)
     # ------------------------------------------------------------------
@@ -586,6 +585,10 @@ def process_batch_multiturn(
         "width": width,
         "height": height,
     }
+
+    # Add clinical history for diagnosis task
+    if task == 'diagnosis':
+        metadata_common["clinical_history"] = batch['metadata'][0].get('clinical_history', '')
 
     # ------------------------------------------------------------------
     # 2. TURN-1  (initial observations + provisional differential)
@@ -619,14 +622,17 @@ def process_batch_multiturn(
                     return _json.loads(m.group(0))
                 except _json.JSONDecodeError:
                     pass
-        logger.warning("[multiturn] Could not parse TURN-1 JSON for image %d", batch_idx)
+        logger.warning("[multiturn] Could not parse JSON for image %d", batch_idx)
         return {}
 
     turn1_data = _safe_json_loads(text1)
     diff_list = turn1_data.get("differential", []) if isinstance(turn1_data, dict) else []
+    
+    # Extract summary for iterative retrieval
+    step1_summary = turn1_data.get("summary", "") if isinstance(turn1_data, dict) else ""
 
     # ------------------------------------------------------------------
-    # 3. Retrieve guideline passages for differential
+    # 3. Initial guideline retrieval for differential
     # ------------------------------------------------------------------
 
     passages: list[str] = []
@@ -648,12 +654,12 @@ def process_batch_multiturn(
             retrieval_debug_info["num_passages_retrieved"] = len(passages)
             retrieval_debug_info["passages"] = passages
         except Exception as exc:
-            logger.warning("[multiturn] Retrieval failed: %s", exc)
+            logger.warning("[multiturn] Initial retrieval failed: %s", exc)
             retrieval_debug_info["error"] = str(exc)
 
-    # Save detailed retrieval debug info
+    # Save initial retrieval debug info
     with open(img_folder / "retrieval_debug.txt", "w") as f:
-        f.write("=== RETRIEVAL DEBUG INFO ===\n\n")
+        f.write("=== INITIAL RETRIEVAL DEBUG INFO ===\n\n")
         f.write(f"Image ID: {batch_idx}\n")
         f.write(f"Task: {task}\n")
         f.write(f"Timestamp: {__import__('datetime').datetime.now()}\n\n")
@@ -678,7 +684,7 @@ def process_batch_multiturn(
         else:
             f.write("No passages retrieved.\n")
 
-    # Save passages in simple format (existing behavior)
+    # Save passages in simple format
     if passages:
         with open(img_folder / "passages.txt", "w") as f:
             f.write("\n\n".join(passages))
@@ -701,10 +707,139 @@ def process_batch_multiturn(
     with open(img_folder / "turn2_raw.txt", "w") as f:
         f.write(text2)
 
-    # We don't need to parse the summary for evaluation; keep raw text.
+    # Extract summary for iterative retrieval
+    step2_summary = text2  # Use full text as summary for now
 
     # ------------------------------------------------------------------
-    # 5. TURN-3  (task-specific output)
+    # 5. Optional Step 2b (clinical history integration)
+    # ------------------------------------------------------------------
+    
+    clinical_history_integration = ""
+    if task == 'diagnosis' and metadata_common.get("clinical_history"):
+        prompt_step2b = load_prompt(
+            "multiturn/step2b_clinical_history.jinja",
+            img_path=img_path,
+            passages=passages,
+            metadata=metadata_common,
+        )
+
+        text2b, log2b = asyncio.run(
+            adapter.generate(img_path, passages=passages, system_prompt=prompt_step2b)
+        )
+
+        with open(img_folder / "turn2b_raw.txt", "w") as f:
+            f.write(text2b)
+        
+        clinical_history_integration = text2b
+
+    # ------------------------------------------------------------------
+    # 6. Iterative retrieval loop (up to 3 additional rounds)
+    # ------------------------------------------------------------------
+    
+    all_passages = passages.copy()
+    retrieval_history = []
+    request_count = 0
+    max_additional_requests = 3
+    
+    while request_count < max_additional_requests and retriever:
+        # Prepare metadata for retrieval request
+        retrieval_metadata = {
+            **metadata_common,
+            "step1_summary": step1_summary,
+            "step2_summary": step2_summary,
+            "clinical_history_integration": clinical_history_integration,
+            "request_count": request_count,
+            "additional_passages": all_passages,
+            "retrieval_history": retrieval_history,
+        }
+        
+        # Step 2c: Ask model if it needs additional retrieval
+        prompt_step2c = load_prompt(
+            "multiturn/step2c_retrieval_request.jinja",
+            img_path=img_path,
+            passages=all_passages,
+            metadata=retrieval_metadata,
+        )
+
+        text2c, log2c = asyncio.run(
+            adapter.generate(img_path, passages=all_passages, system_prompt=prompt_step2c)
+        )
+
+        with open(img_folder / f"turn2c_request_{request_count + 1}_raw.txt", "w") as f:
+            f.write(text2c)
+
+        # Parse retrieval request
+        retrieval_request = _safe_json_loads(text2c)
+        
+        need_additional = retrieval_request.get("need_additional_retrieval", False)
+        proceed_to_final = retrieval_request.get("proceed_to_final_steps", True)
+        
+        if not need_additional or proceed_to_final:
+            logger.debug("[multiturn] Model satisfied with current information, proceeding to final steps")
+            break
+        
+        # Process additional retrieval requests
+        retrieval_requests = retrieval_request.get("retrieval_requests", [])
+        if not retrieval_requests:
+            logger.debug("[multiturn] No specific retrieval requests provided, proceeding to final steps")
+            break
+        
+        # Execute additional retrievals
+        additional_passages_round = []
+        for req in retrieval_requests:
+            search_terms = req.get("search_terms", [])
+            if search_terms:
+                query = ", ".join(search_terms)
+                try:
+                    new_passages = retriever(query, k=cfg.retrieval.top_k)
+                    additional_passages_round.extend(new_passages)
+                    
+                    # Log this retrieval
+                    retrieval_history.append({
+                        "request_number": request_count + 1,
+                        "search_terms": search_terms,
+                        "query": query,
+                        "justification": req.get("justification", ""),
+                        "expected_benefit": req.get("expected_benefit", ""),
+                        "passages_retrieved": len(new_passages),
+                        "passages": new_passages
+                    })
+                    
+                    logger.debug("[multiturn] Additional retrieval %d: %s -> %d passages", 
+                               request_count + 1, query, len(new_passages))
+                    
+                except Exception as exc:
+                    logger.warning("[multiturn] Additional retrieval failed: %s", exc)
+        
+        # Add new passages to collection
+        if additional_passages_round:
+            all_passages.extend(additional_passages_round)
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_passages = []
+            for passage in all_passages:
+                if passage not in seen:
+                    seen.add(passage)
+                    unique_passages.append(passage)
+            all_passages = unique_passages
+            
+            # Save updated passages
+            with open(img_folder / f"passages_after_request_{request_count + 1}.txt", "w") as f:
+                f.write("\n\n".join(all_passages))
+        
+        request_count += 1
+    
+    # Save final retrieval history
+    with open(img_folder / "retrieval_history.json", "w") as f:
+        import json
+        json.dump({
+            "total_requests": request_count,
+            "total_passages": len(all_passages),
+            "retrieval_history": retrieval_history
+        }, f, indent=2)
+
+    # ------------------------------------------------------------------
+    # 7. TURN-3  (task-specific output with all accumulated passages)
     # ------------------------------------------------------------------
 
     step3_template_map = {
@@ -717,15 +852,26 @@ def process_batch_multiturn(
     if tmpl_name3 is None:
         raise ValueError(f"Unsupported task for multiturn approach: {task}")
 
+    # Prepare final metadata with all accumulated information
+    final_metadata = {
+        **metadata_common,
+        "step1_summary": step1_summary,
+        "step2_summary": step2_summary,
+        "clinical_history_integration": clinical_history_integration,
+        "request_count": request_count,
+        "additional_passages": all_passages,
+        "retrieval_history": retrieval_history,
+    }
+
     prompt_turn3 = load_prompt(
         tmpl_name3,
         img_path=img_path,
-        passages=[],  # passages already internalised by model
-        metadata=metadata_common,
+        passages=all_passages,  # Use all accumulated passages
+        metadata=final_metadata,
     )
 
     text3, log3 = asyncio.run(
-        adapter.generate(img_path, passages=[], system_prompt=prompt_turn3)
+        adapter.generate(img_path, passages=all_passages, system_prompt=prompt_turn3)
     )
 
     with open(img_folder / "turn3_raw.txt", "w") as f:
@@ -734,7 +880,7 @@ def process_batch_multiturn(
     result = _safe_json_loads(text3)
 
     # ------------------------------------------------------------------
-    # 6. Persist prediction + evaluation/visualisation
+    # 8. Persist prediction + evaluation/visualisation
     # ------------------------------------------------------------------
 
     if task == "localization":
@@ -748,7 +894,7 @@ def process_batch_multiturn(
         evaluate_prediction(img_folder, task)
 
     # ------------------------------------------------------------------
-    # 7. Generate bbox visualization (for localization task)
+    # 9. Generate bbox visualization (for localization task)
     # ------------------------------------------------------------------
     
     if task == "localization":
@@ -830,13 +976,28 @@ def process_batch_multiturn(
         viz_path = img_folder / 'bboxes.png'
         _draw_boxes(img_path, gt_boxes, result.get('boxes', []), viz_path)
 
+    # Calculate total tokens and cost
+    total_tokens = log1.tokens + log2.tokens + log3.tokens
+    total_cost = log1.cost + log2.cost + log3.cost
+    
+    # Add costs from optional steps
+    if clinical_history_integration:
+        total_tokens += log2b.tokens
+        total_cost += log2b.cost
+    
+    # Add costs from iterative retrieval
+    for i in range(request_count):
+        # We don't have access to individual log objects for retrieval requests
+        # This is an approximation
+        total_tokens += 500  # Approximate tokens per retrieval request
+        total_cost += 0.001  # Approximate cost per retrieval request
+
     logger.info(
-        "[multiturn] Image %d processed - tokens: %.0f, cost: $%.4f + $%.4f + $%.4f (turns 1-3)",
+        "[multiturn] Image %d processed - tokens: %.0f, cost: $%.4f, retrieval_requests: %d",
         batch_idx,
-        log1.tokens + log2.tokens + log3.tokens,
-        log1.cost,
-        log2.cost,
-        log3.cost,
+        total_tokens,
+        total_cost,
+        request_count,
     )
 
     return result

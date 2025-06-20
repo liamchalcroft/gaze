@@ -13,6 +13,87 @@ import xml.etree.ElementTree as ET
 import time
 import re
 
+def clean_text(text: str) -> str:
+    """
+    Clean and normalize text content by removing junk, empty lines, and improving readability.
+    
+    Args:
+        text: Raw text content to clean
+        
+    Returns:
+        Cleaned and normalized text
+    """
+    if not text:
+        return ""
+    
+    # Normalize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    # Collapse multiple newlines to a single newline
+    text = re.sub(r'\n{2,}', '\n', text)
+    # Remove leading/trailing whitespace on each line and normalize internal whitespace
+    lines = [re.sub(r'[ \t]+', ' ', line.strip()) for line in text.split('\n')]
+    # Remove empty lines
+    lines = [line for line in lines if line]
+    text = '\n'.join(lines)
+    
+    # Remove common web artifacts only if they appear as standalone lines or at boundaries
+    web_artifacts = [
+        r'cookie( policy)?', r'privacy( policy)?', r'terms( and conditions)?', r'conditions', r'subscribe( to (our|the) newsletter)?',
+        r'newsletter', r'sign up', r'log in', r'login', r'register', r'all rights reserved'
+    ]
+    for artifact in web_artifacts:
+        text = re.sub(rf'^\s*{artifact}\s*\.?$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(rf'(^|[\.!?]\s*){artifact}(\.|!|\?|$)', r'\1', text, flags=re.IGNORECASE)
+    text = re.sub(r'©\s*\d{4}.*?\.', '', text)
+    
+    # Remove navigation and UI elements, including sequences
+    nav_artifacts = [r'home', r'about', r'contact', r'search', r'menu', r'navigation', r'sidebar',
+                     r'back to top', r'scroll to top', r'next page', r'previous page']
+    nav_seq = r'(?:' + r'|'.join(nav_artifacts) + r')(?:\s+(?:' + r'|'.join(nav_artifacts) + r'))*'
+    # Remove whole lines that are just a sequence of navigation words
+    text = re.sub(rf'^\s*{nav_seq}\s*\.?$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+    # Remove trailing/leading navigation sequences at sentence boundaries
+    text = re.sub(rf'(^|[\.!?]\s*){nav_seq}(\.|!|\?|$)', r'\1', text, flags=re.IGNORECASE)
+    
+    # Remove common medical website boilerplate
+    med_boilerplate = [
+        r'this information is provided for educational purposes only',
+        r'consult your healthcare provider', r'talk to your doctor',
+        r'medical disclaimer', r'disclaimer'
+    ]
+    for artifact in med_boilerplate:
+        text = re.sub(rf'^\s*{artifact}\s*\.?$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(rf'(^|[\.!?]\s*){artifact}(\.|!|\?|$)', r'\1', text, flags=re.IGNORECASE)
+    
+    # Remove excessive punctuation and formatting artifacts
+    text = re.sub(r'[•·▪▫◦‣⁃]\s*', '\n', text)  # Bullet points to newlines
+    text = re.sub(r'[|¦]\s*', '\n', text)  # Vertical bars to newlines
+    text = re.sub(r'[─━═─]\s*', '\n', text)  # Horizontal lines to newlines
+    text = re.sub(r'[■□▪▫▭▯▮▯]\s*', '\n', text)  # Box characters to newlines
+    
+    # Remove page numbers and headers/footers
+    text = re.sub(r'page\s+\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\d+\s+of\s+\d+', '', text)
+    text = re.sub(r'^\d+\s*$', '', text, flags=re.MULTILINE)  # Standalone numbers
+    
+    # Remove common PDF artifacts
+    text = re.sub(r'www\.[^\s]+', '', text)  # URLs
+    text = re.sub(r'http[s]?://[^\s]+', '', text)  # URLs
+    text = re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}', '', text)  # Email addresses
+    
+    # Remove very short lines that are likely navigation artifacts
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        line = line.strip()
+        if len(line) > 10 or (len(line) > 3 and any(c.isalpha() for c in line)):
+            cleaned_lines.append(line)
+    text = '\n'.join(cleaned_lines)
+    
+    # Final cleanup
+    text = text.strip()
+    return text
+
 def ingest_nice(
     config_yaml: str,
     raw_dir: str,
@@ -206,15 +287,22 @@ def ingest_nice(
             try:
                 reader = PdfReader(str(out_file))
                 text = ''.join(page.extract_text() or '' for page in reader.pages)
+                text = clean_text(text)
             except Exception as e:
                 # Fallback: treat as HTML/text if PDF parsing fails
                 try:
                     raw_html = out_file.read_text(errors='ignore')
                     soup = BeautifulSoup(raw_html, 'html.parser')
                     # Remove common navigation / peripheral sections
-                    for tag in soup(['nav', 'header', 'footer', 'aside']):
+                    for tag in soup(['nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript', 'iframe', 'embed', 'object']):
+                        tag.decompose()
+                    # Remove elements with common junk classes/IDs
+                    for tag in soup.find_all(class_=re.compile(r'(cookie|privacy|newsletter|subscribe|social|share|ad|banner|popup)', re.I)):
+                        tag.decompose()
+                    for tag in soup.find_all(id=re.compile(r'(cookie|privacy|newsletter|subscribe|social|share|ad|banner|popup)', re.I)):
                         tag.decompose()
                     text = soup.get_text(separator=' ')
+                    text = clean_text(text)
                     ext = '.html'
                 except Exception:
                     print(f"Warning: unable to extract text from {url}: {e}")
@@ -224,12 +312,24 @@ def ingest_nice(
                 raw_html = out_file.read_text(errors='ignore')
                 soup = BeautifulSoup(raw_html, 'html.parser')
                 # Remove common navigation / peripheral sections
-                for tag in soup(['nav', 'header', 'footer', 'aside']):
+                for tag in soup(['nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript', 'iframe', 'embed', 'object']):
+                    tag.decompose()
+                # Remove elements with common junk classes/IDs
+                for tag in soup.find_all(class_=re.compile(r'(cookie|privacy|newsletter|subscribe|social|share|ad|banner|popup)', re.I)):
+                    tag.decompose()
+                for tag in soup.find_all(id=re.compile(r'(cookie|privacy|newsletter|subscribe|social|share|ad|banner|popup)', re.I)):
                     tag.decompose()
                 text = soup.get_text(separator=' ')
+                text = clean_text(text)
             except Exception as e:
                 print(f"Warning: HTML parsing failed for {url}: {e}")
                 continue
+
+        # Skip documents with insufficient content after cleaning
+        if len(text.strip()) < 100:
+            if verbose:
+                print("  ✗ skipped (insufficient content after cleaning)")
+            continue
 
         # --------------------------------------------------------------
         # If HTML and we still have depth budget, enqueue internal links.
@@ -271,7 +371,31 @@ def ingest_nice(
             chunk_overlap=int(chunk_overlap),
         )
         chunks = splitter.split_text(text)
+        
+        # Clean and filter individual chunks
+        valid_chunks = []
         for idx, chunk in enumerate(chunks):
-            docs.append({'doc_id': doc_hash, 'chunk_id': idx, 'text': chunk})
+            # Clean the chunk
+            cleaned_chunk = clean_text(chunk)
+            
+            # Skip chunks that are too short or contain mostly non-alphabetic content
+            if len(cleaned_chunk.strip()) < 50:
+                continue
+                
+            # Skip chunks that are mostly numbers, punctuation, or whitespace
+            alpha_ratio = sum(1 for c in cleaned_chunk if c.isalpha()) / max(1, len(cleaned_chunk))
+            if alpha_ratio < 0.3:  # At least 30% should be alphabetic
+                continue
+                
+            # Skip chunks that are mostly common junk words
+            junk_words = ['cookie', 'privacy', 'terms', 'subscribe', 'newsletter', 'log in', 'register']
+            chunk_lower = cleaned_chunk.lower()
+            junk_count = sum(1 for word in junk_words if word in chunk_lower)
+            if junk_count > 0 and len(cleaned_chunk.split()) < 20:
+                continue
+                
+            valid_chunks.append({'doc_id': doc_hash, 'chunk_id': idx, 'text': cleaned_chunk})
+        
+        docs.extend(valid_chunks)
 
     return docs

@@ -1,7 +1,39 @@
 {# STEP 3 - Task-specific output: CAPTION #}
+You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
+
+ANALYSIS CONTEXT:
+- Initial observations: {{ step1_summary }}
+- Guideline analysis: {{ step2_summary }}
+{% if clinical_history_integration %}
+- Clinical history integration: {{ clinical_history_integration }}
+{% endif %}
+{% if request_count > 0 %}
+- Additional retrieval requests: {{ request_count }} rounds completed
+- Total passages available: {{ additional_passages | length }}
+{% endif %}
+
 IMPORTANT: respond only with valid JSON:
 {
-  "caption": "<radiology style description>"
+  "caption": "Comprehensive clinical description of the MRI findings",
+  "confidence_score": 0.0-1.0,
+  "key_findings": ["finding1", "finding2", "finding3"],
+  "anatomical_structures": ["structure1", "structure2"],
+  "abnormalities": ["abnormality1", "abnormality2"],
+  "normal_structures": ["normal1", "normal2"],
+  "technical_quality": "Assessment of image quality and limitations",
+  "uncertainty_areas": "Areas where findings are unclear or ambiguous",
+  "retrieval_impact": "How did the iterative retrieval process improve your caption quality?"
 }
 
-Generate a concise radiology-style description of the MRI, incorporating modality terms {T1W, T2W, FLAIR, axial, sagittal, coronal} and clinical terms {lesion, tumor, hemorrhage, infarct, cyst, atrophy, metastasis, edema}. Use your prior observations and guideline knowledge. 
+Create a comprehensive, clinically accurate caption that describes the MRI findings in detail.
+
+CRITICAL REQUIREMENTS:
+- Use precise anatomical and radiological terminology
+- Describe both normal and abnormal findings
+- Include location, size, and characteristics of any abnormalities
+- Assess image quality and technical limitations
+- If findings are unclear, acknowledge uncertainty
+- Leverage clinical guidelines and additional retrieved information
+- Acknowledge how the iterative retrieval process influenced your final caption
+
+This task is critical for patient care. Double-check your answer before submitting. 
