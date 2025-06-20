@@ -234,16 +234,27 @@ def setup_retriever(cfg: Config):
     bm25_idx = Path(to_absolute_path(cfg.paths.index_dir)) / 'bm25'
     faiss_idx = Path(to_absolute_path(cfg.paths.index_dir)) / 'faiss'
     
-    if cfg.retrieval.type == 'bm25':
-        return BM25Retriever(str(bm25_idx))
-    elif cfg.retrieval.type == 'dense':
-        return DenseRetriever(str(faiss_idx))
-    else:
-        return HybridRetriever(
-            BM25Retriever(str(bm25_idx)),
-            DenseRetriever(str(faiss_idx)),
-            alpha=cfg.retrieval.hybrid_ratio,
-        )
+    try:
+        if cfg.retrieval.type == 'bm25':
+            logger.info(f"Setting up BM25Retriever from {bm25_idx}")
+            return BM25Retriever(str(bm25_idx))
+        elif cfg.retrieval.type == 'dense':
+            logger.info(f"Setting up DenseRetriever from {faiss_idx}")
+            return DenseRetriever(str(faiss_idx))
+        else:
+            logger.info(f"Setting up HybridRetriever from {bm25_idx} and {faiss_idx}")
+            return HybridRetriever(
+                BM25Retriever(str(bm25_idx)),
+                DenseRetriever(str(faiss_idx)),
+                alpha=cfg.retrieval.hybrid_ratio,
+            )
+    except Exception as e:
+        logger.error(f"Failed to setup retriever (type: {cfg.retrieval.type}): {e}")
+        logger.error("This will cause retrieval to fail silently. Consider:")
+        logger.error("1. Checking if indexes exist in the specified directory")
+        logger.error("2. Running the index building script first")
+        logger.error("3. Checking Haystack version compatibility")
+        raise
 
 def create_run_directory(output_dir: str) -> Path:
     """Create a timestamped run directory."""
@@ -619,14 +630,55 @@ def process_batch_multiturn(
     # ------------------------------------------------------------------
 
     passages: list[str] = []
+    retrieval_debug_info = {
+        "query": None,
+        "differential_from_turn1": diff_list,
+        "retrieval_success": False,
+        "num_passages_retrieved": 0,
+        "error": None,
+        "passages": []
+    }
+    
     if diff_list and retriever:
         query = ", ".join(diff_list)
+        retrieval_debug_info["query"] = query
         try:
             passages = retriever(query, k=cfg.retrieval.top_k)
+            retrieval_debug_info["retrieval_success"] = True
+            retrieval_debug_info["num_passages_retrieved"] = len(passages)
+            retrieval_debug_info["passages"] = passages
         except Exception as exc:
             logger.warning("[multiturn] Retrieval failed: %s", exc)
+            retrieval_debug_info["error"] = str(exc)
 
-    # Save passages
+    # Save detailed retrieval debug info
+    with open(img_folder / "retrieval_debug.txt", "w") as f:
+        f.write("=== RETRIEVAL DEBUG INFO ===\n\n")
+        f.write(f"Image ID: {batch_idx}\n")
+        f.write(f"Task: {task}\n")
+        f.write(f"Timestamp: {__import__('datetime').datetime.now()}\n\n")
+        
+        f.write("=== TURN 1 DIFFERENTIAL ===\n")
+        f.write(f"Raw differential: {diff_list}\n\n")
+        
+        f.write("=== RETRIEVAL QUERY ===\n")
+        f.write(f"Query: {retrieval_debug_info['query']}\n")
+        f.write(f"Retrieval success: {retrieval_debug_info['retrieval_success']}\n")
+        f.write(f"Number of passages: {retrieval_debug_info['num_passages_retrieved']}\n")
+        if retrieval_debug_info['error']:
+            f.write(f"Error: {retrieval_debug_info['error']}\n")
+        f.write("\n")
+        
+        f.write("=== RETRIEVED PASSAGES ===\n")
+        if passages:
+            for i, passage in enumerate(passages, 1):
+                f.write(f"--- Passage {i} ---\n")
+                f.write(passage)
+                f.write("\n\n")
+        else:
+            f.write("No passages retrieved.\n")
+
+    # Save passages in simple format (existing behavior)
     if passages:
         with open(img_folder / "passages.txt", "w") as f:
             f.write("\n\n".join(passages))
@@ -694,6 +746,89 @@ def process_batch_multiturn(
 
     if task == "localization":
         evaluate_prediction(img_folder, task)
+
+    # ------------------------------------------------------------------
+    # 7. Generate bbox visualization (for localization task)
+    # ------------------------------------------------------------------
+    
+    if task == "localization":
+        # Define the _draw_boxes helper function (same as in process_batch)
+        def _draw_boxes(img_path: Path, gt: list[Any], pred: list[Any], out_path: Path):
+            """Draw *gt* (green) and *pred* (red) boxes on *img_path* and save.
+
+            The helper is now tolerant to various box formats:
+
+            1. [x1, y1, x2, y2] - preferred.
+            2. Dicts with keys (x1,y1,x2,y2) or (x,y,width,height).
+            Invalid or incomplete entries are silently skipped.
+            """
+            import matplotlib
+            matplotlib.use('Agg')  # headless
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as patches
+            from matplotlib import patheffects as pe
+            from PIL import Image
+
+            img = Image.open(img_path).convert('L')
+            fig, ax = plt.subplots(1, figsize=(6, 6))
+            ax.imshow(img, cmap='gray')
+
+            def _iter_boxes(raw_boxes):
+                for b in raw_boxes:
+                    if isinstance(b, (list, tuple)) and len(b) == 4:
+                        yield b
+                    elif isinstance(b, dict):
+                        if all(k in b for k in ("x1", "y1", "x2", "y2")):
+                            yield [b["x1"], b["y1"], b["x2"], b["y2"]]
+                        elif all(k in b for k in ("x", "y", "width", "height")):
+                            yield [b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]]
+
+            for box in _iter_boxes(gt):
+                x1, y1, x2, y2 = box
+                w, h = x2 - x1, y2 - y1
+                rect = patches.Rectangle((x1, y1), w, h, linewidth=1.5, edgecolor='lime', facecolor='none')
+                ax.add_patch(rect)
+
+            for box in _iter_boxes(pred):
+                x1, y1, x2, y2 = box
+                w, h = x2 - x1, y2 - y1
+                rect = patches.Rectangle((x1, y1), w, h, linewidth=1.2, edgecolor='red', facecolor='none', linestyle='--')
+                ax.add_patch(rect)
+
+            ax.axis('off')
+
+            # ------------------------------------------------------------------
+            # Add legend (only for categories that are present)
+            # ------------------------------------------------------------------
+            from matplotlib.lines import Line2D  # imported here to keep the
+            # function self-contained even when matplotlib is not globally
+            # available at import time.
+
+            legend_elements = []
+            if gt:
+                legend_elements.append(Line2D([0], [0], color='lime', lw=2, label='Ground Truth'))
+            if pred:
+                legend_elements.append(Line2D([0], [0], color='red', lw=2, linestyle='--', label='Prediction'))
+
+            if legend_elements:
+                leg = ax.legend(handles=legend_elements, loc='upper right', fontsize='x-small', frameon=False)
+                # Improve readability - bright text with thin black outline
+                for text in leg.get_texts():
+                    text.set_color('yellow')
+                    text.set_path_effects([
+                        pe.Stroke(linewidth=1.0, foreground='black'),
+                        pe.Normal(),
+                    ])
+
+            fig.tight_layout(pad=0)
+            fig.savefig(out_path, bbox_inches='tight', dpi=150)
+            plt.close(fig)
+
+        # Generate bbox visualization
+        gt_bg = hf_ds[batch_idx].get("bbox_gold", {})
+        gt_boxes = [[x, y, x + w, y + h] for x, y, w, h in zip(gt_bg.get("x", []), gt_bg.get("y", []), gt_bg.get("width", []), gt_bg.get("height", []))]
+        viz_path = img_folder / 'bboxes.png'
+        _draw_boxes(img_path, gt_boxes, result.get('boxes', []), viz_path)
 
     logger.info(
         "[multiturn] Image %d processed - tokens: %.0f, cost: $%.4f + $%.4f + $%.4f (turns 1-3)",

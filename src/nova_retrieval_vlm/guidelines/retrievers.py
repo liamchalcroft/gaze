@@ -41,10 +41,38 @@ class BM25Retriever:
         hay_docs = [Document(content=d['text'], meta=d) for d in docs]
         store.write_documents(hay_docs)
         self.retriever = HS_BM25(document_store=store)
+        
+        # Verify the retriever has the expected method (try 'run' first, then 'retrieve')
+        if not hasattr(self.retriever, 'run') and not hasattr(self.retriever, 'retrieve'):
+            available_methods = [attr for attr in dir(self.retriever) if not attr.startswith('_')]
+            raise AttributeError(
+                f"BM25Retriever.retriever object has no 'run' or 'retrieve' method. "
+                f"Available methods: {available_methods}. "
+                f"This may indicate a Haystack version compatibility issue."
+            )
 
     def __call__(self, query: str, k: int = 6) -> List[str]:
-        results = self.retriever.retrieve(query=query, top_k=k)
-        return [doc.content for doc in results]
+        try:
+            # Try 'run' method first (newer Haystack versions)
+            if hasattr(self.retriever, 'run'):
+                results = self.retriever.run(query=query, top_k=k)
+                return [doc.content for doc in results['documents']]
+            # Fallback to 'retrieve' method (older versions)
+            elif hasattr(self.retriever, 'retrieve'):
+                results = self.retriever.retrieve(query=query, top_k=k)
+                return [doc.content for doc in results]
+            else:
+                available_methods = [attr for attr in dir(self.retriever) if not attr.startswith('_')]
+                raise AttributeError(
+                    f"BM25Retriever failed. Available methods: {available_methods}. "
+                    f"Haystack version compatibility issue detected."
+                )
+        except Exception as e:
+            available_methods = [attr for attr in dir(self.retriever) if not attr.startswith('_')]
+            raise AttributeError(
+                f"BM25Retriever failed during execution. Available methods: {available_methods}. "
+                f"Error: {e}"
+            ) from e
 
 class DenseRetriever:
     """Dense retriever using FAISS and SentenceTransformer embeddings."""

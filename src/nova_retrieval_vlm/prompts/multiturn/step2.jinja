@@ -1,5 +1,5 @@
-{# STEP 2 - Final decision with bounding boxes #}
-You are still analysing the **same MRI**.
+{# STEP 2 - Comprehensive Analysis with Guidelines #}
+You are still analysing the **same MRI** from Step 1.
 
 {% if passages %}
 Below are clinical-guideline excerpts relevant to the provisional differential diagnoses:
@@ -9,16 +9,31 @@ Below are clinical-guideline excerpts relevant to the provisional differential d
 _No relevant guideline excerpts found._
 {% endif %}
 
-Return the **final JSON** following this exact schema (no Markdown):
-{
-  "image_id": {{ image_id }},
-  "boxes": [[x1, y1, x2, y2], …],
-  "labels": ["anomaly", …],
-  "scores": [0.0-1.0, …]
-}
+Based on your initial observations and the retrieved clinical guidelines, provide a comprehensive analysis.
 
-Rules:
-• Up to 3 boxes; omit detections with confidence < 0.05.
-• Use the label "anomaly" only (single-class setup).
-• Coordinates must satisfy 0≤x<{{ width }}, 0≤y<{{ height }}, and x2>x1, y2>y1.
-• Output **valid JSON only**. 
+Return a **detailed analysis** covering:
+
+1. **Technical Assessment**
+   - Confirm or refine your initial orientation and sequence assessment
+   - Describe any additional technical factors that may affect interpretation
+
+2. **Detailed Findings**
+   - Comprehensive description of all visible abnormalities
+   - Location, size, and characteristics of lesions
+   - Any normal anatomical variations or artifacts
+
+3. **Clinical Correlation**
+   - How the findings relate to the retrieved guidelines
+   - Clinical significance of each observation
+   - Any red flags or urgent findings
+
+4. **Refined Differential Diagnosis**
+   - Updated differential based on guideline information
+   - Likelihood assessment for each diagnosis
+   - Any diagnoses to rule out based on guidelines
+
+5. **Recommendations**
+   - Suggested next steps (additional imaging, follow-up, etc.)
+   - Any specific guideline recommendations that apply
+
+Write this as a comprehensive clinical report in clear, professional medical language. This analysis will be used to inform the final task-specific output in Step 3. 
