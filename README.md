@@ -416,6 +416,7 @@ The framework ships with two families of Jinja templates under
 |--------|---------|-------|
 | `baseline/` | **Baseline, single-turn** prompts (no guideline retrieval). | `localization.jinja`, `caption.jinja`, `diagnosis.jinja` |
 | `multiturn/` | **Clinician-style, multi-turn** reasoning chain. | `step1.jinja` (observations + differential), `step2.jinja` (guideline-aware final decision with bboxes). |
+| `visual_ops/` | **Interactive visual reasoning** with zoom/crop/contrast adjustment. | `step1.jinja` (request operations), `step2.jinja` (analysis after operations). |
 
 The CLI flag `approach` controls which family is used:
 

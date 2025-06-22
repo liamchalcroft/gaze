@@ -498,4 +498,5 @@ data/nova/**/nova-*.arrow
 indexes/
 
 # Misc
-.DS_Store 
+.DS_Store
+!tests/test_image_ops.py
