@@ -302,9 +302,10 @@ python -m nova_retrieval_vlm.cli --config-path=configs --config-name=experiment
 
 The framework provides comprehensive evaluation metrics:
 
-- **Localization**: IoU, accuracy, precision, recall
-- **Captioning**: BLEU, ROUGE, BERTScore, semantic similarity
-- **Diagnosis**: Classification accuracy, F1-score, confusion matrices
+- **Localization**: mAP@0.3, mAP@0.5 and mAP@0.50-0.95
+- **Captioning**: SacreBLEU, BERTScore, RadGraph F1, METEOR and simple
+  keyword-based F1 scores (modality/clinical/binary)
+- **Diagnosis**: Top-1 and Top-5 accuracy, prediction coverage and entropy
 
 Results are automatically saved with detailed logs and can be visualized using the built-in plotting tools:
 
