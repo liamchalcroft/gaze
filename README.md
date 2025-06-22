@@ -435,3 +435,18 @@ python -m nova_retrieval_vlm.cli task=localization approach=visual_multiturn use
 `multiturn/step1.jinja` asks the model for qualitative observations and a short differential diagnosis.  Those diagnoses are fed into the guideline retriever; the top-*k* passages are then injected into `multiturn/step2.jinja`, which requests the final JSON output (bounding boxes / labels / scores) under strict formatting rules.
 
 All prompts automatically embed the image dimensions and coordinate conventions so the model knows the valid range for `(x1, y1, x2, y2)`.
+
+### Benchmark Scripts and Ablation
+
+The `scripts/` directory contains helper bash scripts for running controlled benchmarks across all models and tasks.  Each script accepts optional
+`--data-dir`, `--output-dir`, `--batch-size`, and `--max-iters` flags.
+
+| Script | Purpose |
+|--------|---------|
+| `run_baseline_benchmark.sh` | Single-turn baseline without retrieval |
+| `run_retrieval_benchmark.sh` | Baseline prompts augmented with guideline retrieval |
+| `run_multiturn_benchmark.sh` | Clinician-style multi-turn reasoning with retrieval |
+| `run_visual_benchmark.sh` | Multi-turn reasoning with visual adjustments and retrieval |
+| `run_full_benchmarks.sh` | Executes all of the above in sequence |
+
+These scripts provide a clear stepped ablation over the baseline prompt.

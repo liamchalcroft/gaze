@@ -342,11 +342,28 @@ def process_batch(
     img_path = img_folder / "image.png"
     pil.save(img_path)
 
-    # Baseline run: we do **not** augment with retrieval passages.
     passages: list[str] = []
-
-    # Select baseline prompt template (no retrieval variant)
     template_name = f"baseline/{task}.jinja"
+    retrieval_debug_info = None
+
+    if cfg.use_retrieval and retriever:
+        metadata_rec = batch.get("metadata", [{}])[0] or {}
+        query = (
+            metadata_rec.get("final_diagnosis")
+            or metadata_rec.get("diagnosis")
+            or metadata_rec.get("caption")
+            or metadata_rec.get("clinical_history")
+            or ""
+        )
+        retrieval_debug_info = {"query": query, "success": False, "error": None, "passages": []}
+        try:
+            passages = retriever(query, k=cfg.retrieval.top_k) if query else []
+            retrieval_debug_info["success"] = True
+            retrieval_debug_info["passages"] = passages
+            template_name = f"retrieval_{task}.jinja"
+        except Exception as exc:
+            logger.warning("[baseline] Retrieval failed: %s", exc)
+            retrieval_debug_info["error"] = str(exc)
 
     # Prepare metadata for the prompt, always including image_id and dims
     metadata_for_prompt = {
@@ -371,6 +388,16 @@ def process_batch(
     # Save raw output for debugging
     with open(img_folder / "raw_output.txt", "w") as f:
         f.write(text)
+
+    if retrieval_debug_info:
+        with open(img_folder / "retrieval_debug.txt", "w") as f:
+            f.write(f"Query: {retrieval_debug_info['query']}\n")
+            f.write(f"Success: {retrieval_debug_info['success']}\n")
+            if retrieval_debug_info.get("error"):
+                f.write(f"Error: {retrieval_debug_info['error']}\n")
+            f.write("\n=== PASSAGES ===\n")
+            for p in passages:
+                f.write(p + "\n\n")
 
     # -------------------------------------------------------------
     # Parse JSON with robustness to badly-formatted model output

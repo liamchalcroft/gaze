@@ -47,8 +47,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-${SCRIPT_DIR}/run_baseline_benchmark.sh --data-dir "${DATA_DIR}" --output-dir "${OUTPUT_DIR}/baseline" --batch-size "${BATCH_SIZE}" --max-iters "${MAX_ITERS}"
 
-${SCRIPT_DIR}/run_multiturn_benchmark.sh --data-dir "${DATA_DIR}" --output-dir "${OUTPUT_DIR}/multiturn" --batch-size "${BATCH_SIZE}" --max-iters "${MAX_ITERS}"
+${SCRIPT_DIR}/run_baseline_benchmark.sh \
+  --data-dir "${DATA_DIR}" \
+  --output-dir "${OUTPUT_DIR}/baseline" \
+  --batch-size "${BATCH_SIZE}" \
+  --max-iters "${MAX_ITERS}"
 
-echo "\n✅ Full benchmark suite completed. Consolidated results in: ${OUTPUT_DIR}" 
+${SCRIPT_DIR}/run_retrieval_benchmark.sh \
+  --data-dir "${DATA_DIR}" \
+  --output-dir "${OUTPUT_DIR}/retrieval" \
+  --batch-size "${BATCH_SIZE}" \
+  --max-iters "${MAX_ITERS}"
+
+${SCRIPT_DIR}/run_multiturn_benchmark.sh \
+  --data-dir "${DATA_DIR}" \
+  --output-dir "${OUTPUT_DIR}/multiturn" \
+  --batch-size "${BATCH_SIZE}" \
+  --max-iters "${MAX_ITERS}"
+
+${SCRIPT_DIR}/run_visual_benchmark.sh \
+  --data-dir "${DATA_DIR}" \
+  --output-dir "${OUTPUT_DIR}/visual" \
+  --batch-size "${BATCH_SIZE}" \
+  --max-iters "${MAX_ITERS}"
+
+echo "\n✅ Full benchmark suite completed. Consolidated results in: ${OUTPUT_DIR}"
