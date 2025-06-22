@@ -50,6 +50,7 @@ anthropic = "^0.25.0"
 rouge-score = "^0.1.2"
 sacrebleu = "^2.3.1"
 bert-score = "^0.3.13"
+streamlit = "^1.28.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
@@ -139,6 +140,7 @@ dependencies = [
     "torchmetrics[detection]>=1.7.3",
     "haystack-ai>=2.12.0",
     "langchain>=0.3.25",
+    "streamlit>=1.28.0",
 ]
 name = "nova-retrieval-vlm"
 version = "0.1.0"
