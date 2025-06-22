@@ -10,6 +10,7 @@ A comprehensive framework for comparing baseline and retrieval-augmented vision-
 - 📊 **Comprehensive Evaluation**: Automated metrics for localization, captioning, and diagnosis tasks
 - 🎨 **Visualization Tools**: Rich visualization capabilities with overlay support
 - ⚡ **Async Processing**: High-performance async processing with rate limiting and retry logic
+- 🖼️ **Streamlit Demo**: Interactive GUI with collapsible reasoning traces
 
 ## Quick Start
 
@@ -163,6 +164,14 @@ python -m nova_retrieval_vlm.cli \
   task=prompt \
   prompt_text="Describe the key features of brain MRI analysis." \
   model.name=openai/gpt-4o
+```
+
+##### Streamlit GUI
+
+Launch the interactive demo to explore predictions with collapsible reasoning traces:
+
+```bash
+streamlit run src/nova_retrieval_vlm/visualization/gui.py
 ```
 
 #### Batch Processing

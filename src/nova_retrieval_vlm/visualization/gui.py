@@ -29,18 +29,30 @@ def dummy_predict(model_name: str, image: Image.Image, task: str) -> Dict[str, A
             "boxes": [[20, 20, 80, 80]],
             "labels": ["anomaly"],
             "reasoning": f"{model_name} reasoning for localization.",
+            "reasoning_steps": [
+                "Locate suspicious regions in the image",
+                "Compare with known abnormal patterns",
+            ],
             "retrieval": ["Example guideline passage 1", "Example guideline passage 2"],
         }
     if task == "caption":
         return {
             "text": f"{model_name} caption describing the image.",
             "reasoning": f"{model_name} reasoning for captioning.",
+            "reasoning_steps": [
+                "Identify key structures",
+                "Summarise overall appearance",
+            ],
             "retrieval": ["Example caption passage"],
         }
     if task == "diagnosis":
         return {
             "text": f"{model_name} predicted diagnosis.",
             "reasoning": f"{model_name} reasoning for diagnosis.",
+            "reasoning_steps": [
+                "Consider clinical history",
+                "Match findings with likely diagnoses",
+            ],
             "retrieval": ["Example diagnosis passage"],
         }
     return {}
@@ -54,7 +66,13 @@ def render_prediction(result: Dict[str, Any], image_path: Path, task: str) -> No
     else:
         st.markdown(f"**{task.capitalize()}:** {result.get('text', '')}")
     with st.expander("Reasoning trace"):
-        st.write(result.get("reasoning", "No reasoning available."))
+        steps = result.get("reasoning_steps")
+        if steps:
+            for i, step in enumerate(steps, 1):
+                with st.expander(f"Step {i}"):
+                    st.write(step)
+        else:
+            st.write(result.get("reasoning", "No reasoning available."))
     with st.expander("Retrieved passages"):
         for passage in result.get("retrieval", []):
             st.markdown(f"- {passage}")
