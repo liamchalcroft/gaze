@@ -2,15 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Poetry
-RUN pip install poetry
+# Install uv for fast dependency management
+RUN pip install uv
 
 # Copy project
 COPY . /app
 
 # Install dependencies without dev
-RUN poetry config virtualenvs.create false && \
-    poetry install --no-dev --no-interaction --no-ansi
+RUN uv pip install -e .
 
 # Build guideline indexes at build time (stub)
 RUN mkdir -p /app/indexes

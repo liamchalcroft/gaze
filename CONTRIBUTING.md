@@ -15,10 +15,10 @@ Thank you for your interest in contributing to the NOVA Retrieval VLM framework!
 2. **Set up development environment:**
    ```bash
    # Install dependencies
-   poetry install
+   uv pip install -e .
    
    # Install pre-commit hooks
-   poetry run pre-commit install
+   pre-commit install
    
    # Verify setup
    python scripts/setup_check.py --verbose
@@ -43,13 +43,13 @@ Thank you for your interest in contributing to the NOVA Retrieval VLM framework!
 2. **Make your changes and test:**
    ```bash
    # Run tests
-   poetry run pytest
+   pytest
    
    # Check code quality
-   poetry run black .
-   poetry run isort .
-   poetry run ruff check .
-   poetry run mypy src/
+   black .
+   isort .
+   ruff check .
+   mypy src/
    ```
 
 3. **Commit your changes:**
