@@ -18,13 +18,13 @@ help: ## Show this help message
 # Environment setup
 setup: ## Complete project setup (install deps, create .env, etc.)
 	@echo "🚀 Setting up NOVA Retrieval VLM..."
-       @if command -v uv >/dev/null 2>&1; then \
-               echo "📦 Installing dependencies with uv..."; \
-               uv pip install -e .; \
-       else \
-               echo "📦 Installing dependencies with pip..."; \
-               pip install -e .; \
-       fi
+	@if command -v uv >/dev/null 2>&1; then \
+	echo "📦 Installing dependencies with uv..."; \
+	uv pip install -e .; \
+	else \
+	echo "📦 Installing dependencies with pip..."; \
+	pip install -e .; \
+	fi
 	@if [ ! -f .env ]; then \
 		echo "⚙️  Creating .env file from template..."; \
 		cp .env.example .env || echo "Please create .env file manually"; \
@@ -33,11 +33,11 @@ setup: ## Complete project setup (install deps, create .env, etc.)
 	@echo "✅ Setup complete! Run 'make check' to verify."
 
 install: ## Install dependencies only
-       @if command -v uv >/dev/null 2>&1; then \
-               uv pip install -e .; \
-       else \
-               pip install -e .; \
-       fi
+	@if command -v uv >/dev/null 2>&1; then \
+	uv pip install -e .; \
+	else \
+	pip install -e .; \
+	fi
 
 # Configuration and verification
 check: ## Check setup and configuration
@@ -70,20 +70,20 @@ data: download index ## Download dataset and build indexes
 # Testing and development
 test: ## Run test suite
 	@echo "🧪 Running tests..."
-@if command -v uv >/dev/null 2>&1; then \
-pytest; \
-else \
-pytest; \
-fi
+	@if command -v uv >/dev/null 2>&1; then \
+	pytest; \
+	else \
+	pytest; \
+	fi
 
 test-cov: ## Run tests with coverage
 	@echo "🧪 Running tests with coverage..."
-@if command -v uv >/dev/null 2>&1; then \
-pytest --cov=nova_retrieval_vlm --cov-report=html; \
-else \
-pytest --cov=nova_retrieval_vlm --cov-report=html; \
-fi
-
+	@if command -v uv >/dev/null 2>&1; then \
+	pytest --cov=nova_retrieval_vlm --cov-report=html; \
+	else \
+	pytest --cov=nova_retrieval_vlm --cov-report=html; \
+	fi
+	
 quick: ## Run quick test with free model
 	@echo "⚡ Running quick test..."
 	@bash scripts/run_experiments.sh quick
@@ -91,23 +91,23 @@ quick: ## Run quick test with free model
 # Code quality
 format: ## Format code with black and isort
 	@echo "🎨 Formatting code..."
-@if command -v uv >/dev/null 2>&1; then \
-black .; \
-isort .; \
-else \
-black .; \
-isort .; \
-fi
+	@if command -v uv >/dev/null 2>&1; then \
+	black .; \
+	isort .; \
+	else \
+	black .; \
+	isort .; \
+	fi
 
 lint: ## Check code quality
 	@echo "🔍 Linting code..."
-@if command -v uv >/dev/null 2>&1; then \
-ruff check .; \
-mypy src/; \
-else \
-ruff check .; \
-mypy src/; \
-fi
+	@if command -v uv >/dev/null 2>&1; then \
+	ruff check .; \
+	mypy src/; \
+	else \
+	ruff check .; \
+	mypy src/; \
+	fi
 
 quality: format lint ## Format and lint code
 
@@ -159,13 +159,13 @@ docs: ## Generate documentation
 # Development utilities
 dev-setup: ## Setup development environment with pre-commit hooks
 	@echo "👨‍💻 Setting up development environment..."
-@if command -v uv >/dev/null 2>&1; then \
-uv pip install -e .[dev]; \
-pre-commit install; \
-else \
-pip install -e .[dev]; \
-pre-commit install; \
-fi
+	@if command -v uv >/dev/null 2>&1; then \
+	uv pip install -e .[dev]; \
+	pre-commit install; \
+	else \
+	pip install -e .[dev]; \
+	pre-commit install; \
+	fi
 
 demo: ## Run a quick demo of all tasks
 	@echo "🎭 Running demonstration of all tasks..."
