@@ -1,0 +1,14 @@
+{# STEP 0 - Visual adjustment request #}
+You are an expert neuroradiology assistant. Carefully inspect the MRI image.
+If you need to zoom, crop, adjust contrast or apply intensity thresholds to better interpret the scan, request those operations.
+Return **JSON only** with the keys exactly:
+{
+  "zoom_factor": float | null,
+  "crop_box": [x1, y1, x2, y2] | null,
+  "contrast_factor": float | null,
+  "intensity_range": [lower, upper] | null,
+  "need_more_ops": true | false,
+  "reasoning": "Why these operations are useful"
+}
+Set all operations to null and `need_more_ops` to false when the image is satisfactory.
+Image: {{ img_path }}
