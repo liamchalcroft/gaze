@@ -10,7 +10,7 @@ Your NOVA Retrieval VLM framework has been fully configured and is ready for exp
 - ✅ **This summary file**: Setup completion checklist
 
 ### 🔧 Configuration Files
-- ✅ **pyproject.toml**: Dependency management with Poetry
+- ✅ **pyproject.toml**: Dependency management with uv
 - ✅ **.gitignore**: Comprehensive gitignore for ML/research projects
 - ✅ **.env.example**: Template for environment variables
 - ✅ **Makefile**: Convenient shortcuts for common tasks
@@ -41,8 +41,8 @@ cp .env.example .env
 
 ### 2. Install Dependencies
 ```bash
-# Using Poetry (recommended)
-poetry install
+# Using uv (recommended)
+uv pip install -e .
 
 # Or using pip
 pip install -e .
@@ -153,7 +153,7 @@ If you encounter issues:
 
 1. **Check setup**: `make check`
 2. **Verify API keys**: Ensure they're correctly set in `.env`
-3. **Check dependencies**: `poetry install` or `pip install -e .`
+3. **Check dependencies**: `uv pip install -e .` or `pip install -e .`
 4. **Review logs**: Check experiment output directories for detailed logs
 5. **Use free models**: Start with `openai/gpt-4o-mini:free` for testing
 

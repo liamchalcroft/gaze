@@ -16,7 +16,7 @@ A comprehensive framework for comparing baseline and retrieval-augmented vision-
 ### Prerequisites
 
 - Python ≥ 3.9
-- Poetry (recommended) or pip
+- uv (recommended) or pip
 - OpenRouter and/or OpenAI API keys
 
 ### Installation
@@ -29,8 +29,8 @@ A comprehensive framework for comparing baseline and retrieval-augmented vision-
 
 2. **Install dependencies:**
    ```bash
-   # Using Poetry (recommended)
-   poetry install
+   # Using uv (recommended)
+   uv pip install -e .
 
    # Or using pip
    pip install -e .
@@ -319,37 +319,37 @@ python scripts/plot_results.py --input-dir runs/experiment --output-dir plots/
 
 ```bash
 # Run all tests
-poetry run pytest
+pytest
 
 # Run with coverage
-poetry run pytest --cov=nova_retrieval_vlm
+pytest --cov=nova_retrieval_vlm
 
 # Run specific test file
-poetry run pytest tests/test_models.py
+pytest tests/test_models.py
 ```
 
 ### Code Quality
 
 ```bash
 # Format code
-poetry run black .
-poetry run isort .
+black .
+isort .
 
 # Lint code
-poetry run ruff check .
+ruff check .
 
 # Type checking
-poetry run mypy src/
+mypy src/
 ```
 
 ### Pre-commit Hooks
 
 ```bash
 # Install pre-commit hooks
-poetry run pre-commit install
+pre-commit install
 
 # Run hooks manually
-poetry run pre-commit run --all-files
+pre-commit run --all-files
 ```
 
 ## Troubleshooting
