@@ -417,6 +417,7 @@ The framework ships with two families of Jinja templates under
 | `baseline/` | **Baseline, single-turn** prompts (no guideline retrieval). | `localization.jinja`, `caption.jinja`, `diagnosis.jinja` |
 | `multiturn/` | **Clinician-style, multi-turn** reasoning chain. | `step1.jinja` (observations + differential), `step2.jinja` (guideline-aware final decision with bboxes). |
 | `visual_ops/` | **Interactive visual reasoning** with zoom/crop/contrast adjustment. | `step1.jinja` (request operations), `step2.jinja` (analysis after operations). |
+| `visual_multiturn/` | **Multi-turn with retrieval and visual ops**. | `ops_request.jinja` plus all multiturn templates. |
 
 The CLI flag `approach` controls which family is used:
 
@@ -426,6 +427,9 @@ python -m nova_retrieval_vlm.cli task=localization approach=baseline
 
 # Two-turn reasoning with guideline integration
 python -m nova_retrieval_vlm.cli task=localization approach=multiturn use_retrieval=true
+
+# Multi-turn with visual adjustments and retrieval
+python -m nova_retrieval_vlm.cli task=localization approach=visual_multiturn use_retrieval=true
 ```
 
 `multiturn/step1.jinja` asks the model for qualitative observations and a short differential diagnosis.  Those diagnoses are fed into the guideline retriever; the top-*k* passages are then injected into `multiturn/step2.jinja`, which requests the final JSON output (bounding boxes / labels / scores) under strict formatting rules.

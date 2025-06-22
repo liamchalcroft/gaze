@@ -500,3 +500,4 @@ indexes/
 # Misc
 .DS_Store
 !tests/test_image_ops.py
+!tests/test_visual_multiturn_prompt.py
