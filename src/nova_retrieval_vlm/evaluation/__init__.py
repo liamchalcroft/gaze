@@ -49,10 +49,8 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
     result_metrics = {}
     
     if task == 'localization':
-        # Import will raise ImportError with a normal traceback if torch or
-        # torchvision are missing - we let it propagate so the user sees the
-        # concrete root-cause instead of a custom wrapper.
-        from nova_retrieval_vlm.evaluation.detection import evaluate_detection  # noqa: E501
+        # Use the public helper so that unit tests can monkey-patch it easily.
+        from nova_retrieval_vlm.evaluation import evaluate_detection  # type: ignore
 
         def _maybe_xywh_to_xyxy(boxes: list[list[float]]) -> list[list[float]]:
             """Convert boxes from [x,y,w,h] to [x1,y1,x2,y2] **in place** if needed.
@@ -101,7 +99,7 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
         })
     
     elif task == 'caption':
-        from nova_retrieval_vlm.evaluation.caption import evaluate_caption
+        from nova_retrieval_vlm.evaluation import evaluate_caption  # type: ignore
         pred_caps = [p.get('caption', '') for p in preds]
         ref_caps = [r.get('caption', '') for r in refs]
         cap_scores = evaluate_caption(pred_caps, ref_caps)
@@ -116,7 +114,7 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
         })
     
     elif task == 'diagnosis':
-        from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis
+        from nova_retrieval_vlm.evaluation import evaluate_diagnosis  # type: ignore
         pred_diags = [p.get('diagnosis', '') for p in preds]
         ref_diags = [r.get('diagnosis', '') for r in refs]
         diag_scores = evaluate_diagnosis(pred_diags, ref_diags)
@@ -134,4 +132,28 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
 
 
 # No fallback stubs - missing optional dependencies will raise the original
-# ImportError so that issues surface immediately during testing/runs. 
+# ImportError so that issues surface immediately during testing/runs.
+
+# ---------------------------------------------------------------------------
+# Public wrapper utilities – provide stable symbols for `pytest.patch`
+# ---------------------------------------------------------------------------
+
+def evaluate_detection(preds, refs):  # noqa: D401, E501 – thin passthrough
+    """Delegate to `evaluation.detection.evaluate_detection` lazily."""
+    from nova_retrieval_vlm.evaluation.detection import evaluate_detection as _ed
+
+    return _ed(preds, refs)
+
+
+def evaluate_caption(pred_captions, ref_captions):  # noqa: D401,E501
+    """Delegate to `evaluation.caption.evaluate_caption` lazily."""
+    from nova_retrieval_vlm.evaluation.caption import evaluate_caption as _ec
+
+    return _ec(pred_captions, ref_captions)
+
+
+def evaluate_diagnosis(pred_diags, ref_diags):  # noqa: D401,E501
+    """Delegate to `evaluation.diagnosis.evaluate_diagnosis` lazily."""
+    from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis as _edx
+
+    return _edx(pred_diags, ref_diags) 

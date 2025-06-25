@@ -6,7 +6,7 @@ from typing import Optional
 
 @dataclass
 class RetrievalConfig:
-    type: str = "bm25"  # Options: bm25, dense, hybrid
+    type: str = "hybrid"  # Options: bm25, dense, hybrid. Hybrid with RRF typically performs best
     top_k: int = 5
     hybrid_ratio: float = 0.5
 

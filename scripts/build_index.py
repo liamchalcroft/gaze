@@ -5,7 +5,9 @@ Usage:
     python scripts/build_index.py \
         --config docs/guidelines.yaml \
         --raw-dir data/raw/guidelines \
-        --output-dir indexes
+        --output-dir indexes \
+        --num-workers 8 \
+        --parallel-index-build
 """
 import argparse
 from pathlib import Path
@@ -28,13 +30,27 @@ def main():
     parser.add_argument(
         "--verbose", action="store_true", help="Print verbose crawl progress"
     )
+    parser.add_argument(
+        "--num-workers", type=int, default=4,
+        help="Number of parallel workers for crawling / indexing"
+    )
+    parser.add_argument(
+        "--robots-mode", type=str, default="strict", choices=["strict", "lax", "off"],
+        help="Robots.txt handling: strict (default), lax (fall back to Googlebot rules), off (ignore)"
+    )
+    parser.add_argument(
+        "--no-parallel-index-build", action="store_true",
+        help="Disable parallel building of BM25 and FAISS indexes (build sequentially)"
+    )
     args = parser.parse_args()
 
     build_indexes(
-        config_yaml=args.config,
+        config_path=args.config,
         raw_dir=args.raw_dir,
-        output_dir=Path(args.output_dir),
-        verbose=args.verbose,
+        index_dir=args.output_dir,
+        num_workers=args.num_workers,
+        parallel_index_build=not args.no_parallel_index_build,
+        robots_mode=args.robots_mode,
     )
     print(f"Built indexes under {args.output_dir}")
 

@@ -18,7 +18,13 @@ from omegaconf import OmegaConf
 from nova_retrieval_vlm.config import Config
 from nova_retrieval_vlm.data.nova_dataset import get_dataloader
 from nova_retrieval_vlm.evaluation import evaluate
-from nova_retrieval_vlm.guidelines.retrievers import BM25Retriever, DenseRetriever, HybridRetriever
+from nova_retrieval_vlm.guidelines.retrievers import (
+    BM25Retriever,
+    DenseRetriever,
+    HybridRetriever,
+    CrossEncoderReranker,
+    MedicalQueryExpander,
+)
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
 from nova_retrieval_vlm.prompts.prompt_loader import load_prompt
 from nova_retrieval_vlm.visual_reasoning.image_ops import (
@@ -278,10 +284,20 @@ def setup_retriever(cfg: Config):
             return DenseRetriever(str(faiss_idx))
         else:
             logger.info(f"Setting up HybridRetriever from {bm25_idx} and {faiss_idx}")
+            reranker = None
+            query_expander = None
+            # Enable re-ranking if sentence-transformers CrossEncoder available
+            try:
+                reranker = CrossEncoderReranker()
+            except ImportError:
+                logger.warning("CrossEncoder not available – skipping re-ranking stage")
+            query_expander = MedicalQueryExpander()
             return HybridRetriever(
                 BM25Retriever(str(bm25_idx)),
                 DenseRetriever(str(faiss_idx)),
                 alpha=cfg.retrieval.hybrid_ratio,
+                reranker=reranker,
+                query_expander=query_expander,
             )
     except Exception as e:
         logger.error(f"Failed to setup retriever (type: {cfg.retrieval.type}): {e}")
@@ -1220,6 +1236,9 @@ def process_batch_visual_multiturn(
 
     hf_record_local = dict(hf_record)
     hf_record_local["image_path"] = str(processed_path)
+    # Ensure downstream pipeline uses the processed image instead of the original in-memory one
+    # by removing/clearing the `image` field that would otherwise take precedence.
+    hf_record_local.pop("image", None)
     tmp_ds = [hf_record_local for _ in range(batch_idx + 1)]
 
     result = process_batch_multiturn(

@@ -12,10 +12,26 @@ rcr_urls:
   - https://www.rcr.ac.uk/our-services/all-our-publications/clinical-radiology-publications/
 
 settings:
-  chunk_size: 1000
-  chunk_overlap: 200
-  crawl_depth: 2
-  request_delay: 2
+  # --------------------------------------------------------------
+  # Ingestion / chunking parameters — tuned for E5 embeddings +
+  # BM25 fusion.  The chunk size of ~800 characters (~130-150
+  # tokens) yields a good balance between context and recall, while
+  # 20 % overlap prevents cutting sentences mid-way.
+  # --------------------------------------------------------------
+  chunk_size: 800          # characters
+  chunk_overlap: 160       # 20 % of chunk_size
+
+  # Crawler behaviour - more aggressive for discovery
+  crawl_depth: 5           # increased from 3 to 5 for more discovery
+  request_delay: 0.5       # reduced from 1.5 to 0.5 seconds for faster crawling
+  download_timeout: 10     # seconds – new field honoured by ingest_nice
+
+  # Patterns of URLs to skip early (regex OR-ed inside ingest code)
+  skip_url_patterns:
+    - "\\?.*page="      # paginated search/query strings
+    - "/(search|filter)/"
+    - "calendar"          # event calendars rarely contain guidelines
+
   include_keywords:
     - mri
     - magnetic resonance
@@ -74,28 +90,59 @@ settings:
     - "traumatic brain injury"
     - tbi
     - concussion
-  # exclude_keywords:
-  #   - chest
-    # - lung
-    # - thoracic
-    # - abdomen
-    # - abdominal
-    # - pelvis
-    # - pelvic
-    # - prostate
-    # - cardiac
-    # - heart
-    # - liver
-    # - kidney
-    # - renal
-    # - pancreas
-    # - breast
-    # - musculoskeletal
-    # - shoulder
-    # - knee
-    # - hip
-    # - ankle
-    # - foot
-    # - wrist
-    # - hand
-    # - elbow 
+    # Imaging technique keywords – extra synonyms
+    - mra
+    - dwi
+    - flair
+    - t2star
+
+    # Neuro-vascular / haemorrhage terms
+    - sah
+    - ich
+    - intracerebral haemorrhage
+    - subarachnoid haemorrhage
+
+    # Skull-base / cranial nerve regions
+    - sellar
+    - parasellar
+    - pituitary
+
+    # Imaging plane / geometry terms
+    - axial
+    - coronal
+    - sagittal
+    - transverse
+    - oblique
+
+  exclude_keywords:
+    - chest
+    - lung
+    - thoracic
+    - abdomen
+    - abdominal
+    - pelvis
+    - pelvic
+    - prostate
+    - cardiac
+    - heart
+    - liver
+    - kidney
+    - renal
+    - pancreas
+    - breast
+    - musculoskeletal
+    - shoulder
+    - knee
+    - hip
+    - ankle
+    - foot
+    - wrist
+    - hand
+    - elbow
+    - obstetric
+    - gynecology
+    - gynaecology
+    - fetal
+    - obstetrics
+    - maternity
+    - breastfeeding 

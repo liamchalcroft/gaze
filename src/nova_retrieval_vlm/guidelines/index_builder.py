@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, List
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from haystack.document_stores.in_memory import InMemoryDocumentStore
 from haystack.components.retrievers.in_memory import InMemoryBM25Retriever as HS_BM25
@@ -40,11 +41,13 @@ def build_bm25(
     store.write_documents(hay_docs)
     # Initialize retriever to ensure indexing
     _ = HS_BM25(document_store=store)
+    print(f"✓ BM25 index built with {len(docs)} documents")
 
 
 def build_faiss(
     docs: List[dict[str, Any]],
     index_dir: Path | str,
+    batch_size: int = 64,
 ) -> None:
     """
     Build and persist a FAISS dense index for the given docs.
@@ -52,6 +55,7 @@ def build_faiss(
     Args:
         docs: List of docs as returned by ingest_nice.
         index_dir: Directory to store faiss.index and faiss_docs.jsonl.
+        batch_size: Batch size for embedding computation.
     """
     if not docs:
         print("Warning: no documents to index for FAISS - skipping.")
@@ -60,16 +64,50 @@ def build_faiss(
     index_path = Path(index_dir)
     index_path.mkdir(parents=True, exist_ok=True)
     texts = [doc['text'] for doc in docs]
-    # Compute embeddings
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=True)
-    # Normalize if using inner-product
+
+    # --------------------------------------------------------------
+    # Choose a state-of-the-art embedding model tuned for retrieval.
+    # "intfloat/e5-base-v2" consistently outperforms MiniLM on RAG
+    # benchmarks and understands biomedical language well.
+    # We follow the recommended "passage: " prefix for document
+    # embeddings (queries will be prefixed with "query: " at search
+    # time by the DenseRetriever).
+    # --------------------------------------------------------------
+    model_name = 'intfloat/e5-base-v2'
+    model = SentenceTransformer(model_name)
+    passages = [f"passage: {t}" for t in texts]
+    
+    print(f"Computing embeddings for {len(passages)} documents...")
+    embeddings = model.encode(
+        passages,
+        convert_to_numpy=True,
+        show_progress_bar=True,
+        batch_size=batch_size,
+    )
+
+    # L2-normalise so that inner product ~ cosine similarity
+    faiss.normalize_L2(embeddings)
+
     if embeddings.size == 0:
         print("Warning: embeddings array empty - skipping FAISS index build.")
         return
-    faiss.normalize_L2(embeddings)
+
     dim = embeddings.shape[1]
-    index = faiss.IndexFlatIP(dim)
+
+    # Use HNSW for sub-linear ANN search while maintaining high recall.
+    # Optimized parameters based on retrieval research:
+    # - M=64: Higher connections for better recall (vs default 32)
+    # - efConstruction=400: More thorough construction (vs default 200)  
+    # - efSearch=128: More candidates during search (vs default 64)
+    try:
+        index = faiss.IndexHNSWFlat(dim, 64)  # M=64 for better accuracy
+        index.hnsw.efConstruction = 400  # Higher for better index quality
+        index.hnsw.efSearch = 128  # Higher for better search recall
+    except AttributeError:
+        # Fallback to exact search if HNSW not available in the FAISS build
+        index = faiss.IndexFlatIP(dim)
+
+    print(f"Building FAISS index...")
     index.add(embeddings)
     # Persist index
     faiss.write_index(index, str(index_path / 'faiss.index'))
@@ -77,22 +115,60 @@ def build_faiss(
     with open(index_path / 'faiss_docs.jsonl', 'w') as fw:
         for doc in docs:
             fw.write(json.dumps(doc) + '\n')
+    print(f"✓ FAISS index built with {len(docs)} documents")
 
 
 def build_indexes(
-    config_yaml: str,
+    config_path: str,
     raw_dir: str,
-    output_dir: Path | str,
+    index_dir: str | Path,
     *,
-    verbose: bool = False,
+    num_workers: int = 4,
+    parallel_index_build: bool = True,
+    robots_mode: str = "strict",
 ) -> None:
     """
     Ingest guideline documents (see `ingest_nice`) and build both BM25 and
-    FAISS indexes.  The resulting artefacts are saved under `output_dir`.
+    FAISS indexes.  The resulting artefacts are saved under `index_dir`.
+    
+    Args:
+        config_path: Path to guidelines YAML configuration.
+        raw_dir: Directory where raw downloaded files will be cached.
+        index_dir: Directory to save index artifacts.
+        num_workers: Number of workers for parallel ingestion.
+        parallel_index_build: Whether to build BM25 and FAISS indexes in parallel.
+        robots_mode: Mode for robots (default "strict").
     """
-    docs = ingest_nice(config_yaml, raw_dir, verbose=verbose)
+    print("🔍 Starting document ingestion...")
+    docs = ingest_nice(
+        config_path,
+        raw_dir,
+        verbose=True,
+        num_workers=num_workers,
+        robots_mode=robots_mode,
+    )
     if not docs:
         print("No documents ingested - nothing to index.")
         return
-    build_bm25(docs, Path(output_dir) / 'bm25')
-    build_faiss(docs, Path(output_dir) / 'faiss')
+    
+    print(f"📚 Building indexes for {len(docs)} document chunks...")
+    
+    if parallel_index_build:
+        # Build BM25 and FAISS indexes in parallel
+        with ProcessPoolExecutor(max_workers=2) as executor:
+            bm25_future = executor.submit(build_bm25, docs, Path(index_dir) / 'bm25')
+            faiss_future = executor.submit(build_faiss, docs, Path(index_dir) / 'faiss')
+            
+            # Wait for both to complete
+            for future in as_completed([bm25_future, faiss_future]):
+                try:
+                    future.result()  # This will raise any exception that occurred
+                except Exception as e:
+                    print(f"Error in parallel index building: {e}")
+                    raise
+    else:
+        # Sequential build
+        build_bm25(docs, Path(index_dir) / 'bm25')
+        build_faiss(docs, Path(index_dir) / 'faiss')
+    
+    print("✅ Index building completed!")
