@@ -106,10 +106,29 @@ class DenseRetriever:
         if self._use_e5_prefix:
             query = f"query: {query}"
 
+        # Encode the query to a NumPy vector. The sentence-transformers encoder
+        # returns a 1-D array of shape ``(d,)``.  FAISS helper utilities such as
+        # ``faiss.normalize_L2`` expect a 2-D array with shape ``(n, d)`` where
+        # *n* is the number of vectors.  Wrap the vector in an additional axis
+        # to satisfy this requirement and to avoid the "tuple index out of
+        # range" error when FAISS attempts to access ``shape[1]``.
+
         q_emb = self.model.encode(query, convert_to_numpy=True)
+
+        # Ensure shape is (1, d) for FAISS.
+        if q_emb.ndim == 1:
+            q_emb = np.expand_dims(q_emb, axis=0)
+
+        # L2-normalise vectors in-place for cosine-similarity search.
         faiss.normalize_L2(q_emb)
-        _, indices = self.index.search(np.array([q_emb]), k)
-        return [self.texts[i] for i in indices[0]]
+
+        # Perform the search.  ``search`` expects float32; encode already
+        # returns the correct dtype, but cast defensively.
+        q_emb = q_emb.astype('float32')
+        _, indices = self.index.search(q_emb, k)
+
+        # indices is shape (1, k); flatten to list and map to texts.
+        return [self.texts[i] for i in indices[0] if i < len(self.texts)]
 
 class CrossEncoderReranker:
     """Cross-encoder re-ranker for improving retrieval precision."""
