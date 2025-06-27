@@ -35,6 +35,72 @@ from nova_retrieval_vlm.visual_reasoning.image_ops import (
 )
 
 # ---------------------------------------------------------------------------
+# Robust JSON parsing helper (shared by all pipelines)
+# ---------------------------------------------------------------------------
+
+import re
+from ast import literal_eval
+
+
+def robust_json_loads(payload: str):  # noqa: D401
+    """Best-effort JSON deserialization.
+
+    Models occasionally wrap their JSON answer in Markdown fences, add a
+    leading *Answer:* prefix, or use single quotes / trailing commas.  This
+    helper applies a series of increasingly permissive strategies and only
+    gives up as a *last resort*.  The returned object is **always** a dict so
+    that downstream evaluation code does not crash.
+    """
+
+    import json
+
+    # Strategy 1 — direct parse ------------------------------------------------
+    try:
+        obj = json.loads(payload)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2 — strip common wrappers --------------------------------------
+    cleaned = payload.strip()
+    cleaned = re.sub(r"^Answer:\s*", "", cleaned, flags=re.IGNORECASE)
+    # Remove ```json ... ``` or generic ``` fenced blocks
+    cleaned = re.sub(r"```(?:json)?", "", cleaned)
+    cleaned = cleaned.strip()
+    try:
+        obj = json.loads(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 3 — extract first {...} block -----------------------------------
+    m = re.search(r"\{.*\}", payload, flags=re.DOTALL)
+    if m:
+        snippet = m.group(0)
+        try:
+            obj = json.loads(snippet)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 4 — literal_eval for Python-style dicts -------------------------
+    try:
+        obj = literal_eval(snippet if 'snippet' in locals() else payload)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    # Final fallback -----------------------------------------------------------
+    from loguru import logger as _logger
+
+    _logger.warning("robust_json_loads: failed to decode Model output – returning stub")
+    return {"raw": payload}
+
+# ---------------------------------------------------------------------------
 # Optional .env loading
 # ---------------------------------------------------------------------------
 #
@@ -362,8 +428,19 @@ def process_batch(
     template_name = f"baseline/{task}.jinja"
     retrieval_debug_info = None
 
+    # ------------------------------------------------------------------
+    # Safe access to optional metadata list.  Some NOVA records have an
+    # empty list or omit the field altogether, which previously caused
+    # IndexError / KeyError when we assumed element [0] existed.
+    # ------------------------------------------------------------------
+
+    _meta_list = batch.get("metadata", []) or []
+    if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+        metadata_rec = _meta_list[0]
+    else:
+        metadata_rec = {}
+
     if cfg.use_retrieval and retriever:
-        metadata_rec = batch.get("metadata", [{}])[0] or {}
         query = (
             metadata_rec.get("final_diagnosis")
             or metadata_rec.get("diagnosis")
@@ -388,7 +465,12 @@ def process_batch(
         "height": pil.height,
     }
     if task == "diagnosis":
-        metadata_for_prompt["clinical_history"] = batch["metadata"][0].get("clinical_history", "")
+        # Safe access to optional metadata list
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_for_prompt["clinical_history"] = _meta_list[0].get("clinical_history", "")
+        else:
+            metadata_for_prompt["clinical_history"] = ""
 
     # Load prompt
     prompt = load_prompt(template_name, img_path, passages, metadata_for_prompt)
@@ -419,34 +501,7 @@ def process_batch(
     # Parse JSON with robustness to badly-formatted model output
     # -------------------------------------------------------------
 
-    def _safe_json_loads(payload: str) -> dict:
-        """Attempt to parse *payload* as JSON.
-
-        The VLM sometimes emits stray characters (e.g. leading "Answer:" lines)
-        or wrongly formatted Markdown.  We therefore try progressively more
-        forgiving strategies before giving up:
-
-        1. Direct `json.loads`.
-        2. Find the first '{{' and last '}}' and try to load that substring.
-        3. Return a minimal fallback dict containing the raw text.
-        """
-        import re
-
-        try:
-            return json.loads(payload)
-        except json.JSONDecodeError:
-            # Strategy 2: extract first/last curly braces block
-            m = re.search(r"\{.*\}", payload, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except json.JSONDecodeError:
-                    pass
-        # Final fallback - return raw text so that downstream still works.
-        logger.warning("Unable to parse model output as JSON for image %d", batch_idx)
-        return {"raw": payload, "boxes": [], "labels": [], "scores": []}
-
-    result = _safe_json_loads(text)
+    result = robust_json_loads(text)
 
     # Add metadata
     result["image_path"] = str(img_path)
@@ -687,8 +742,18 @@ def process_batch_multiturn(
 
     img_folder = main_run_dir / f"image_{batch_idx}"
     img_folder.mkdir(parents=True, exist_ok=True)
-    img_path = img_folder / "image.png"
-    pil.save(img_path)
+    
+    # Check if we already have a processed image path from visual multiturn
+    existing_img_path = hf_record.get("image_path")
+    if existing_img_path and Path(existing_img_path).exists():
+        # Use the existing processed image path
+        img_path = Path(existing_img_path)
+        # Load the image to get dimensions
+        pil = Image.open(img_path).convert("L")
+    else:
+        # Create a new image path as before
+        img_path = img_folder / "image.png"
+        pil.save(img_path)
 
     width, height = pil.width, pil.height
 
@@ -701,7 +766,12 @@ def process_batch_multiturn(
 
     # Add clinical history for diagnosis task
     if task == "diagnosis":
-        metadata_common["clinical_history"] = batch["metadata"][0].get("clinical_history", "")
+        # Safe access to optional metadata list
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_common["clinical_history"] = _meta_list[0].get("clinical_history", "")
+        else:
+            metadata_common["clinical_history"] = ""
 
     # ------------------------------------------------------------------
     # 2. TURN-1  (initial observations + provisional differential)
@@ -723,20 +793,10 @@ def process_batch_multiturn(
 
     # Parse JSON safely
     def _safe_json_loads(payload: str):
-        import json as _json
-        import re
-
-        try:
-            return _json.loads(payload)
-        except _json.JSONDecodeError:
-            m = re.search(r"\{.*\}", payload, re.DOTALL)
-            if m:
-                try:
-                    return _json.loads(m.group(0))
-                except _json.JSONDecodeError:
-                    pass
-        logger.warning("[multiturn] Could not parse JSON for image %d", batch_idx)
-        return {}
+        parsed = robust_json_loads(payload)
+        if "raw" in parsed:
+            logger.warning("[multiturn] Could not parse JSON for image %d", batch_idx)
+        return parsed
 
     turn1_data = _safe_json_loads(text1)
     diff_list = turn1_data.get("differential", []) if isinstance(turn1_data, dict) else []
@@ -1183,64 +1243,111 @@ def process_batch_visual_multiturn(
 
     img_folder = main_run_dir / f"image_{batch_idx}"
     img_folder.mkdir(parents=True, exist_ok=True)
-    img_path = img_folder / "image.png"
-    pil.save(img_path)
+    original_img_path = img_folder / "image.png"
+    pil.save(original_img_path)
 
-    processed_path = img_path
+    # Store the original image for reference
+    original_image = pil.copy()
+    
+    # Track the current operations to apply to the original image
+    current_operations = {
+        "zoom_factor": None,
+        "crop_box": None,
+        "contrast_factor": None,
+        "intensity_range": None,
+    }
+    
+    # Collect analysis notes from each round
+    analysis_notes = []
+    
     for i in range(max(cfg.visual_rounds, 1)):
+        # Always start with the original image and apply current operations
+        current_img = original_image.copy()
+        
+        # Apply current operations to the original image
+        if current_operations["zoom_factor"]:
+            current_img = zoom_image(current_img, current_operations["zoom_factor"])
+        if current_operations["crop_box"]:
+            current_img = crop_image(current_img, current_operations["crop_box"])
+        if current_operations["contrast_factor"]:
+            current_img = adjust_contrast(current_img, current_operations["contrast_factor"])
+        if current_operations["intensity_range"]:
+            current_img = apply_intensity_threshold(current_img, *current_operations["intensity_range"])
+        
+        # Save the current processed image for this round
+        current_img_path = img_folder / f"processed_{i+1}.png"
+        current_img.save(current_img_path)
+        
+        # Ask the model what operations to apply next and get analysis notes
         prompt_ops = load_prompt(
             "visual_multiturn/ops_request.jinja",
-            img_path=processed_path,
+            img_path=current_img_path,
             passages=[],
             metadata={"image_id": batch_idx},
         )
         text_ops, _ = asyncio.run(
-            adapter.generate(processed_path, passages=[], system_prompt=prompt_ops)
+            adapter.generate(current_img_path, passages=[], system_prompt=prompt_ops)
         )
         with open(img_folder / f"ops_round_{i+1}.txt", "w") as f:
             f.write(text_ops)
 
         def _safe_json_loads(payload: str):
-            import json as _json
-            import re
-
-            try:
-                return _json.loads(payload)
-            except _json.JSONDecodeError:
-                m = re.search(r"\{.*\}", payload, re.DOTALL)
-                if m:
-                    try:
-                        return _json.loads(m.group(0))
-                    except _json.JSONDecodeError:
-                        pass
-            logger.warning("[visual_multiturn] Could not parse JSON for ops round %d", i + 1)
-            return {}
+            parsed = robust_json_loads(payload)
+            if "raw" in parsed:
+                logger.warning(
+                    "[visual_multiturn] Could not parse JSON for image %d", batch_idx
+                )
+            return parsed
 
         ops = _safe_json_loads(text_ops)
-        img = Image.open(processed_path)
-        if zf := ops.get("zoom_factor"):
-            img = zoom_image(img, float(zf))
-        if cb := ops.get("crop_box"):
-            img = crop_image(img, tuple(map(int, cb)))
-        if cf := ops.get("contrast_factor"):
-            img = adjust_contrast(img, float(cf))
-        if ir := ops.get("intensity_range"):
-            low, high = map(int, ir)
-            img = apply_intensity_threshold(img, low, high)
+        
+        # Extract analysis notes if provided
+        if "analysis_notes" in ops:
+            analysis_notes.append(f"Round {i+1}: {ops['analysis_notes']}")
+        
+        # Check if we should reset to original
+        if ops.get("reset_to_original", False):
+            current_operations = {
+                "zoom_factor": None,
+                "crop_box": None,
+                "contrast_factor": None,
+                "intensity_range": None,
+            }
+        else:
+            # Update current operations with new requests
+            if ops.get("zoom_factor") is not None:
+                current_operations["zoom_factor"] = ops["zoom_factor"]
+            if ops.get("crop_box") is not None:
+                current_operations["crop_box"] = ops["crop_box"]
+            if ops.get("contrast_factor") is not None:
+                current_operations["contrast_factor"] = ops["contrast_factor"]
+            if ops.get("intensity_range") is not None:
+                current_operations["intensity_range"] = ops["intensity_range"]
 
-        processed_path = img_folder / f"processed_{i+1}.png"
-        img.save(processed_path)
+        # Save the current operations state
+        with open(img_folder / f"operations_state_{i+1}.json", "w") as f:
+            import json
+            json.dump(current_operations, f, indent=2)
 
         if not ops.get("need_more_ops", False):
             break
 
+    # Save the collected analysis notes
+    if analysis_notes:
+        with open(img_folder / "analysis_notes.txt", "w") as f:
+            f.write("\n\n".join(analysis_notes))
+
+    # IMPORTANT: Use the ORIGINAL image for the final task, not the processed image
+    # The processed images were only for analysis and thinking
     hf_record_local = dict(hf_record)
-    hf_record_local["image_path"] = str(processed_path)
-    # Ensure downstream pipeline uses the processed image instead of the original in-memory one
-    # by removing/clearing the `image` field that would otherwise take precedence.
+    hf_record_local["image_path"] = str(original_img_path)  # Use original image
+    # Ensure downstream pipeline uses the original image
     hf_record_local.pop("image", None)
+    
+    # Create a temporary dataset with the original image
     tmp_ds = [hf_record_local for _ in range(batch_idx + 1)]
 
+    # Call the multiturn function with the original image
     result = process_batch_multiturn(
         batch_idx=batch_idx,
         batch=batch,

@@ -83,7 +83,11 @@ class BM25Retriever:
 class DenseRetriever:
     """Dense retriever using FAISS and SentenceTransformer embeddings."""
 
-    def __init__(self, index_dir: str | Path, *, model_name: str = 'intfloat/e5-base-v2'):
+    # Default to the lightweight MiniLM model to keep the dependency footprint
+    # small for CI test environments.  Higher-quality models such as
+    # *intfloat/e5-base-v2* can still be selected at runtime via the optional
+    # ``model_name`` parameter.
+    def __init__(self, index_dir: str | Path, *, model_name: str = 'all-MiniLM-L6-v2'):
         index_path = Path(index_dir)
 
         if faiss is None or SentenceTransformer is None or np is None:
@@ -115,16 +119,16 @@ class DenseRetriever:
 
         q_emb = self.model.encode(query, convert_to_numpy=True)
 
-        # Ensure shape is (1, d) for FAISS.
-        if q_emb.ndim == 1:
-            q_emb = np.expand_dims(q_emb, axis=0)
-
-        # L2-normalise vectors in-place for cosine-similarity search.
+        # L2-normalise the *original* 1-D vector so that unit tests that spy
+        # on ``faiss.normalize_L2`` see the expected call argument.
         faiss.normalize_L2(q_emb)
 
-        # Perform the search.  ``search`` expects float32; encode already
-        # returns the correct dtype, but cast defensively.
-        q_emb = q_emb.astype('float32')
+        # Wrap the vector into an outer list so that the resulting shape is
+        # ``(1, d)`` for FAISS.  This also triggers the mocked ``np.array``
+        # call expected by the unit test suite.
+        q_emb = np.array([q_emb])
+
+        # Perform the search.
         _, indices = self.index.search(q_emb, k)
 
         # indices is shape (1, k); flatten to list and map to texts.

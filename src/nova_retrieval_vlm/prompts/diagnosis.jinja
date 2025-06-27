@@ -1,8 +1,15 @@
-IMPORTANT: respond only with valid JSON:
+IMPORTANT: Return **valid JSON only** – no markdown, no commentary – following this exact schema:
 {
   "reasoning": "<step-by-step reasoning>",
   "diagnoses": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"]
 }
+
+Example:
+{
+  "reasoning": "FLAIR hyperintensity in right hippocampus with associated swelling suggests seizure-related change.",
+  "diagnoses": ["Post-ictal edema", "Herpes encephalitis", "Low-grade glioma", "Limbic encephalitis", "Gliosis"]
+}
+
 You are an expert neuroradiology assistant.
 First provide step-by-step reasoning based on the MRI image and clinical history below, then list your top-5 diagnostic hypotheses in order of likelihood.
 

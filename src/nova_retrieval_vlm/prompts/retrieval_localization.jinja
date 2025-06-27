@@ -1,7 +1,9 @@
-IMPORTANT: respond only with valid JSON matching this schema:
+IMPORTANT: Return **valid JSON only** matching this exact schema – no markdown, no commentary:
 {
+  "image_id": "<string | int>",
   "boxes": [[x1, y1, x2, y2], ...],
-  "labels": ["label1", ...]
+  "labels": ["label1", ...],
+  "scores": [0.9, ...]
 }
 You are an expert neuroradiology assistant.
 Analyze the following MRI image (dimensions: {{ width }}×{{ height }} pixels) to identify and localize all abnormalities.
@@ -23,13 +25,13 @@ Image coordinate system:
 • All x coordinates must be in [0, {{ width | int - 1 }}]; y in [0, {{ height | int - 1 }}].
 
 Response rules (STRICT):
-1. Return **valid JSON only** - no markdown, no extra keys, no commentary.
-2. Up to **3** bounding boxes. Omit detections with confidence < 0.05.
-3. Use exactly the label string "anomaly" for every box.
-4. If no abnormality is present, return empty lists for boxes, labels, scores.
-5. Boxes MUST follow the schema above (x1< x2, y1< y2). Width/height format is INVALID.
+1. Output must be valid JSON **only** – no markdown fences, no explanations, no extra keys.
+2. Provide at most **3** bounding boxes. Skip detections with confidence < 0.05.
+3. Use exactly the label string "anomaly" for every box (single-class).
+4. If no abnormality is present, set boxes, labels and scores to empty lists.
+5. Boxes MUST follow the [x1, y1, x2, y2] format (x1 < x2, y1 < y2). Width/height format is INVALID.
 
-Example (illustrative - adapt):
+Example:
 {
   "image_id": {{ image_id }},
   "boxes": [[50, 30, 120, 180]],

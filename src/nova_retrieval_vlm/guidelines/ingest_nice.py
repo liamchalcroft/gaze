@@ -785,7 +785,7 @@ def ingest_nice(
     include_keywords = [kw.lower() for kw in settings.get('include_keywords', ['mri', 'magnetic resonance', 'brain', 'cerebral', 'head'])]
     exclude_keywords = [kw.lower() for kw in settings.get('exclude_keywords', [])]
     exclude_patterns = [re.compile(rf"\b{re.escape(kw)}\b", re.IGNORECASE) for kw in exclude_keywords]
-    
+
     crawl_depth = int(settings.get('crawl_depth', 2))
     request_delay = float(settings.get('request_delay', 1.0))
     
@@ -800,7 +800,7 @@ def ingest_nice(
         current_batch = [(url, depth) for url, depth in queue if depth == current_depth]
         if not current_batch:
             continue
-            
+
         if verbose:
             print(f"\nProcessing depth {current_depth}: {len(current_batch)} URLs")
         
@@ -869,12 +869,12 @@ def ingest_nice(
                     for new_url in new_urls:
                         if new_url not in visited:
                             new_urls_for_next_depth.append((new_url, current_depth + 1))
-        
+
         # Add new URLs to queue for next depth
         queue.extend(new_urls_for_next_depth)
-    
-    if verbose:
-        print(f"\nCompleted ingestion: {len(all_docs)} chunks from {len(visited)} URLs")
+
+        if verbose:
+            print(f"\nCompleted ingestion: {len(all_docs)} chunks from {len(visited)} URLs")
     
     _save_etag_cache()
     
