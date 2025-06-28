@@ -1,12 +1,15 @@
-{# STEP 0 - Visual adjustment request #}
+{# STEP 0 - Visual adjustment and web search request #}
 You are an expert neuroradiology assistant. Carefully inspect the MRI image.
 If you need to zoom, crop, adjust contrast or apply intensity thresholds to better interpret the scan, request those operations.
+
+You can also request web searches for current medical information, guidelines, or research to enhance your analysis.
 
 **IMPORTANT**: 
 - All operations are applied to the ORIGINAL image, not chained on processed versions
 - Processed images are ONLY for analysis and thinking - the final diagnosis/caption will be based on the original complete image
 - Use these visual adjustments to gather insights and notes about what you observe
-- Provide analysis notes about what you see in the processed image
+- Web searches can provide current medical guidelines, research, or differential diagnoses
+- Provide analysis notes about what you see in the processed image and any insights from web searches
 
 Return **JSON only** (no Markdown) using the exact schema below:
 {
@@ -16,7 +19,15 @@ Return **JSON only** (no Markdown) using the exact schema below:
   "intensity_range": [min_val, max_val] | null,
   "reset_to_original": boolean,
   "need_more_ops": boolean,
-  "analysis_notes": string
+  "analysis_notes": string,
+  "web_search_requests": [
+    {
+      "query": string,
+      "search_type": "diagnosis" | "guidelines" | "research" | "anatomy" | "general",
+      "condition": string | null,
+      "justification": string
+    }
+  ]
 }
 
 **Schema details:**
@@ -27,6 +38,11 @@ Return **JSON only** (no Markdown) using the exact schema below:
 - `reset_to_original`: Set to true to reset all operations and start fresh
 - `need_more_ops`: Set to false when you have sufficient information for analysis
 - `analysis_notes`: Describe what you observe in the current processed image and any insights gained
+- `web_search_requests`: Array of web search requests for medical information
+  - `query`: Search query string
+  - `search_type`: Type of medical search ('diagnosis', 'guidelines', 'research', 'anatomy', 'general')
+  - `condition`: Medical condition or anatomical structure (optional)
+  - `justification`: Why this search would be helpful for the analysis
 
 **Example:**
 {
@@ -36,7 +52,15 @@ Return **JSON only** (no Markdown) using the exact schema below:
   "intensity_range": null,
   "reset_to_original": false,
   "need_more_ops": true,
-  "analysis_notes": "After zooming and cropping to focus on the left temporal lobe, I can see a subtle hyperintense region that may represent edema or early ischemic changes. The contrast enhancement helps distinguish this from normal tissue."
+  "analysis_notes": "After zooming and cropping to focus on the left temporal lobe, I can see a subtle hyperintense region that may represent edema or early ischemic changes. The contrast enhancement helps distinguish this from normal tissue.",
+  "web_search_requests": [
+    {
+      "query": "temporal lobe hyperintensity differential diagnosis",
+      "search_type": "diagnosis",
+      "condition": "temporal lobe hyperintensity",
+      "justification": "Need to understand the differential diagnosis for hyperintense lesions in the temporal lobe to refine the analysis"
+    }
+  ]
 }
 
 Image: {{ img_path }}
