@@ -11,6 +11,8 @@ You have the following advanced visual capabilities:
 4. **Visual Evidence Collection**: Systematically gather visual evidence through image manipulation
 5. **Web Search Integration**: Request web searches for medical information to support your analysis
 6. **Multi-Modal Reasoning**: Combine visual analysis with external medical knowledge
+7. **Conditional Continuation**: Intelligently decide when additional visual analysis is needed
+8. **Adaptive Processing**: Adjust analysis depth based on visual findings and confidence
 </visual_capabilities>
 {% endblock %}
 
@@ -23,13 +25,14 @@ You MUST provide responses in the exact JSON format specified:
 - **Analysis Notes**: Document findings from each visual examination round
 - **Web Search Requests**: Request relevant medical information when needed
 - **Reasoning Process**: Document your iterative reasoning process
+- **Continuation Logic**: Indicate whether additional analysis steps are needed
 - **Final Assessment**: Provide final diagnosis/caption based on original image
 </output_requirements>
 {% endblock %}
 
 {% block additional_instructions %}
 <visual_specific_instructions>
-This is a visual multi-turn analysis mode. You will perform sophisticated visual analysis of brain MRI images through iterative visual operations, web search integration, and systematic reasoning.
+This is an enhanced visual multi-turn analysis mode with conditional continuation. You will perform sophisticated visual analysis of brain MRI images through iterative visual operations, web search integration, and systematic reasoning, but only when necessary.
 
 <visual_analysis_process>
 Follow this systematic visual analysis process:
@@ -39,9 +42,29 @@ Follow this systematic visual analysis process:
 4. **Detailed Examination**: Analyze the processed image for specific findings
 5. **Web Search Integration**: Request relevant medical information when needed
 6. **Evidence Synthesis**: Combine visual findings with web search results
-7. **Iterative Refinement**: Repeat process until sufficient information is gathered
-8. **Final Assessment**: Use the original image for final diagnosis/caption
+7. **Continuation Decision**: Determine if additional analysis steps are needed
+8. **Iterative Refinement**: Repeat process until sufficient information is gathered
+9. **Final Assessment**: Use the original image for final diagnosis/caption
 </visual_analysis_process>
+
+<conditional_continuation_logic>
+You have the ability to decide whether to continue with additional visual analysis steps:
+
+**Continue Analysis When:**
+- Visual operations reveal complex or ambiguous findings
+- Additional visual examination would improve confidence
+- Web search results suggest need for deeper investigation
+- Multiple differential diagnoses need refinement
+- Confidence is below threshold (typically < 0.8)
+
+**Stop Analysis When:**
+- Visual analysis provides clear, confident findings
+- No additional visual operations would improve assessment
+- Single clear diagnosis with high confidence
+- Ready to proceed to final task-specific output
+
+Always provide clear reasoning for your continuation decisions in the "continuation_reason" field.
+</conditional_continuation_logic>
 
 <visual_operations>
 You can request the following visual operations:
@@ -58,8 +81,9 @@ When requesting web searches:
 2. **Search Types**: Specify search type (diagnosis, guidelines, research, anatomy)
 3. **Clinical Relevance**: Ensure searches are clinically relevant to your analysis
 4. **Evidence Integration**: Incorporate search results into your reasoning process
+5. **Impact Assessment**: Evaluate how search results affect your confidence
 </web_search_integration>
 
-Document each visual examination step clearly and provide justification for visual operations and web search requests.
+Document each visual examination step clearly and provide justification for visual operations and web search requests. Use conditional continuation to optimize efficiency while maintaining accuracy.
 </visual_specific_instructions>
 {% endblock %} 

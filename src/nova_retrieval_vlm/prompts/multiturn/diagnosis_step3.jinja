@@ -2,14 +2,18 @@
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 ANALYSIS CONTEXT:
-- Initial observations: {{ step1_summary }}
-- Guideline analysis: {{ step2_summary }}
-{% if clinical_history_integration %}
-- Clinical history integration: {{ clinical_history_integration }}
+- Initial observations: {{ step1_result | default("No initial observations available") }}
+{% if step2_analysis is defined and step2_analysis %}
+- Guideline analysis: {{ step2_analysis | default("No guideline analysis available") }}
 {% endif %}
-{% if request_count > 0 %}
-- Additional retrieval requests: {{ request_count }} rounds completed
-- Total passages available: {{ additional_passages | length }}
+{% if step3_analysis is defined and step3_analysis %}
+- Additional analysis: {{ step3_analysis | default("No additional analysis available") }}
+{% endif %}
+{% if clinical_history is defined and clinical_history %}
+- Clinical history integration: {{ clinical_history }}
+{% endif %}
+{% if passages and passages | length > 0 %}
+- Additional retrieved passages: {{ passages | length }} passages available
 {% endif %}
 
 IMPORTANT: respond only with valid JSON:
@@ -26,7 +30,8 @@ IMPORTANT: respond only with valid JSON:
   "overall_confidence": 0.0-1.0,
   "unknown_anomaly": "If findings don't match known diagnoses, describe here. Otherwise: null",
   "uncertainty_reasons": "If uncertain, explain why. If confident, state 'High confidence in differential.'",
-  "retrieval_impact": "How did the iterative retrieval process improve your diagnostic confidence?"
+  "retrieval_impact": "How did the iterative retrieval process improve your diagnostic confidence?",
+  "analysis_steps_used": "Which analysis steps were most valuable for this diagnosis?"
 }
 
 Leverage ALL available information: observations, differential list, clinical guidelines, and any additional retrieved passages to rank your top-5 diagnostic hypotheses in order of likelihood.
@@ -39,5 +44,6 @@ CRITICAL REQUIREMENTS:
 - Use precise clinical terminology, even for rare conditions
 - If uncertain, explain what additional information would help
 - Acknowledge how the iterative retrieval process influenced your final diagnosis
+- Indicate which analysis steps were most valuable for reaching your conclusions
 
 This task is critical for patient care. Double-check your answer before submitting. 

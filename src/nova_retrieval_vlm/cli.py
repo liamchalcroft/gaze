@@ -126,15 +126,60 @@ cs = ConfigStore.instance()
 cs.store(name="config", node=Config)
 
 
+def _parse_cli_args():
+    """Parse command line arguments manually and return a Config object."""
+    cfg = Config()
+    
+    # Parse arguments in the format key=value
+    for arg in sys.argv[1:]:
+        if '=' in arg:
+            key, value = arg.split('=', 1)
+            
+            # Handle nested keys like model.name
+            if '.' in key:
+                parts = key.split('.')
+                current = cfg
+                for part in parts[:-1]:
+                    if hasattr(current, part):
+                        current = getattr(current, part)
+                    else:
+                        print(f"Unknown config key: {key}")
+                        sys.exit(1)
+                setattr(current, parts[-1], value)
+            else:
+                if hasattr(cfg, key):
+                    # Convert value to appropriate type
+                    current_value = getattr(cfg, key)
+                    if isinstance(current_value, bool):
+                        setattr(cfg, key, value.lower() in ('true', '1', 'yes', 'on'))
+                    elif isinstance(current_value, int):
+                        setattr(cfg, key, int(value))
+                    elif isinstance(current_value, float):
+                        setattr(cfg, key, float(value))
+                    else:
+                        setattr(cfg, key, value)
+                else:
+                    print(f"Unknown config key: {key}")
+                    sys.exit(1)
+    
+    return cfg
+
+
 @hydra.main(version_base="1.1", config_path=None, config_name="config")
 def main(cfg: Config) -> None:
     """
     Main entry point for running experiments.
 
     Usage examples:
-      python -m nova_retrieval_vlm.cli experiment=baseline model=qwen-vl-chat batch_size=4
-      python -m nova_retrieval_vlm.cli experiment=hybrid model=internvlm-chat retrieval.top_k=8
+      python -m nova_retrieval_vlm.cli task=caption model.name=qwen-vl-chat batch_size=4
+      python -m nova_retrieval_vlm.cli task=diagnosis model.name=internvlm-chat retrieval.top_k=8
     """
+    # Convert OmegaConf to our Config dataclass for better type safety
+    if isinstance(cfg, OmegaConf):
+        # Create a new Config instance from the OmegaConf
+        config_dict = OmegaConf.to_container(cfg, resolve=True)
+        cfg = Config(**config_dict)
+    
     logger.add(lambda msg: print(msg, end=""), level="INFO")
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
@@ -200,12 +245,12 @@ def main(cfg: Config) -> None:
         logger.info("Loaded cached arrow dataset with %d samples", len(hf_ds))
     else:
         # Fallback: use the HuggingFace dataset that was already downloaded by
-        # NovaDataset (exposed via dl.dataset.dataset).
+        # NovaDataset (exposed via dl.dataset.hf_dataset).
         logger.warning("Cached arrow dataset not found - falling back to in-memory HF dataset.")
         # dl.dataset is an instance of NovaDataset; we expose the underlying HF
-        # dataset via the public attribute `dataset`.
+        # dataset via the public property `hf_dataset`.
         try:
-            hf_ds = dl.dataset.dataset  # type: ignore[attr-defined]
+            hf_ds = dl.dataset.hf_dataset  # type: ignore[attr-defined]
             logger.info("Using HF dataset from NovaDataset with %d samples", len(hf_ds))
         except Exception as exc:
             logger.error("Unable to access HF dataset from DataLoader: %s", exc)
@@ -706,7 +751,7 @@ def process_batch_multiturn(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using multi-turn reasoning approach."""
+    """Process a single batch using enhanced multi-turn reasoning approach with conditional continuation."""
     from PIL import Image  # local import to avoid top-level PIL dependency
 
     hf_record = hf_ds[batch_idx]
@@ -743,6 +788,15 @@ def process_batch_multiturn(
         else:
             metadata_for_prompt["clinical_history"] = ""
 
+    # Initialize multi-turn tracking
+    multiturn_data = {
+        "steps_completed": [],
+        "step_results": {},
+        "total_steps": 0,
+        "continuation_reasons": [],
+        "final_analysis_complete": False
+    }
+
     # Step 1: Initial observations and differential diagnosis
     logger.info(f"Multi-turn Step 1 for image {batch_idx}")
     step1_prompt = load_enhanced_prompt(
@@ -762,97 +816,143 @@ def process_batch_multiturn(
         f.write(step1_text)
     
     step1_result = robust_json_loads(step1_text)
+    multiturn_data["steps_completed"].append("step1")
+    multiturn_data["step_results"]["step1"] = step1_result
+    multiturn_data["total_steps"] += 1
     
-    # Step 2: Comprehensive analysis with guidelines
-    logger.info(f"Multi-turn Step 2 for image {batch_idx}")
+    # Check if step 1 indicates continuation is needed
+    continue_analysis = step1_result.get("continue_analysis", True)
+    continuation_reason = step1_result.get("continuation_reason", "Default continuation")
+    multiturn_data["continuation_reasons"].append(continuation_reason)
     
-    # Prepare retrieval query based on step 1 findings
-    passages = []
-    retrieval_debug_info = None
-    if cfg.use_retrieval and retriever:
-        # Use step 1 findings to create a targeted query
-        query_parts = []
-        if step1_result.get("differential"):
-            query_parts.extend(step1_result["differential"][:3])  # Top 3 diagnoses
-        if step1_result.get("observations"):
-            query_parts.append(step1_result["observations"])
+    if not continue_analysis:
+        logger.info(f"Step 1 indicates analysis complete: {continuation_reason}")
+        multiturn_data["final_analysis_complete"] = True
+        # Proceed directly to final task output
+        result = _generate_final_task_output(
+            task, img_path, [], metadata_for_prompt, 
+            multiturn_data, step1_result, None, adapter
+        )
+    else:
+        # Step 2: Comprehensive analysis with guidelines
+        logger.info(f"Multi-turn Step 2 for image {batch_idx}")
         
-        query = " ".join(query_parts) if query_parts else ""
-        retrieval_debug_info = {"query": query, "success": False, "error": None, "passages": []}
+        # Prepare retrieval query based on step 1 findings
+        passages = []
+        retrieval_debug_info = None
+        if cfg.use_retrieval and retriever:
+            # Use step 1 findings to create a targeted query
+            query_parts = []
+            if step1_result.get("differential"):
+                query_parts.extend(step1_result["differential"][:3])  # Top 3 diagnoses
+            if step1_result.get("observations"):
+                query_parts.append(step1_result["observations"])
+            
+            query = " ".join(query_parts) if query_parts else ""
+            retrieval_debug_info = {"query": query, "success": False, "error": None, "passages": []}
+            
+            try:
+                passages = retriever(query, k=cfg.retrieval.top_k) if query else []
+                retrieval_debug_info["success"] = True
+                retrieval_debug_info["passages"] = passages
+            except Exception as exc:
+                logger.warning("[multiturn] Retrieval failed: %s", exc)
+                retrieval_debug_info["error"] = str(exc)
         
-        try:
-            passages = retriever(query, k=cfg.retrieval.top_k) if query else []
-            retrieval_debug_info["success"] = True
-            retrieval_debug_info["passages"] = passages
-        except Exception as exc:
-            logger.warning("[multiturn] Retrieval failed: %s", exc)
-            retrieval_debug_info["error"] = str(exc)
-    
-    step2_prompt = load_enhanced_prompt(
-        template_name="multiturn/step2.jinja",
-        image_path=img_path,
-        passages=passages,
-        metadata=metadata_for_prompt,
-    )
-    
-    with open(img_folder / "step2_prompt.txt", "w") as f:
-        f.write(step2_prompt)
-    
-    step2_text, step2_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step2_prompt))
-    logger.info(f"Step 2 generation cost: {step2_log}")
-    
-    with open(img_folder / "step2_output.txt", "w") as f:
-        f.write(step2_text)
-    
-    # Step 3: Final task-specific output
-    logger.info(f"Multi-turn Step 3 for image {batch_idx}")
-    
-    # Determine the appropriate step 3 template based on task
-    step3_template_map = {
-        "caption": "multiturn/caption_step3.jinja",
-        "diagnosis": "multiturn/diagnosis_step3.jinja", 
-        "localization": "multiturn/localization_step3.jinja",
-    }
-    
-    step3_template = step3_template_map.get(task, "multiturn/caption_step3.jinja")
-    
-    # Add step 1 and step 2 results to metadata for step 3
-    step3_metadata = metadata_for_prompt.copy()
-    step3_metadata["step1_result"] = step1_result
-    step3_metadata["step2_analysis"] = step2_text
-    
-    step3_prompt = load_enhanced_prompt(
-        template_name=step3_template,
-        image_path=img_path,
-        passages=passages,
-        metadata=step3_metadata,
-    )
-    
-    with open(img_folder / "step3_prompt.txt", "w") as f:
-        f.write(step3_prompt)
-    
-    step3_text, step3_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step3_prompt))
-    logger.info(f"Step 3 generation cost: {step3_log}")
-    
-    with open(img_folder / "step3_output.txt", "w") as f:
-        f.write(step3_text)
-    
-    # Parse final result
-    result = robust_json_loads(step3_text)
-    
+        step2_prompt = load_enhanced_prompt(
+            template_name="multiturn/step2.jinja",
+            image_path=img_path,
+            passages=passages,
+            metadata=metadata_for_prompt,
+        )
+        
+        with open(img_folder / "step2_prompt.txt", "w") as f:
+            f.write(step2_prompt)
+        
+        step2_text, step2_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step2_prompt))
+        logger.info(f"Step 2 generation cost: {step2_log}")
+        
+        with open(img_folder / "step2_output.txt", "w") as f:
+            f.write(step2_text)
+        
+        step2_result = robust_json_loads(step2_text)
+        multiturn_data["steps_completed"].append("step2")
+        multiturn_data["step_results"]["step2"] = step2_result
+        multiturn_data["total_steps"] += 1
+        
+        # Check if step 2 indicates continuation is needed
+        continue_analysis = step2_result.get("continue_analysis", True)
+        continuation_reason = step2_result.get("continuation_reason", "Default continuation")
+        multiturn_data["continuation_reasons"].append(continuation_reason)
+        
+        if not continue_analysis:
+            logger.info(f"Step 2 indicates analysis complete: {continuation_reason}")
+            multiturn_data["final_analysis_complete"] = True
+            # Proceed to final task output
+            result = _generate_final_task_output(
+                task, img_path, passages, metadata_for_prompt, 
+                multiturn_data, step1_result, step2_result, adapter
+            )
+        else:
+            # Step 3: Conditional analysis continuation
+            logger.info(f"Multi-turn Step 3 (conditional) for image {batch_idx}")
+            
+            step3_metadata = metadata_for_prompt.copy()
+            step3_metadata["step1_result"] = step1_result
+            step3_metadata["step2_analysis"] = step2_result
+            
+            step3_prompt = load_enhanced_prompt(
+                template_name="multiturn/step3.jinja",
+                image_path=img_path,
+                passages=passages,
+                metadata=step3_metadata,
+            )
+            
+            with open(img_folder / "step3_prompt.txt", "w") as f:
+                f.write(step3_prompt)
+            
+            step3_text, step3_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step3_prompt))
+            logger.info(f"Step 3 generation cost: {step3_log}")
+            
+            with open(img_folder / "step3_output.txt", "w") as f:
+                f.write(step3_text)
+            
+            step3_result = robust_json_loads(step3_text)
+            multiturn_data["steps_completed"].append("step3")
+            multiturn_data["step_results"]["step3"] = step3_result
+            multiturn_data["total_steps"] += 1
+            
+            # Check if step 3 indicates analysis is complete
+            analysis_complete = step3_result.get("analysis_complete", True)
+            completion_reason = step3_result.get("completion_reason", "Analysis complete")
+            multiturn_data["continuation_reasons"].append(completion_reason)
+            
+            if analysis_complete:
+                logger.info(f"Step 3 indicates analysis complete: {completion_reason}")
+                multiturn_data["final_analysis_complete"] = True
+                # Proceed to final task output
+                result = _generate_final_task_output(
+                    task, img_path, passages, metadata_for_prompt, 
+                    multiturn_data, step1_result, step2_result, adapter, step3_result
+                )
+            else:
+                logger.warning(f"Step 3 indicates analysis incomplete: {completion_reason}")
+                # Force completion and proceed to final task output
+                multiturn_data["final_analysis_complete"] = True
+                result = _generate_final_task_output(
+                    task, img_path, passages, metadata_for_prompt, 
+                    multiturn_data, step1_result, step2_result, adapter, step3_result
+                )
+
     # Add metadata
     result["image_path"] = str(img_path)
     result["ground_truth_image_idx"] = batch_idx
-    result["multiturn_steps"] = {
-        "step1": step1_result,
-        "step2_analysis": step2_text,
-        "step3": step3_text,
-    }
+    result["multiturn_data"] = multiturn_data
     
     # Ensure required keys are present
     ensure_evaluation_keys(result)
     
-    logger.info(f"Successfully processed multi-turn result for image {batch_idx}")
+    logger.info(f"Successfully processed enhanced multi-turn result for image {batch_idx} ({multiturn_data['total_steps']} steps)")
     
     # Save individual prediction for this image
     save_prediction(img_folder, result)
@@ -861,7 +961,7 @@ def process_batch_multiturn(
     save_reference(img_folder, batch_idx, hf_ds)
     
     # Save retrieval debug info if available
-    if retrieval_debug_info:
+    if 'retrieval_debug_info' in locals() and retrieval_debug_info:
         with open(img_folder / "retrieval_debug.txt", "w") as f:
             f.write(f"Query: {retrieval_debug_info['query']}\n")
             f.write(f"Success: {retrieval_debug_info['success']}\n")
@@ -872,6 +972,52 @@ def process_batch_multiturn(
                 f.write(p + "\n\n")
     
     preds.append(result)
+
+
+def _generate_final_task_output(
+    task: str,
+    img_path: Path,
+    passages: list,
+    metadata_for_prompt: dict,
+    multiturn_data: dict,
+    step1_result: dict,
+    step2_result: dict,
+    adapter,
+    step3_result: dict = None
+) -> dict:
+    """Generate the final task-specific output based on completed analysis steps."""
+    
+    # Determine the appropriate step 3 template based on task
+    step3_template_map = {
+        "caption": "multiturn/caption_step3.jinja",
+        "diagnosis": "multiturn/diagnosis_step3.jinja", 
+        "localization": "multiturn/localization_step3.jinja",
+    }
+    
+    step3_template = step3_template_map.get(task, "multiturn/caption_step3.jinja")
+    
+    # Add all step results to metadata for final output
+    final_metadata = metadata_for_prompt.copy()
+    final_metadata["step1_result"] = step1_result
+    if step2_result:
+        final_metadata["step2_analysis"] = step2_result
+    if step3_result:
+        final_metadata["step3_analysis"] = step3_result
+    
+    final_prompt = load_enhanced_prompt(
+        template_name=step3_template,
+        image_path=img_path,
+        passages=passages,
+        metadata=final_metadata,
+    )
+    
+    final_text, final_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=final_prompt))
+    logger.info(f"Final task output generation cost: {final_log}")
+    
+    # Parse final result
+    result = robust_json_loads(final_text)
+    
+    return result
 
 
 def process_batch_visual_multiturn(
@@ -885,7 +1031,7 @@ def process_batch_visual_multiturn(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using visual multi-turn reasoning approach."""
+    """Process a single batch using enhanced visual multi-turn reasoning approach with conditional continuation."""
     from PIL import Image  # local import to avoid top-level PIL dependency
 
     hf_record = hf_ds[batch_idx]
@@ -925,14 +1071,27 @@ def process_batch_visual_multiturn(
     # Initialize web searcher for visual multi-turn
     web_searcher = MedicalWebSearcher() if cfg.approach == "visual_multiturn" else None
     
-    # Visual multi-turn analysis with multiple rounds
+    # Initialize visual multi-turn tracking
+    visual_multiturn_data = {
+        "rounds_completed": [],
+        "round_results": {},
+        "total_rounds": 0,
+        "continuation_reasons": [],
+        "final_analysis_complete": False
+    }
+    
+    # Visual multi-turn analysis with conditional continuation
     current_image_path = img_path
     analysis_notes = []
     visual_operations = []
     web_search_results = []
     
-    for round_num in range(cfg.visual_rounds):
-        logger.info(f"Visual multi-turn round {round_num + 1} for image {batch_idx}")
+    max_rounds = getattr(cfg, 'visual_rounds', 3)  # Default to 3 rounds max
+    round_num = 0
+    
+    while round_num < max_rounds:
+        round_num += 1
+        logger.info(f"Visual multi-turn round {round_num} for image {batch_idx}")
         
         # Load visual operations request prompt
         ops_prompt = load_enhanced_prompt(
@@ -941,60 +1100,83 @@ def process_batch_visual_multiturn(
             passages=[],
             metadata={
                 **metadata_for_prompt,
-                "round": round_num + 1,
-                "total_rounds": cfg.visual_rounds,
+                "round": round_num,
+                "total_rounds": max_rounds,
                 "analysis_notes": "\n".join(analysis_notes) if analysis_notes else "None",
                 "web_search_results": "\n".join(web_search_results) if web_search_results else "None",
             },
         )
         
-        with open(img_folder / f"round_{round_num + 1}_ops_prompt.txt", "w") as f:
+        with open(img_folder / f"round_{round_num}_ops_prompt.txt", "w") as f:
             f.write(ops_prompt)
         
         ops_text, ops_log = asyncio.run(adapter.generate(current_image_path, [], system_prompt=ops_prompt))
-        logger.info(f"Round {round_num + 1} operations generation cost: {ops_log}")
+        logger.info(f"Round {round_num} operations generation cost: {ops_log}")
         
-        with open(img_folder / f"round_{round_num + 1}_ops_output.txt", "w") as f:
+        with open(img_folder / f"round_{round_num}_ops_output.txt", "w") as f:
             f.write(ops_text)
         
         ops_result = robust_json_loads(ops_text)
+        visual_multiturn_data["rounds_completed"].append(f"round_{round_num}")
+        visual_multiturn_data["round_results"][f"round_{round_num}"] = ops_result
+        visual_multiturn_data["total_rounds"] += 1
+        
+        # Check if continuation is needed
+        continue_analysis = ops_result.get("continue_analysis", True)
+        continuation_reason = ops_result.get("continuation_reason", "Default continuation")
+        visual_multiturn_data["continuation_reasons"].append(continuation_reason)
         
         # Apply visual operations if requested
-        if ops_result.get("visual_operations"):
-            for op in ops_result["visual_operations"]:
-                try:
-                    if op.get("operation") == "zoom":
-                        current_image_path = zoom_image(
-                            current_image_path, 
-                            op.get("region", [0, 0, pil.width, pil.height]),
-                            op.get("factor", 2.0)
-                        )
-                    elif op.get("operation") == "crop":
-                        current_image_path = crop_image(
-                            current_image_path,
-                            op.get("region", [0, 0, pil.width, pil.height])
-                        )
-                    elif op.get("operation") == "contrast":
-                        current_image_path = adjust_contrast(
-                            current_image_path,
-                            op.get("factor", 1.5)
-                        )
-                    elif op.get("operation") == "threshold":
-                        current_image_path = apply_intensity_threshold(
-                            current_image_path,
-                            op.get("min_threshold", 0),
-                            op.get("max_threshold", 255)
-                        )
-                    
-                    visual_operations.append(op)
-                except Exception as e:
-                    logger.warning(f"Visual operation failed: {e}")
+        if ops_result.get("zoom_factor") or ops_result.get("crop_box") or ops_result.get("contrast_factor") or ops_result.get("intensity_range"):
+            try:
+                # Apply zoom if requested
+                if ops_result.get("zoom_factor") and ops_result["zoom_factor"] != 1.0:
+                    current_image_path = zoom_image(
+                        current_image_path, 
+                        ops_result.get("crop_box", [0, 0, pil.width, pil.height]),
+                        ops_result["zoom_factor"]
+                    )
+                
+                # Apply crop if requested
+                if ops_result.get("crop_box"):
+                    current_image_path = crop_image(
+                        current_image_path,
+                        ops_result["crop_box"]
+                    )
+                
+                # Apply contrast if requested
+                if ops_result.get("contrast_factor") and ops_result["contrast_factor"] != 1.0:
+                    current_image_path = adjust_contrast(
+                        current_image_path,
+                        ops_result["contrast_factor"]
+                    )
+                
+                # Apply intensity threshold if requested
+                if ops_result.get("intensity_range"):
+                    current_image_path = apply_intensity_threshold(
+                        current_image_path,
+                        ops_result["intensity_range"][0],
+                        ops_result["intensity_range"][1]
+                    )
+                
+                visual_operations.append({
+                    "round": round_num,
+                    "operations": {
+                        "zoom_factor": ops_result.get("zoom_factor"),
+                        "crop_box": ops_result.get("crop_box"),
+                        "contrast_factor": ops_result.get("contrast_factor"),
+                        "intensity_range": ops_result.get("intensity_range"),
+                        "reset_to_original": ops_result.get("reset_to_original", False)
+                    }
+                })
+            except Exception as e:
+                logger.warning(f"Visual operation failed: {e}")
         
         # Perform web search if requested
         if ops_result.get("web_search_requests") and web_searcher:
             for search_req in ops_result["web_search_requests"]:
                 try:
-                    search_type = search_req.get("type", "general")
+                    search_type = search_req.get("search_type", "general")
                     query = search_req.get("query", "")
                     
                     if search_type == "medical":
@@ -1009,7 +1191,19 @@ def process_batch_visual_multiturn(
         
         # Add analysis notes
         if ops_result.get("analysis_notes"):
-            analysis_notes.append(f"Round {round_num + 1}: {ops_result['analysis_notes']}")
+            analysis_notes.append(f"Round {round_num}: {ops_result['analysis_notes']}")
+        
+        # Check if we should continue or stop
+        if not continue_analysis:
+            logger.info(f"Round {round_num} indicates analysis complete: {continuation_reason}")
+            visual_multiturn_data["final_analysis_complete"] = True
+            break
+        
+        # Check if we need more operations
+        need_more_ops = ops_result.get("need_more_ops", True)
+        if not need_more_ops:
+            logger.info(f"Round {round_num} indicates no more operations needed")
+            break
     
     # Final analysis using original image
     logger.info(f"Final analysis for image {batch_idx}")
@@ -1055,12 +1249,16 @@ def process_batch_visual_multiturn(
         "visual_operations": visual_operations,
         "analysis_notes": analysis_notes,
         "web_search_results": web_search_results,
+        "rounds_completed": visual_multiturn_data["rounds_completed"],
+        "total_rounds": visual_multiturn_data["total_rounds"],
+        "continuation_reasons": visual_multiturn_data["continuation_reasons"],
+        "final_analysis_complete": visual_multiturn_data["final_analysis_complete"]
     }
     
     # Ensure required keys are present
     ensure_evaluation_keys(result)
     
-    logger.info(f"Successfully processed visual multi-turn result for image {batch_idx}")
+    logger.info(f"Successfully processed enhanced visual multi-turn result for image {batch_idx} ({visual_multiturn_data['total_rounds']} rounds)")
     
     # Save individual prediction for this image
     save_prediction(img_folder, result)
@@ -1069,3 +1267,14 @@ def process_batch_visual_multiturn(
     save_reference(img_folder, batch_idx, hf_ds)
     
     preds.append(result)
+
+
+if __name__ == "__main__":
+    # Simple entry point that bypasses Hydra issues
+    if len(sys.argv) > 1 and any('=' in arg for arg in sys.argv[1:]):
+        # Parse arguments manually and call main directly
+        cfg = _parse_cli_args()
+        main(cfg)
+    else:
+        # Use Hydra for help and other cases
+        main()

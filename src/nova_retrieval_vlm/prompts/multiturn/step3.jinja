@@ -1,0 +1,39 @@
+{# STEP 3 - Conditional Analysis Continuation #}
+You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
+
+ANALYSIS CONTEXT:
+- Initial observations: {{ step1_result | default("No initial observations available") }}
+- Guideline analysis: {{ step2_analysis | default("No guideline analysis available") }}
+{% if clinical_history is defined and clinical_history %}
+- Clinical history integration: {{ clinical_history }}
+{% endif %}
+{% if passages and passages | length > 0 %}
+- Additional retrieved passages: {{ passages | length }} passages available
+{% endif %}
+
+TASK: Based on the previous analysis steps, determine if additional analysis is needed before proceeding to the final task-specific output.
+
+Return **JSON only** (no Markdown) with the following structure:
+
+{
+  "analysis_complete": true | false,
+  "completion_reason": "Explain why analysis is complete or what additional steps are needed",
+  "confidence_level": 0.0-1.0,
+  "additional_steps_needed": ["step1", "step2", ...] | null,
+  "final_analysis_summary": "Summary of all analysis steps completed",
+  "ready_for_task_output": true | false
+}
+
+CONTINUATION LOGIC:
+- Set "analysis_complete": true if:
+  * All necessary analysis steps have been completed
+  * Confidence is sufficient for final task output
+  * No additional information would improve the assessment
+- Set "analysis_complete": false if:
+  * Additional analysis steps would improve accuracy
+  * Confidence is still insufficient
+  * More detailed examination is needed
+
+If analysis_complete is true, you should be ready to proceed to the final task-specific output (caption, diagnosis, or localization).
+
+Are you sure that's your final answer? If not, review your reasoning. 

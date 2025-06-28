@@ -25,8 +25,21 @@ Return **JSON only** (no Markdown) with the following keys exactly:
   "observations": "Key visual cues (e.g. hyperintensity of right thalamus, midline shift of 3 mm, mass effect). Use precise terminology.",
   "differential": ["Diagnosis A", "Diagnosis B", …],  # max 5, ranked by likelihood
   "uncertainty_reasons": "If uncertain, explain why. If confident, state 'High confidence in findings.'",
-  "unknown_anomaly": "If findings don't match known patterns, describe here. Otherwise: null"
+  "unknown_anomaly": "If findings don't match known patterns, describe here. Otherwise: null",
+  "continue_analysis": true | false,
+  "continuation_reason": "Explain why additional steps are needed or why analysis is complete"
 }
+
+CONTINUATION LOGIC:
+- Set "continue_analysis": true if:
+  * Findings are complex or ambiguous
+  * Multiple differential diagnoses need refinement
+  * Clinical guidelines would improve confidence
+  * Additional analysis steps would enhance accuracy
+- Set "continue_analysis": false if:
+  * Scan is clearly normal with high confidence
+  * Single clear diagnosis with high confidence
+  * No additional information would change the assessment
 
 Explain nothing outside that JSON. Do **NOT** output bounding boxes at this step.
 

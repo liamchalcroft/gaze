@@ -1,6 +1,7 @@
 {# STEP 1 - Visual operations request #}
 You are an expert neuroradiology assistant. Carefully inspect the MRI image provided by the user.
 If you need to zoom, crop, adjust contrast or apply intensity thresholds to better understand the image, request these operations now.
+
 Return **JSON only** (no Markdown) with the following keys exactly. **The original image is kept as read-only; set `reset_to_original=true` at any later step if you need to revert back to the untouched image.**
 {
   "zoom_factor": float | null,      # e.g. 2.0 for 2× zoom; null if not needed
@@ -8,7 +9,20 @@ Return **JSON only** (no Markdown) with the following keys exactly. **The origin
   "contrast_factor": float | null,  # >1 increases contrast, <1 decreases
   "intensity_range": [lower, upper] | null,  # pixel values 0-255
   "reset_to_original": true | false,
+  "continue_analysis": true | false,
+  "continuation_reason": string,
   "reasoning": "Why these operations are helpful"
 }
+
+**Continuation Logic:**
+- Set `continue_analysis`: true if:
+  * Visual operations reveal complex or ambiguous findings
+  * Additional analysis steps would improve confidence
+  * Multiple differential diagnoses need refinement
+- Set `continue_analysis`: false if:
+  * Visual analysis provides clear, confident findings
+  * No additional information would change the assessment
+  * Ready to proceed to final task-specific output
+
 Explain nothing outside that JSON.
 Image: {{ img_path }}

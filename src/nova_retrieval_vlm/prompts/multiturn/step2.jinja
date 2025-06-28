@@ -11,41 +11,32 @@ _No relevant guideline excerpts found._
 
 Based on your initial observations and the retrieved clinical guidelines, provide a comprehensive analysis.
 
-Return a **detailed analysis** covering:
+Return **JSON only** (no Markdown) with the following structure:
 
-1. **Technical Assessment**
-   - Confirm or refine your initial orientation and sequence assessment
-   - Describe any additional technical factors that may affect interpretation
-   - Note any image quality issues, artifacts, or sequence limitations that could impact findings
+{
+  "technical_assessment": "Confirm or refine your initial orientation and sequence assessment",
+  "detailed_findings": "Comprehensive description of all visible abnormalities using precise radiological terminology",
+  "clinical_correlation": "How the findings relate to the retrieved guidelines",
+  "refined_differential": ["Updated Dx1", "Updated Dx2", "Updated Dx3", "Updated Dx4", "Updated Dx5"],
+  "differential_confidence": [0.8, 0.6, 0.4, 0.2, 0.1],
+  "recommendations": "Suggested next steps (additional imaging, follow-up, etc.)",
+  "overall_confidence": 0.0-1.0,
+  "uncertainty_assessment": "Sources of uncertainty and what would increase confidence",
+  "continue_analysis": true | false,
+  "continuation_reason": "Explain why additional steps are needed or why analysis is complete"
+}
 
-2. **Detailed Findings**
-   - Comprehensive description of all visible abnormalities using precise radiological terminology
-   - Location, size, and characteristics of lesions with specific measurements when possible
-   - Any normal anatomical variations or artifacts that could be misinterpreted
-   - Explicit statement: Is this scan NORMAL or ABNORMAL?
+CONTINUATION LOGIC:
+- Set "continue_analysis": true if:
+  * Differential diagnosis still needs refinement
+  * Task-specific output (caption/diagnosis/localization) would benefit from additional analysis
+  * Clinical guidelines suggest need for more detailed assessment
+  * Confidence is still below 0.8 and additional steps could help
+- Set "continue_analysis": false if:
+  * Analysis is comprehensive and confident
+  * Ready to proceed to final task-specific output
+  * No additional analysis steps would improve the assessment
 
-3. **Clinical Correlation**
-   - How the findings relate to the retrieved guidelines
-   - Clinical significance of each observation
-   - Any red flags or urgent findings that require immediate attention
-   - If findings don't match guideline patterns, explain why
-
-4. **Refined Differential Diagnosis**
-   - Updated differential based on guideline information, ranked by likelihood
-   - Confidence level for each diagnosis (0-1 scale)
-   - Any diagnoses to rule out based on guidelines
-   - If no diagnosis fits, state "Unknown anomaly" and describe features
-
-5. **Recommendations**
-   - Suggested next steps (additional imaging, follow-up, etc.)
-   - Any specific guideline recommendations that apply
-   - If uncertain, explain what additional information would help
-
-6. **Uncertainty Assessment**
-   - Overall confidence in your analysis (0-1 scale)
-   - Sources of uncertainty (image quality, atypical presentation, etc.)
-   - What would increase your confidence
-
-Write this as a comprehensive clinical report in clear, professional medical language. Avoid vague or generic statements. Use precise terminology even for rare conditions if supported by findings. This analysis will be used to inform the final task-specific output in Step 3.
+Write this as a comprehensive clinical report in clear, professional medical language. Avoid vague or generic statements. Use precise terminology even for rare conditions if supported by findings.
 
 Are you sure that's your final answer? If not, review your reasoning. 

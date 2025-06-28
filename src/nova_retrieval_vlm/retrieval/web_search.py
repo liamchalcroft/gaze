@@ -317,6 +317,31 @@ class MedicalWebSearcher(WebSearcher):
         
         return medical_results
     
+    def general_search(self, query: str) -> List[WebSearchResult]:
+        """
+        Perform general web search (non-medical focused).
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            List of web search results
+        """
+        # Use the parent class search method without medical focus
+        return self.search(query, medical_focus=False)
+    
+    def medical_search(self, query: str) -> List[WebSearchResult]:
+        """
+        Alias for search_medical for backward compatibility.
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            List of medical web search results
+        """
+        return self.search_medical(query)
+    
     def _is_medical_source(self, url: str) -> bool:
         """Check if URL is from a reputable medical source."""
         medical_domains = [

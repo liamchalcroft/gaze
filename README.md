@@ -11,6 +11,7 @@ A comprehensive framework for comparing baseline and retrieval-augmented vision-
 - 🎨 **Visualization Tools**: Rich visualization capabilities with overlay support
 - ⚡ **Async Processing**: High-performance async processing with rate limiting and retry logic
 - 🖼️ **Streamlit Demo**: Interactive GUI with collapsible reasoning traces
+- 🔄 **Enhanced Multi-turn Prompting**: Intelligent conditional continuation for adaptive analysis
 
 ## Quick Start
 
@@ -148,6 +149,37 @@ python -m nova_retrieval_vlm.cli \
   paths.data_dir=$DATA_DIR \
   paths.output_dir=runs/diagnosis_retrieval
 ```
+
+#### Enhanced Multi-turn Analysis
+
+The framework supports intelligent multi-turn prompting that adapts to case complexity:
+
+```bash
+# Multi-turn analysis with conditional continuation
+python -m nova_retrieval_vlm.cli \
+  task=diagnosis \
+  approach=multiturn \
+  use_retrieval=true \
+  model.name=openai/gpt-4o \
+  paths.data_dir=$DATA_DIR \
+  paths.output_dir=runs/multiturn_diagnosis
+
+# Multi-turn captioning
+python -m nova_retrieval_vlm.cli \
+  task=caption \
+  approach=multiturn \
+  model.name=anthropic/claude-3.5-sonnet \
+  paths.data_dir=$DATA_DIR \
+  paths.output_dir=runs/multiturn_caption
+```
+
+**Multi-turn Benefits:**
+- **Adaptive Analysis**: Simple cases complete in 1 step, complex cases get 2-3 steps
+- **Efficient Processing**: Only uses necessary computational resources
+- **Comprehensive Tracking**: Complete audit trail of analysis decisions
+- **Confidence Calibration**: Model self-assesses when additional analysis is needed
+
+See [Enhanced Multi-turn System Documentation](./docs/enhanced_multiturn_system.md) for detailed information.
 
 #### Visualization and Analysis
 
@@ -293,6 +325,12 @@ python -m nova_retrieval_vlm.cli --config-path=configs --config-name=experiment
 2. **Dense Vector**: Semantic retrieval using sentence transformers
 3. **Hybrid**: Combines BM25 and dense retrieval with configurable weighting
 
+### Multi-turn Analysis Approaches
+
+1. **Baseline**: Single-step analysis with optional retrieval
+2. **Multi-turn**: Adaptive 1-3 step analysis with conditional continuation
+3. **Visual Multi-turn**: Advanced visual reasoning with operations
+
 ### Rate Limiting and Error Handling
 
 - Automatic retry logic with exponential backoff
@@ -336,6 +374,9 @@ pytest --cov=nova_retrieval_vlm
 
 # Run specific test file
 pytest tests/test_models.py
+
+# Test enhanced multi-turn system
+python scripts/test_enhanced_multiturn.py
 ```
 
 ### Code Quality

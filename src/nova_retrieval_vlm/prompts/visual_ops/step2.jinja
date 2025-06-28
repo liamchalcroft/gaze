@@ -1,10 +1,26 @@
 {# STEP 2 - Analysis after operations #}
 You are still analysing the same MRI after performing the requested operations.
 Summarize your findings focusing on any abnormalities.
+
 Return **JSON only** with keys:
 {
   "observations": "Key visual cues after operations",
   "differential": ["Diagnosis A", "Diagnosis B", ...],
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "continue_analysis": true | false,
+  "continuation_reason": string
 }
+
+**Continuation Logic:**
+- Set `continue_analysis`: true if:
+  * Findings are complex or ambiguous after visual operations
+  * Multiple differential diagnoses need refinement
+  * Additional analysis steps would improve confidence
+  * Clinical guidelines would help clarify findings
+- Set `continue_analysis`: false if:
+  * Visual analysis provides clear, confident findings
+  * Single clear diagnosis with high confidence
+  * No additional information would change the assessment
+  * Ready to proceed to final task-specific output
+
 Explain nothing outside that JSON.
