@@ -974,6 +974,48 @@ def process_batch_multiturn(
     preds.append(result)
 
 
+def _consolidate_multiturn_context(
+    step_results: dict,
+    passages: list,
+    metadata: dict
+) -> str:
+    """
+    Consolidate multi-turn context into a single comprehensive prompt to mitigate
+    multi-turn conversation failures (39% performance drop identified in research).
+    
+    This implements the 'consolidate before generation' strategy recommended by
+    PromptHub research to avoid premature answer attempts and lost-in-middle issues.
+    """
+    consolidation = []
+    
+    # Add step-by-step analysis summary
+    consolidation.append("## MULTI-TURN ANALYSIS SUMMARY")
+    consolidation.append("The following analysis was conducted through multiple reasoning steps:")
+    
+    for step_name, step_result in step_results.items():
+        if step_result:
+            consolidation.append(f"\n### {step_name.upper()}")
+            consolidation.append(f"**Key Findings:** {step_result.get('detailed_findings', 'N/A')}")
+            consolidation.append(f"**Confidence:** {step_result.get('confidence', 'N/A')}")
+            if step_result.get('differential_diagnosis'):
+                consolidation.append(f"**Differential:** {', '.join(step_result['differential_diagnosis'])}")
+            if step_result.get('continuation_reason'):
+                consolidation.append(f"**Reason for Continuation:** {step_result['continuation_reason']}")
+    
+    # Add retrieved passages if available
+    if passages:
+        consolidation.append("\n## RETRIEVED CLINICAL GUIDELINES")
+        for i, passage in enumerate(passages, 1):
+            consolidation.append(f"{i}. {passage}")
+    
+    # Add metadata context
+    if metadata.get('clinical_history'):
+        consolidation.append(f"\n## CLINICAL HISTORY")
+        consolidation.append(metadata['clinical_history'])
+    
+    return "\n".join(consolidation)
+
+
 def _generate_final_task_output(
     task: str,
     img_path: Path,
@@ -987,6 +1029,17 @@ def _generate_final_task_output(
 ) -> dict:
     """Generate the final task-specific output based on completed analysis steps."""
     
+    # Consolidate all multi-turn context to avoid conversation failures
+    step_results = {
+        "step1": step1_result,
+        "step2": step2_result,
+        "step3": step3_result
+    }
+    
+    consolidated_context = _consolidate_multiturn_context(
+        step_results, passages, metadata_for_prompt
+    )
+    
     # Determine the appropriate step 3 template based on task
     step3_template_map = {
         "caption": "multiturn/caption_step3.jinja",
@@ -996,13 +1049,12 @@ def _generate_final_task_output(
     
     step3_template = step3_template_map.get(task, "multiturn/caption_step3.jinja")
     
-    # Add all step results to metadata for final output
+    # Add consolidated context to metadata for final output
     final_metadata = metadata_for_prompt.copy()
     final_metadata["step1_result"] = step1_result
-    if step2_result:
-        final_metadata["step2_analysis"] = step2_result
-    if step3_result:
-        final_metadata["step3_analysis"] = step3_result
+    final_metadata["step2_analysis"] = step2_result
+    final_metadata["step3_analysis"] = step3_result
+    final_metadata["consolidated_context"] = consolidated_context
     
     final_prompt = load_enhanced_prompt(
         template_name=step3_template,

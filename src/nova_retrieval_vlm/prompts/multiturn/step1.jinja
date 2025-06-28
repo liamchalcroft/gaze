@@ -7,40 +7,31 @@ Image dimensions: {{ width }}×{{ height }} pixels (origin at top-left (0, 0); b
 
 # Pay special attention to *contralateral symmetry* - for paired structures (cortex, basal ganglia, white-matter tracts, vessels) the left and right sides should appear mirror-symmetric; any asymmetry (signal, size, or shape) is a potential abnormality that must be reported.
 
-First, reason about the technical aspects of the image before listing findings.
+First, reason about the technical aspects of the image before proceeding to clinical assessment.
 
-IMPORTANT INSTRUCTIONS:
-- Be explicit: Is this scan NORMAL or ABNORMAL? State this clearly.
-- Use precise radiological terms. Avoid generic phrases like "abnormal signal" or "possible lesion."
-- If findings are ambiguous or do not fit known patterns, state "Unknown anomaly" and describe features precisely.
-- If you are uncertain, explain why and suggest what additional information would help.
+**IMPORTANT: Keep your response focused and concise. Avoid verbosity and premature conclusions. Focus on evidence collection and hypothesis formation rather than definitive answers.**
 
-Return **JSON only** (no Markdown) with the following keys exactly:
+Return **JSON only** (no Markdown) with the following structure:
+
 {
-  "scan_status": "normal | abnormal | uncertain",
-  "confidence_score": 0.0-1.0,
-  "orientation": "axial | coronal | sagittal | other",
-  "relative_contrast": "T1-like | T2-like | FLAIR-like | GRE/SWI-like | DWI/ADC-like | unknown",
-  "sequence_candidates": ["T1W", "T2W", "FLAIR", …],  # max 3 most likely
-  "observations": "Key visual cues (e.g. hyperintensity of right thalamus, midline shift of 3 mm, mass effect). Use precise terminology.",
-  "differential": ["Diagnosis A", "Diagnosis B", …],  # max 5, ranked by likelihood
-  "uncertainty_reasons": "If uncertain, explain why. If confident, state 'High confidence in findings.'",
-  "unknown_anomaly": "If findings don't match known patterns, describe here. Otherwise: null",
+  "technical_assessment": "Brief technical assessment (orientation, sequence, quality)",
+  "detailed_findings": "Concise description of key findings with precise terminology",
+  "differential_diagnosis": ["Primary diagnosis", "Secondary diagnosis", "Tertiary diagnosis"],
+  "confidence": 0.0-1.0,
   "continue_analysis": true | false,
-  "continuation_reason": "Explain why additional steps are needed or why analysis is complete"
+  "continuation_reason": "Brief explanation for continuation decision"
 }
 
-CONTINUATION LOGIC:
-- Set "continue_analysis": true if:
-  * Findings are complex or ambiguous
-  * Multiple differential diagnoses need refinement
-  * Clinical guidelines would improve confidence
-  * Additional analysis steps would enhance accuracy
-- Set "continue_analysis": false if:
-  * Scan is clearly normal with high confidence
-  * Single clear diagnosis with high confidence
-  * No additional information would change the assessment
+**Continuation Logic:**
+- Set `continue_analysis`: true if findings are complex, ambiguous, or confidence is low
+- Set `continue_analysis`: false if scan is clearly normal with high confidence
+- Provide clear, concise reasoning in `continuation_reason`
 
-Explain nothing outside that JSON. Do **NOT** output bounding boxes at this step.
+**Response Guidelines:**
+- Be concise and focused - avoid unnecessary verbosity
+- Focus on evidence collection, not premature conclusions
+- Use precise medical terminology
+- Maintain uncertainty when findings are ambiguous
+- Keep differential diagnosis list to 3-5 items maximum
 
-Are you sure that's your final answer? If not, review your reasoning. 
+Image: {{ img_path }} 

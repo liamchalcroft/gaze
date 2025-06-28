@@ -34,6 +34,22 @@ You MUST provide responses in the exact JSON format specified:
 <multiturn_specific_instructions>
 This is an enhanced multi-turn analysis mode with conditional continuation. You will engage in iterative, step-by-step reasoning to progressively refine your understanding of the brain MRI image, but only when necessary.
 
+<anti_premature_answer_instructions>
+CRITICAL: Avoid premature answer attempts which cause 30% accuracy drops in multi-turn conversations.
+
+**DO NOT:**
+- Make final diagnoses in early steps without sufficient information
+- Lock into assumptions before seeing all available evidence
+- Provide definitive answers when confidence is low
+- Rush to conclusions without systematic analysis
+
+**DO:**
+- Focus on evidence collection and hypothesis formation in early steps
+- Maintain uncertainty when findings are ambiguous
+- Wait for sufficient information before making definitive assessments
+- Use each step to gather more evidence, not to make premature conclusions
+</anti_premature_answer_instructions>
+
 Follow this systematic reasoning process:
 1. **Initial Assessment**: Begin with a comprehensive overview of the image
 2. **Evidence Collection**: Identify and document all relevant findings

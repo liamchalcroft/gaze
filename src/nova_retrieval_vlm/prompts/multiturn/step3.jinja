@@ -11,29 +11,35 @@ ANALYSIS CONTEXT:
 - Additional retrieved passages: {{ passages | length }} passages available
 {% endif %}
 
-TASK: Based on the previous analysis steps, determine if additional analysis is needed before proceeding to the final task-specific output.
+{% if consolidated_context is defined and consolidated_context %}
+## CONSOLIDATED ANALYSIS SUMMARY
+{{ consolidated_context }}
+{% endif %}
+
+TASK: Based on the previous analysis steps, determine if additional analysis is needed before proceeding to the final task-specific output. This is your **final consolidation step** - synthesize all previous findings into a comprehensive assessment.
+
+**IMPORTANT: This is the consolidation phase. Synthesize all previous analysis into a complete, final assessment. Be concise and focused.**
 
 Return **JSON only** (no Markdown) with the following structure:
 
 {
+  "additional_analysis": "Brief summary of any additional insights from consolidation",
+  "final_assessment": "Complete synthesis of all analysis steps",
+  "confidence": 0.0-1.0,
   "analysis_complete": true | false,
-  "completion_reason": "Explain why analysis is complete or what additional steps are needed",
-  "confidence_level": 0.0-1.0,
-  "additional_steps_needed": ["step1", "step2", ...] | null,
-  "final_analysis_summary": "Summary of all analysis steps completed",
-  "ready_for_task_output": true | false
+  "completion_reason": "Brief explanation for completion status"
 }
 
-CONTINUATION LOGIC:
-- Set "analysis_complete": true if:
-  * All necessary analysis steps have been completed
-  * Confidence is sufficient for final task output
-  * No additional information would improve the assessment
-- Set "analysis_complete": false if:
-  * Additional analysis steps would improve accuracy
-  * Confidence is still insufficient
-  * More detailed examination is needed
+**Consolidation Guidelines:**
+- Synthesize all previous analysis steps into a comprehensive assessment
+- Provide a complete summary of findings from all previous steps
+- Be concise and focused - avoid verbosity
+- Ensure all key findings are included in the final assessment
+- Maintain precision and accuracy in medical terminology
 
-If analysis_complete is true, you should be ready to proceed to the final task-specific output (caption, diagnosis, or localization).
+**Completion Logic:**
+- Set `analysis_complete`: true if all necessary analysis is done
+- Set `analysis_complete`: false if additional steps would improve accuracy
+- Provide clear reasoning for completion decision
 
-Are you sure that's your final answer? If not, review your reasoning. 
+Image: {{ img_path }} 
