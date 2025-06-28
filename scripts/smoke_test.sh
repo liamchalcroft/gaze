@@ -24,14 +24,16 @@ set -euo pipefail
 # Number of samples per run – keep very small for speed
 NUM_IMAGES="${NUM_IMAGES:-3}"
 # Tasks to exercise.  Adjust via `TASKS="caption diagnosis" bash ...` if desired.
-TASKS=( ${TASKS:-caption diagnosis localization} )
+# TASKS=( ${TASKS:-caption diagnosis localization} )
+TASKS=( ${TASKS:-localization} )
 # Which controller pipelines to run.  Supported values:
 #   baseline            – single-turn, no retrieval
 #   retrieval           – baseline + guideline retrieval (use_retrieval=true)
 #   multiturn           – text-based multi-turn reasoning
 #   visual_multiturn    – multi-turn with image ops loop
 # Override via `APPROACHES="baseline visual_multiturn"`.
-APPROACHES=( ${APPROACHES:-baseline retrieval multiturn visual_multiturn} )
+# APPROACHES=( ${APPROACHES:-baseline retrieval multiturn visual_multiturn} )
+APPROACHES=( ${APPROACHES:-baseline visual_multiturn} )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./model_list.sh

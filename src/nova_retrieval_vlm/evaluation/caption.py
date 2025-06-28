@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Sequence
+import functools
 
 import nltk
 import sacrebleu
@@ -8,6 +9,25 @@ from bert_score import score as bert_score
 from loguru import logger
 from nltk.tokenize import word_tokenize
 from nltk.translate.meteor_score import meteor_score
+
+# Cache for NLTK downloads to avoid repeated downloads
+_nltk_downloaded = False
+
+
+def _ensure_nltk_downloads():
+    """Ensure NLTK data is downloaded (cached)."""
+    global _nltk_downloaded
+    if not _nltk_downloaded:
+        nltk.download("punkt", quiet=True)
+        nltk.download("wordnet", quiet=True)
+        nltk.download("omw-1.4", quiet=True)
+        _nltk_downloaded = True
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_word_tokenize(text: str) -> list:
+    """Cached word tokenization to avoid repeated processing."""
+    return word_tokenize(text)
 
 
 def evaluate_caption(
@@ -24,16 +44,31 @@ def evaluate_caption(
     Returns:
         Dictionary with keys 'bleu', 'bert_f1', 'radgraph_f1', 'meteor', 'modality_f1', 'clinical_f1', 'binary_f1'.
     """
+    # Ensure NLTK data is available
+    _ensure_nltk_downloads()
+    
     # SacreBLEU
     bleu = sacrebleu.corpus_bleu(preds, [refs])
+    
     # BERTScore
     P, R, F1 = bert_score(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
-    # METEOR
-    nltk.download("punkt")
-    pred_tokens = [word_tokenize(pred) for pred in preds]
-    ref_tokens = [[word_tokenize(ref) for ref in refs[i]] for i in range(len(refs))]
-    meteor_scores = [meteor_score(ref_tokens[i], pred_tokens[i]) for i in range(len(preds))]
-    meteor = float(sum(meteor_scores) / len(meteor_scores) * 100)
+    
+    # METEOR - Fixed calculation with caching
+    # Prepare references for METEOR (list of lists format)
+    ref_tokens = [[_cached_word_tokenize(ref)] for ref in refs]
+    pred_tokens = [_cached_word_tokenize(pred) for pred in preds]
+    
+    # Calculate METEOR scores
+    meteor_scores = []
+    for i, pred_token in enumerate(pred_tokens):
+        try:
+            score = meteor_score(ref_tokens[i], pred_token)
+            meteor_scores.append(score)
+        except Exception as e:
+            logger.warning(f"METEOR calculation failed for sample {i}: {e}")
+            meteor_scores.append(0.0)
+    
+    meteor = float(sum(meteor_scores) / len(meteor_scores) * 100) if meteor_scores else 0.0
 
     # RadGraph F1 (optional heavy dependency)
     radgraph_f1 = 0.0
@@ -46,6 +81,7 @@ def evaluate_caption(
     except Exception as exc:  # pragma: no cover - optional
         logger.warning("RadGraph evaluation unavailable: %s", exc)
         radgraph_f1 = 0.0
+    
     # Keyword-based F1
     modality_terms = {"flair", "t1", "t2", "t1w", "t2w", "axial", "sagittal", "coronal", "weighted"}
     clinical_terms = {

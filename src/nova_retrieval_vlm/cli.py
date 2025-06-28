@@ -1181,35 +1181,42 @@ def process_batch_visual_multiturn(
         # Apply visual operations if requested
         if ops_result.get("zoom_factor") or ops_result.get("crop_box") or ops_result.get("contrast_factor") or ops_result.get("intensity_range"):
             try:
+                # Load the current image
+                current_image = Image.open(current_image_path).convert("L")
+                
                 # Apply zoom if requested
                 if ops_result.get("zoom_factor") and ops_result["zoom_factor"] != 1.0:
-                    current_image_path = zoom_image(
-                        current_image_path, 
-                        ops_result.get("crop_box", [0, 0, pil.width, pil.height]),
+                    current_image = zoom_image(
+                        current_image, 
                         ops_result["zoom_factor"]
                     )
                 
                 # Apply crop if requested
                 if ops_result.get("crop_box"):
-                    current_image_path = crop_image(
-                        current_image_path,
+                    current_image = crop_image(
+                        current_image,
                         ops_result["crop_box"]
                     )
                 
                 # Apply contrast if requested
                 if ops_result.get("contrast_factor") and ops_result["contrast_factor"] != 1.0:
-                    current_image_path = adjust_contrast(
-                        current_image_path,
+                    current_image = adjust_contrast(
+                        current_image,
                         ops_result["contrast_factor"]
                     )
                 
                 # Apply intensity threshold if requested
                 if ops_result.get("intensity_range"):
-                    current_image_path = apply_intensity_threshold(
-                        current_image_path,
+                    current_image = apply_intensity_threshold(
+                        current_image,
                         ops_result["intensity_range"][0],
                         ops_result["intensity_range"][1]
                     )
+                
+                # Save the modified image
+                modified_image_path = img_folder / f"modified_round_{round_num}.png"
+                current_image.save(modified_image_path)
+                current_image_path = modified_image_path
                 
                 visual_operations.append({
                     "round": round_num,
@@ -1317,6 +1324,106 @@ def process_batch_visual_multiturn(
     
     # Generate and save reference
     save_reference(img_folder, batch_idx, hf_ds)
+    
+    # ---------------------------------------------------------------------
+    # Visualisation - draw GT & predicted bounding-boxes
+    # ---------------------------------------------------------------------
+
+    def _draw_boxes(img_path: Path, gt: list[Any], pred: list[Any], out_path: Path):
+        """Draw *gt* (green) and *pred* (red) boxes on *img_path* and save.
+
+        The helper is now tolerant to various box formats:
+
+        1. [x1, y1, x2, y2] - preferred.
+        2. Dicts with keys (x1,y1,x2,y2) or (x,y,width,height).
+        Invalid or incomplete entries are silently skipped.
+        """
+        import matplotlib
+
+        matplotlib.use("Agg")  # headless
+        import matplotlib.patches as patches
+        import matplotlib.pyplot as plt
+        from matplotlib import patheffects as pe
+        from PIL import Image
+
+        img = Image.open(img_path).convert("L")
+        fig, ax = plt.subplots(1, figsize=(6, 6))
+        ax.imshow(img, cmap="gray")
+
+        def _iter_boxes(raw_boxes):
+            for b in raw_boxes:
+                if isinstance(b, (list, tuple)) and len(b) == 4:
+                    yield b
+                elif isinstance(b, dict):
+                    if all(k in b for k in ("x1", "y1", "x2", "y2")):
+                        yield [b["x1"], b["y1"], b["x2"], b["y2"]]
+                    elif all(k in b for k in ("x", "y", "width", "height")):
+                        yield [b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]]
+
+        for box in _iter_boxes(gt):
+            x1, y1, x2, y2 = box
+            w, h = x2 - x1, y2 - y1
+            rect = patches.Rectangle(
+                (x1, y1), w, h, linewidth=1.5, edgecolor="lime", facecolor="none"
+            )
+            ax.add_patch(rect)
+
+        for box in _iter_boxes(pred):
+            x1, y1, x2, y2 = box
+            w, h = x2 - x1, y2 - y1
+            rect = patches.Rectangle(
+                (x1, y1), w, h, linewidth=1.2, edgecolor="red", facecolor="none", linestyle="--"
+            )
+            ax.add_patch(rect)
+
+        ax.axis("off")
+
+        # ------------------------------------------------------------------
+        # Add legend (only for categories that are present)
+        # ------------------------------------------------------------------
+        from matplotlib.lines import Line2D  # imported here to keep the
+
+        # function self-contained even when matplotlib is not globally
+        # available at import time.
+
+        legend_elements = []
+        if gt:
+            legend_elements.append(Line2D([0], [0], color="lime", lw=2, label="Ground Truth"))
+        if pred:
+            legend_elements.append(
+                Line2D([0], [0], color="red", lw=2, linestyle="--", label="Prediction")
+            )
+
+        if legend_elements:
+            leg = ax.legend(
+                handles=legend_elements, loc="upper right", fontsize="x-small", frameon=False
+            )
+            # Improve readability - bright text with thin black outline
+            for text in leg.get_texts():
+                text.set_color("yellow")
+                text.set_path_effects(
+                    [
+                        pe.Stroke(linewidth=1.0, foreground="black"),
+                        pe.Normal(),
+                    ]
+                )
+
+        fig.tight_layout(pad=0)
+        fig.savefig(out_path, bbox_inches="tight", dpi=150)
+        plt.close(fig)
+
+    gt_bg = hf_ds[batch_idx].get("bbox_gold", {})
+    gt_boxes = [
+        [x, y, x + w, y + h]
+        for x, y, w, h in zip(
+            gt_bg.get("x", []), gt_bg.get("y", []), gt_bg.get("width", []), gt_bg.get("height", [])
+        )
+    ]
+    viz_path = img_folder / "bboxes.png"
+    _draw_boxes(img_path, gt_boxes, result.get("boxes", []), viz_path)
+    
+    # Evaluate this individual prediction
+    evaluate_prediction(img_folder, task)
     
     preds.append(result)
 
