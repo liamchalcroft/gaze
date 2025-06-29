@@ -41,6 +41,9 @@ MAX_ITERS=-1
 # Determine directory of this script so we can invoke companion scripts reliably
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source the model list
+source "${SCRIPT_DIR}/model_list.sh"
+
 # Parse CLI opts
 while [[ $# -gt 0 ]]; do
   case "$1" in
