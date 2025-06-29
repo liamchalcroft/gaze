@@ -1,4 +1,6 @@
 {# STEP 2b - Clinical History Integration #}
+CRITICAL: You MUST provide definitive analysis based ONLY on the available clinical history and your previous imaging findings. Do NOT request additional clinical information. This is your FINAL response for this step.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 {% if clinical_history %}
@@ -8,7 +10,7 @@ CLINICAL HISTORY:
 No clinical history provided.
 {% endif %}
 
-TASK: Integrate the clinical history with your imaging findings to refine your analysis.
+TASK: Integrate the available clinical history with your imaging findings to refine your analysis.
 
 Return **JSON only** (no Markdown) with the following keys exactly:
 {
@@ -23,18 +25,24 @@ Return **JSON only** (no Markdown) with the following keys exactly:
     "Dx5: Included because..."
   ],
   "history_conflicts": "Any conflicts between history and imaging? If none: 'No conflicts identified.'",
-  "additional_history_needed": "What additional clinical information would help?",
   "clinical_correlation": "How well do the imaging findings correlate with the clinical presentation?",
   "urgency_assessment": "low | moderate | high | critical",
   "urgency_reason": "Why this urgency level?"
 }
 
 CRITICAL REQUIREMENTS:
-- Re-rank your differential diagnosis based on clinical history
+- Re-rank your differential diagnosis based on available clinical history
 - Provide confidence scores for each diagnosis
 - Justify each diagnosis considering both imaging and clinical factors
 - Identify any red flags or urgent findings
 - If clinical history doesn't match imaging findings, explain why
 - Use precise clinical terminology
+- Base analysis SOLELY on available clinical history and imaging findings
+- Do NOT mention needing additional clinical information
+
+CONSTRAINTS:
+- Work with the available clinical history only
+- Provide your best analysis with available information
+- This is your FINAL response for this integration step
 
 This integration step is crucial for accurate diagnostic reasoning. Are you sure that's your final answer? If not, review your reasoning. 

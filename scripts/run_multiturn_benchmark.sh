@@ -29,17 +29,24 @@ TASKS=(localization caption diagnosis)
 
 mkdir -p "${OUTPUT_DIR}"
 
-echo "==== MULTITURN BENCHMARK (retrieval on) ===="
+echo "==== MULTITURN BENCHMARK (Enhanced System Prompts) ===="
 echo "DATA_DIR   = ${DATA_DIR}"
 echo "OUTPUT_DIR = ${OUTPUT_DIR}"
 echo "MODELS     = ${MODELS_DEFAULT[*]}"
 echo "TASKS      = ${TASKS[*]}"
-echo "============================================="
+echo "APPROACH   = multiturn (optimized with conditional continuation)"
+echo "============================================================"
 
 for MODEL in "${MODELS_DEFAULT[@]}"; do
   for TASK in "${TASKS[@]}"; do
     RUN_DIR="${OUTPUT_DIR}/${TASK}/$(echo "${MODEL}" | tr '/:' '_')"
-    echo -e "\n▶ multiturn | ${TASK} | ${MODEL}\n   → ${RUN_DIR}"
+    echo -e "\n▶ multiturn (enhanced) | ${TASK} | ${MODEL}\n   → ${RUN_DIR}"
+    
+    # Create run directory and log configuration
+    mkdir -p "${RUN_DIR}"
+    echo "Configuration: approach=multiturn, task=${TASK}, model=${MODEL}" > "${RUN_DIR}/config.txt"
+    echo "Enhanced features: conditional continuation, systematic analysis steps, performance optimization" >> "${RUN_DIR}/config.txt"
+    
     python -m nova_retrieval_vlm.cli \
       task=${TASK} \
       approach=multiturn \
@@ -47,8 +54,19 @@ for MODEL in "${MODELS_DEFAULT[@]}"; do
       batch_size=${BATCH_SIZE} \
       max_iterations=${MAX_ITERS} \
       use_retrieval=true \
+      multiturn_max_steps=3 \
+      retrieval.type=hybrid \
+      retrieval.top_k=5 \
       paths.data_dir="${DATA_DIR}" \
-      paths.output_dir="${RUN_DIR}"
+      paths.output_dir="${RUN_DIR}" \
+      strict_mode=true
+      
+    # Log completion status
+    if [ $? -eq 0 ]; then
+      echo "✓ SUCCESS" >> "${RUN_DIR}/status.txt"
+    else
+      echo "✗ FAILED" >> "${RUN_DIR}/status.txt"
+    fi
   done
 done
 

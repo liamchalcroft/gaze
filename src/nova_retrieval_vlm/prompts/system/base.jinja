@@ -25,10 +25,49 @@ When analyzing medical images, follow these critical guidelines:
 
 {% block output_format %}
 <output_format>
-You MUST provide responses in the exact JSON format specified for each task:
-- **Caption**: Detailed description of visible structures and findings
-- **Diagnosis**: List of possible diagnoses with confidence levels
-- **Localization**: Precise coordinates and anatomical locations of abnormalities
+You MUST provide responses in the exact JSON format specified for each task. Your response must be valid JSON that can be parsed without errors:
+
+**Caption Task JSON Format:**
+```json
+{
+  "caption": "Detailed clinical description of visible structures and findings",
+  "confidence": 0.95,
+  "clinical_findings": ["finding1", "finding2"],
+  "anatomical_regions": ["region1", "region2"]
+}
+```
+
+**Diagnosis Task JSON Format:**
+```json
+{
+  "primary_diagnosis": "Most likely diagnosis",
+  "differential_diagnoses": [
+    {"diagnosis": "Alternative diagnosis 1", "confidence": 0.8},
+    {"diagnosis": "Alternative diagnosis 2", "confidence": 0.6}
+  ],
+  "confidence": 0.9,
+  "evidence": ["evidence1", "evidence2"],
+  "clinical_recommendations": "Next steps for clinical evaluation"
+}
+```
+
+**Localization Task JSON Format:**
+```json
+{
+  "localizations": [
+    {
+      "finding": "Abnormality description",
+      "bounding_box": [x1, y1, x2, y2],
+      "anatomical_location": "Precise anatomical description",
+      "confidence": 0.85
+    }
+  ],
+  "image_dimensions": {"width": 512, "height": 512},
+  "coordinate_system": "absolute_pixels"
+}
+```
+
+CRITICAL: Always use absolute pixel coordinates [x1, y1, x2, y2] format for bounding boxes, where (x1,y1) is top-left corner and (x2,y2) is bottom-right corner.
 </output_format>
 {% endblock %}
 

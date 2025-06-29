@@ -28,26 +28,43 @@ TASKS=(localization caption diagnosis)
 
 mkdir -p "${OUTPUT_DIR}"
 
-echo "==== RETRIEVAL BENCHMARK ===="
+echo "==== RETRIEVAL BENCHMARK (Enhanced System Prompts) ===="
 echo "DATA_DIR   = ${DATA_DIR}"
 echo "OUTPUT_DIR = ${OUTPUT_DIR}"
 echo "MODELS     = ${MODELS_DEFAULT[*]}"
 echo "TASKS      = ${TASKS[*]}"
-echo "================================"
+echo "APPROACH   = retrieval (optimized with knowledge synthesis)"
+echo "=========================================================="
 
 for MODEL in "${MODELS_DEFAULT[@]}"; do
   for TASK in "${TASKS[@]}"; do
     RUN_DIR="${OUTPUT_DIR}/${TASK}/$(echo "${MODEL}" | tr '/:' '_')"
-    echo -e "\n▶ retrieval | ${TASK} | ${MODEL}\n   → ${RUN_DIR}"
+    echo -e "\n▶ retrieval (enhanced) | ${TASK} | ${MODEL}\n   → ${RUN_DIR}"
+    
+    # Create run directory and log configuration
+    mkdir -p "${RUN_DIR}"
+    echo "Configuration: approach=retrieval, task=${TASK}, model=${MODEL}" > "${RUN_DIR}/config.txt"
+    echo "Enhanced features: knowledge synthesis, evidence integration, retrieval optimization" >> "${RUN_DIR}/config.txt"
+    
     python -m nova_retrieval_vlm.cli \
       task=${TASK} \
-      approach=baseline \
+      approach=retrieval \
       use_retrieval=true \
+      retrieval.type=hybrid \
+      retrieval.top_k=5 \
       model.name="${MODEL}" \
       batch_size=${BATCH_SIZE} \
       max_iterations=${MAX_ITERS} \
       paths.data_dir="${DATA_DIR}" \
-      paths.output_dir="${RUN_DIR}"
+      paths.output_dir="${RUN_DIR}" \
+      strict_mode=true
+      
+    # Log completion status
+    if [ $? -eq 0 ]; then
+      echo "✓ SUCCESS" >> "${RUN_DIR}/status.txt"
+    else
+      echo "✗ FAILED" >> "${RUN_DIR}/status.txt"
+    fi
   done
 done
 

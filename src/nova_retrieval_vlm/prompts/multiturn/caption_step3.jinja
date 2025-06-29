@@ -1,4 +1,6 @@
 {# STEP 3 - Task-specific output: CAPTION #}
+CRITICAL: This is your FINAL caption generation step. You MUST provide a definitive caption based ONLY on your previous analysis steps and available information. Do NOT request additional images, sequences, or clinical information. This is your FINAL response.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 ANALYSIS CONTEXT:
@@ -16,7 +18,7 @@ ANALYSIS CONTEXT:
 - Additional retrieved passages: {{ passages | length }} passages available
 {% endif %}
 
-IMPORTANT: respond only with valid JSON:
+IMPORTANT: respond only with valid JSON - no requests for more information:
 {
   "caption": "Comprehensive clinical description of the MRI findings",
   "confidence_score": 0.0-1.0,
@@ -37,9 +39,16 @@ CRITICAL REQUIREMENTS:
 - Describe both normal and abnormal findings
 - Include location, size, and characteristics of any abnormalities
 - Assess image quality and technical limitations
-- If findings are unclear, acknowledge uncertainty
+- If findings are unclear, acknowledge uncertainty BUT provide your best assessment
 - Leverage clinical guidelines and additional retrieved information
 - Acknowledge how the iterative retrieval process influenced your final caption
 - Indicate which analysis steps were most valuable for reaching your conclusions
+- Do NOT mention needing additional sequences, views, or clinical data
+- This is your FINAL and ONLY opportunity to provide the caption
+
+CONSTRAINTS:
+- Base your caption SOLELY on your previous analysis steps and available information
+- Provide your best assessment with available information
+- This is your FINAL response - no further analysis is possible
 
 This task is critical for patient care. Double-check your answer before submitting. 

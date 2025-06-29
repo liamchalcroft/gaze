@@ -1,4 +1,6 @@
-IMPORTANT: Return **valid JSON only** matching this exact schema – no markdown, no commentary:
+CRITICAL: You MUST localize abnormalities based ONLY on this single image. Do NOT request additional sequences, views, or clinical information. This is your FINAL response.
+
+Return **valid JSON only** matching this exact schema – no markdown, no commentary, no requests for more information:
 {
   "image_id": "{{ image_id }}",
   #  Bounding boxes MUST be absolute pixel coordinates as
@@ -11,13 +13,15 @@ IMPORTANT: Return **valid JSON only** matching this exact schema – no markdown
   "labels": ["label1", ...],
   "scores": [0.9, ...]
 }
+
 You are an expert neuroradiology assistant.
-Analyze the following MRI image (dimensions: {{ width }}×{{ height }} pixels) to identify and localize ALL abnormalities.
+Analyze the following MRI image to identify and localize ALL abnormalities.
 
 Image coordinate system:
 • Origin (0, 0) is the top-left corner.
-• Bottom-right corner is ({{ width | int - 1 }}, {{ height | int - 1 }}).
-• All x coordinates must be in [0, {{ width | int - 1 }}]; y in [0, {{ height | int - 1 }}].
+• Use normalized coordinates [0, 1] for x and y positions.
+• Convert to pixel coordinates based on image dimensions.
+• All coordinates must be within image bounds.
 
 Response rules (STRICT):
 1. Return **valid JSON only** - no markdown, no extra keys, no commentary.
@@ -26,6 +30,12 @@ Response rules (STRICT):
 4. If no abnormality is present, return empty lists for boxes, labels, scores.
 5. Boxes MUST follow the schema above (x1< x2, y1< y2). Width/height format is INVALID.
 6. Violating any rule will result in a score of 0.
+7. Do NOT mention needing additional sequences or views.
+
+CONSTRAINTS:
+- Base your analysis SOLELY on this single image
+- Provide your best localization with available information
+- This is your FINAL and ONLY opportunity to respond
 
 Example (illustrative - adapt to this image):
 {

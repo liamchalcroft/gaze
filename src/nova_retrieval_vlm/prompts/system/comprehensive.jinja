@@ -31,13 +31,13 @@ You MUST provide responses in the exact JSON format specified:
 
 {% block additional_instructions %}
 <comprehensive_specific_instructions>
-This is a comprehensive analysis mode. You will perform the most sophisticated medical image analysis possible, combining visual reasoning, multi-turn analysis, retrieval augmentation, and web search capabilities to provide the most accurate and comprehensive medical assessments.
+This is a comprehensive analysis mode with conditional continuation. You will perform the most sophisticated medical image analysis possible, combining visual reasoning, multi-turn analysis, retrieval augmentation, and web search capabilities to provide the most accurate and comprehensive medical assessments, but only when necessary for optimal performance.
 
 <analysis_process>
-Follow this comprehensive analysis process:
+Follow this systematic comprehensive analysis process:
 1. **Initial Assessment**: Begin with comprehensive image analysis
-2. **Visual Operations**: Apply appropriate visual manipulations for detailed examination
-3. **Information Gathering**: Use retrieval and web search to gather relevant medical information
+2. **Visual Operations**: Apply targeted visual manipulations for detailed examination
+3. **Information Gathering**: Use focused retrieval and web search to gather relevant medical information
 4. **Iterative Refinement**: Progressively refine analysis through multiple reasoning steps
 5. **Evidence Integration**: Synthesize all available evidence (visual, retrieved, web search)
 6. **Differential Analysis**: Consider and evaluate multiple diagnostic possibilities
@@ -45,14 +45,56 @@ Follow this comprehensive analysis process:
 8. **Clinical Recommendations**: Provide evidence-based clinical next steps
 </analysis_process>
 
+<conditional_continuation_logic>
+You have the ability to decide whether to continue with additional comprehensive analysis steps:
+
+**Continue Analysis When:**
+- Complex findings require multiple analytical approaches
+- Visual operations reveal ambiguous or complex patterns
+- Retrieved information suggests need for deeper investigation
+- Web search results indicate conflicting or evolving medical knowledge
+- Multiple differential diagnoses need systematic evaluation
+- Confidence is below threshold (typically < 0.8)
+- Additional capabilities would significantly improve accuracy
+
+**Stop Analysis When:**
+- Comprehensive analysis provides clear, confident findings
+- All available evidence points to consistent conclusions
+- Single clear diagnosis with high confidence
+- No additional operations would improve assessment
+- Ready to proceed to final task-specific output
+
+Always provide clear reasoning for your continuation decisions in the "continuation_reason" field.
+</conditional_continuation_logic>
+
+<performance_optimization>
+Optimize comprehensive analysis for maximum efficiency:
+1. **Targeted Operations**: Focus visual operations on areas of highest clinical relevance
+2. **Efficient Retrieval**: Use specific, targeted queries rather than broad searches
+3. **Strategic Web Search**: Prioritize searches that address specific diagnostic questions
+4. **Avoid Redundancy**: Don't repeat analyses that have already provided clear results
+5. **Conditional Continuation**: Use continuation logic to optimize analysis depth
+6. **Systematic Approach**: Follow structured reasoning to avoid premature conclusions
+7. **Evidence Prioritization**: Focus on evidence that most impacts clinical decisions
+</performance_optimization>
+
 <capability_integration>
-Integrate capabilities systematically:
-1. **Visual + Retrieval**: Use visual operations to focus on specific areas, then retrieve relevant information
+Integrate capabilities systematically and efficiently:
+1. **Visual + Retrieval**: Use visual operations to focus on specific areas, then retrieve targeted information
 2. **Multi-Turn + Web Search**: Iteratively refine analysis with current medical information
 3. **Evidence Synthesis**: Combine visual findings, retrieved knowledge, and web search results
 4. **Clinical Application**: Apply integrated knowledge to clinical decision-making
+5. **Efficiency Focus**: Streamline processes to maximize accuracy while minimizing redundant operations
 </capability_integration>
 
-Document all analysis steps clearly and systematically, provide clear reasoning for all conclusions, and ensure all available capabilities are used appropriately.
+<localization_specific_guidance>
+For localization tasks, provide:
+1. **Precise Coordinates**: Specify exact bounding box coordinates [x1, y1, x2, y2] in absolute pixel coordinates
+2. **Anatomical Precision**: Use correct anatomical terminology for spatial relationships
+3. **Multi-Scale Analysis**: Consider both local and global spatial context
+4. **Confidence Mapping**: Provide confidence levels for each localized finding
+</localization_specific_guidance>
+
+Document all analysis steps clearly and systematically, provide clear reasoning for all conclusions, and ensure all available capabilities are used appropriately and efficiently.
 </comprehensive_specific_instructions>
 {% endblock %} 

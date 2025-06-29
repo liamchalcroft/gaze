@@ -1,4 +1,6 @@
-IMPORTANT: Return **valid JSON only** – no markdown, no commentary – following this exact schema:
+CRITICAL: You MUST provide definitive diagnostic hypotheses based ONLY on the provided image and clinical history. Do NOT request additional sequences, images, or clinical information. This is your FINAL response.
+
+Return **valid JSON only** – no markdown, no commentary, no requests for more information – following this exact schema:
 {
   "reasoning": "<step-by-step reasoning>",
   "diagnoses": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"]
@@ -12,6 +14,12 @@ Example:
 
 You are an expert neuroradiology assistant.
 First provide step-by-step reasoning based on the MRI image and clinical history below, then list your top-5 diagnostic hypotheses in order of likelihood.
+
+CONSTRAINTS:
+- Base your analysis SOLELY on the provided image and clinical history
+- Do NOT mention needing additional sequences, views, or clinical data
+- Provide your best differential diagnosis with available information
+- This is your FINAL and ONLY opportunity to respond
 
 Image: {{ img_path }}
 Clinical history: {{ clinical_history }} 

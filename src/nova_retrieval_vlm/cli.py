@@ -165,14 +165,170 @@ def _parse_cli_args():
     return cfg
 
 
+def _validate_config(cfg: Config) -> None:
+    """Validate configuration and provide helpful error messages."""
+    
+    # Available options
+    available_approaches = ["baseline", "multiturn", "visual", "retrieval", "web_search", "comprehensive"]
+    available_tasks = ["caption", "diagnosis", "localization", "visualize", "prompt"]
+    
+    # Validate approach
+    if cfg.approach not in available_approaches:
+        raise ValueError(
+            f"Invalid approach: '{cfg.approach}'. "
+            f"Available approaches: {', '.join(available_approaches)}\n"
+            f"Use one of the optimized system prompt modes for best performance."
+        )
+    
+    # Validate task
+    if cfg.task not in available_tasks:
+        raise ValueError(
+            f"Invalid task: '{cfg.task}'. "
+            f"Available tasks: {', '.join(available_tasks)}"
+        )
+    
+    # Validate approach-specific requirements
+    if cfg.approach == "retrieval" and not cfg.use_retrieval:
+        logger.warning(
+            "Approach 'retrieval' requires retrieval to be enabled. "
+            "Setting use_retrieval=True automatically."
+        )
+        cfg.use_retrieval = True
+    
+    if cfg.approach == "web_search" and not cfg.use_web_search:
+        logger.warning(
+            "Approach 'web_search' requires web search to be enabled. "
+            "Setting use_web_search=True automatically."
+        )
+        cfg.use_web_search = True
+    
+    if cfg.approach == "comprehensive":
+        if not cfg.use_retrieval:
+            logger.warning(
+                "Comprehensive approach works best with retrieval enabled. "
+                "Consider setting use_retrieval=True for optimal performance."
+            )
+        if not cfg.use_web_search:
+            logger.warning(
+                "Comprehensive approach works best with web search enabled. "
+                "Consider setting use_web_search=True for optimal performance."
+            )
+    
+    # Validate model configuration
+    if not cfg.model.name:
+        raise ValueError("Model name is required. Set model.name to a valid model.")
+    
+    # Validate batch size
+    if cfg.batch_size <= 0:
+        raise ValueError("Batch size must be positive.")
+    
+    # Validate retrieval configuration
+    if cfg.use_retrieval:
+        # Convert string to int if needed (Hydra sometimes passes as string)
+        if isinstance(cfg.retrieval.top_k, str):
+            try:
+                cfg.retrieval.top_k = int(cfg.retrieval.top_k)
+            except ValueError:
+                raise ValueError(f"Retrieval top_k must be a valid integer, got: {cfg.retrieval.top_k}")
+        
+        if cfg.retrieval.top_k <= 0:
+            raise ValueError("Retrieval top_k must be positive when retrieval is enabled.")
+    
+    # Validate visual configuration
+    if cfg.approach == "visual":
+        # Convert string to int if needed
+        if isinstance(cfg.visual_rounds, str):
+            try:
+                cfg.visual_rounds = int(cfg.visual_rounds)
+            except ValueError:
+                raise ValueError(f"Visual rounds must be a valid integer, got: {cfg.visual_rounds}")
+        
+        if cfg.visual_rounds <= 0:
+            raise ValueError("Visual rounds must be positive for visual approach.")
+    
+    # Validate multiturn configuration
+    if cfg.approach == "multiturn":
+        # Convert string to int if needed
+        if isinstance(cfg.multiturn_max_steps, str):
+            try:
+                cfg.multiturn_max_steps = int(cfg.multiturn_max_steps)
+            except ValueError:
+                raise ValueError(f"Multiturn max steps must be a valid integer, got: {cfg.multiturn_max_steps}")
+        
+        if cfg.multiturn_max_steps <= 0:
+            raise ValueError("Multiturn max steps must be positive for multiturn approach.")
+    
+    # Validate comprehensive timeout
+    if cfg.approach == "comprehensive":
+        # Convert string to int if needed
+        if isinstance(cfg.comprehensive_timeout, str):
+            try:
+                cfg.comprehensive_timeout = int(cfg.comprehensive_timeout)
+            except ValueError:
+                raise ValueError(f"Comprehensive timeout must be a valid integer, got: {cfg.comprehensive_timeout}")
+        
+        if cfg.comprehensive_timeout <= 0:
+            raise ValueError("Comprehensive timeout must be positive for comprehensive approach.")
+    
+    # Log configuration summary
+    logger.info(f"🚀 Starting analysis with approach='{cfg.approach}' and task='{cfg.task}'")
+    
+    if cfg.approach == "baseline":
+        logger.info("📋 Using baseline approach with enhanced JSON format specification")
+    elif cfg.approach == "multiturn":
+        logger.info(f"🔄 Using multiturn approach with max {cfg.multiturn_max_steps} steps")
+    elif cfg.approach == "visual":
+        logger.info(f"👁️ Using visual approach with {cfg.visual_rounds} rounds")
+    elif cfg.approach == "retrieval":
+        logger.info(f"📚 Using retrieval approach with top_k={cfg.retrieval.top_k}")
+    elif cfg.approach == "web_search":
+        logger.info("🌐 Using web search approach with query formulation")
+    elif cfg.approach == "comprehensive":
+        logger.info("🎯 Using comprehensive approach with all capabilities")
+    
+    if cfg.use_retrieval:
+        logger.info(f"📖 Retrieval enabled: {cfg.retrieval.type} with top_k={cfg.retrieval.top_k}")
+    
+    if cfg.use_web_search:
+        logger.info("🔍 Web search enabled for current medical information")
+
+
 @hydra.main(version_base="1.1", config_path=None, config_name="config")
 def main(cfg: Config) -> None:
     """
-    Main entry point for running experiments.
+    Main entry point for running experiments with enhanced system prompts.
+
+    Available approaches (optimized system prompts):
+      - baseline: Standard single-turn analysis with enhanced JSON format
+      - multiturn: Iterative multi-step analysis with conditional continuation
+      - visual: Visual operations and analysis with enhanced guidance
+      - retrieval: Knowledge-augmented analysis with medical literature
+      - web_search: Web search-augmented analysis with query formulation
+      - comprehensive: All capabilities combined with performance optimization
+
+    Available tasks:
+      - caption: Generate detailed medical image descriptions
+      - diagnosis: Provide differential diagnoses with confidence levels
+      - localization: Identify and localize anatomical structures/abnormalities
 
     Usage examples:
-      python -m nova_retrieval_vlm.cli task=caption model.name=qwen-vl-chat batch_size=4
-      python -m nova_retrieval_vlm.cli task=diagnosis model.name=internvlm-chat retrieval.top_k=8
+      # Baseline analysis
+      python -m nova_retrieval_vlm.cli approach=baseline task=caption model.name=qwen-vl-chat batch_size=4
+      
+      # Multi-turn analysis with retrieval
+      python -m nova_retrieval_vlm.cli approach=multiturn task=diagnosis use_retrieval=true retrieval.top_k=5
+      
+      # Visual operations analysis
+      python -m nova_retrieval_vlm.cli approach=visual task=localization visual_rounds=3
+      
+      # Retrieval-augmented analysis
+      python -m nova_retrieval_vlm.cli approach=retrieval task=diagnosis retrieval.type=hybrid
+      
+      # Web search-augmented analysis
+      python -m nova_retrieval_vlm.cli approach=web_search task=caption use_web_search=true
+      
+      # Comprehensive analysis with all capabilities
+      python -m nova_retrieval_vlm.cli approach=comprehensive task=diagnosis use_retrieval=true use_web_search=true
     """
     # Convert OmegaConf to our Config dataclass for better type safety
     if isinstance(cfg, OmegaConf):
@@ -181,6 +337,10 @@ def main(cfg: Config) -> None:
         cfg = Config(**config_dict)
     
     logger.add(lambda msg: print(msg, end=""), level="INFO")
+    
+    # Validate configuration
+    _validate_config(cfg)
+    
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     data_dir = to_absolute_path(cfg.paths.data_dir)
@@ -266,7 +426,7 @@ def main(cfg: Config) -> None:
 
         # Process each batch according to the chosen *approach*
         if cfg.approach == "baseline":
-            process_batch(
+            process_batch_baseline(
                 batch_idx=batch_idx,
                 batch=batch,
                 main_run_dir=main_run_dir,
@@ -289,8 +449,58 @@ def main(cfg: Config) -> None:
                 preds=preds,
                 hf_ds=hf_ds,
             )
+        elif cfg.approach == "visual":
+            process_batch_visual(
+                batch_idx=batch_idx,
+                batch=batch,
+                main_run_dir=main_run_dir,
+                task=task,
+                cfg=cfg,
+                adapter=adapter,
+                retriever=retriever,
+                preds=preds,
+                hf_ds=hf_ds,
+            )
+        elif cfg.approach == "retrieval":
+            process_batch_retrieval(
+                batch_idx=batch_idx,
+                batch=batch,
+                main_run_dir=main_run_dir,
+                task=task,
+                cfg=cfg,
+                adapter=adapter,
+                retriever=retriever,
+                preds=preds,
+                hf_ds=hf_ds,
+            )
+        elif cfg.approach == "web_search":
+            process_batch_web_search(
+                batch_idx=batch_idx,
+                batch=batch,
+                main_run_dir=main_run_dir,
+                task=task,
+                cfg=cfg,
+                adapter=adapter,
+                retriever=retriever,
+                preds=preds,
+                hf_ds=hf_ds,
+            )
+        elif cfg.approach == "comprehensive":
+            process_batch_comprehensive(
+                batch_idx=batch_idx,
+                batch=batch,
+                main_run_dir=main_run_dir,
+                task=task,
+                cfg=cfg,
+                adapter=adapter,
+                retriever=retriever,
+                preds=preds,
+                hf_ds=hf_ds,
+            )
+        # Legacy support for old approach names
         elif cfg.approach == "visual_multiturn":
-            process_batch_visual_multiturn(
+            logger.warning("approach='visual_multiturn' is deprecated, use approach='visual' instead")
+            process_batch_visual(
                 batch_idx=batch_idx,
                 batch=batch,
                 main_run_dir=main_run_dir,
@@ -302,7 +512,8 @@ def main(cfg: Config) -> None:
                 hf_ds=hf_ds,
             )
         else:
-            raise ValueError(f"Unknown approach: {cfg.approach}")
+            available_approaches = ["baseline", "multiturn", "visual", "retrieval", "web_search", "comprehensive"]
+            raise ValueError(f"Unknown approach: {cfg.approach}. Available approaches: {available_approaches}")
 
         # Add a delay to help with rate limiting
         time.sleep(cfg.request_delay)
@@ -381,7 +592,14 @@ def setup_adapter(cfg: Config):
 
 def setup_retriever(cfg: Config):
     """Set up the retriever based on configuration."""
-    if not cfg.use_retrieval:
+    # Enable retrieval for retrieval and comprehensive approaches, or if explicitly enabled
+    needs_retrieval = (
+        cfg.use_retrieval or 
+        cfg.approach in ["retrieval", "comprehensive"] or
+        (cfg.approach == "multiturn" and cfg.use_retrieval)
+    )
+    
+    if not needs_retrieval:
         return None
 
     bm25_idx = Path(to_absolute_path(cfg.paths.index_dir)) / "bm25"
@@ -429,7 +647,7 @@ def create_run_directory(output_dir: str) -> Path:
     return main_run_dir
 
 
-def process_batch(
+def process_batch_baseline(
     batch_idx: int,
     batch: dict,
     main_run_dir: Path,
@@ -1423,6 +1641,543 @@ def process_batch_visual_multiturn(
     _draw_boxes(img_path, gt_boxes, result.get("boxes", []), viz_path)
     
     # Evaluate this individual prediction
+    evaluate_prediction(img_folder, task)
+    
+    preds.append(result)
+
+
+def process_batch_visual(
+    batch_idx: int,
+    batch: dict,
+    main_run_dir: Path,
+    task: str,
+    cfg: Config,
+    adapter,
+    retriever,
+    preds: list,
+    hf_ds,
+):
+    """Process a single batch using enhanced visual operations approach."""
+    # This is a simplified version of visual_multiturn that uses the visual system prompt
+    # but with streamlined operations
+    
+    # Get image from HuggingFace dataset (same as baseline)
+    from PIL import Image
+    
+    hf_record = hf_ds[batch_idx]
+    
+    if "image" in hf_record and hf_record["image"] is not None:
+        pil = hf_record["image"]
+        if not isinstance(pil, Image.Image):
+            pil = Image.fromarray(pil)
+        pil = pil.convert("L")  # ensure grayscale
+    else:
+        # Fallback: load from stored path in dataset record
+        img_path_str = hf_record.get("image_path")
+        if not img_path_str:
+            raise ValueError(f"No image or image_path field for record {batch_idx}")
+        pil = Image.open(img_path_str).convert("L")
+    
+    # Create a folder for this specific image_id or batch index
+    img_folder = main_run_dir / f"image_{batch_idx}"
+    img_folder.mkdir(parents=True, exist_ok=True)
+    img_path = img_folder / "image.png"
+    pil.save(img_path)
+    
+    logger.info(f"Processing visual analysis for image {batch_idx}: {img_path}")
+    
+    # Setup metadata for prompt
+    metadata_for_prompt = {
+        "image_filename": img_path.name,
+        "batch_idx": batch_idx,
+        "task": task,
+        "approach": "visual",
+    }
+    
+    # Use visual system prompt with task-specific template
+    template_map = {
+        "caption": "baseline/caption.jinja",
+        "diagnosis": "baseline/diagnosis.jinja", 
+        "localization": "baseline/localization.jinja",
+    }
+    
+    template_name = template_map.get(task, "baseline/caption.jinja")
+    
+    # Load enhanced prompt with visual mode
+    prompt = load_enhanced_prompt(
+        template_name=template_name,
+        image_path=img_path,
+        passages=[],
+        metadata=metadata_for_prompt,
+        mode="visual"
+    )
+    
+    with open(img_folder / "prompt.txt", "w") as f:
+        f.write(prompt)
+    
+    # Generate response
+    text, log = asyncio.run(adapter.generate(img_path, [], system_prompt=prompt))
+    logger.info(f"Visual analysis generation cost: {log}")
+    
+    with open(img_folder / "output.txt", "w") as f:
+        f.write(text)
+    
+    # Parse result
+    result = robust_json_loads(text)
+    
+    # Add metadata
+    result["image_path"] = str(img_path)
+    result["ground_truth_image_idx"] = batch_idx
+    result["approach"] = "visual"
+    
+    # Ensure required keys are present
+    ensure_evaluation_keys(result)
+    
+    logger.info(f"Successfully processed visual result for image {batch_idx}")
+    
+    # Save individual prediction
+    save_prediction(img_folder, result)
+    save_reference(img_folder, batch_idx, hf_ds)
+    evaluate_prediction(img_folder, task)
+    
+    preds.append(result)
+
+
+def process_batch_retrieval(
+    batch_idx: int,
+    batch: dict,
+    main_run_dir: Path,
+    task: str,
+    cfg: Config,
+    adapter,
+    retriever,
+    preds: list,
+    hf_ds,
+):
+    """Process a single batch using retrieval-augmented approach."""
+    
+    # Get image from HuggingFace dataset (same as baseline)
+    from PIL import Image
+    
+    hf_record = hf_ds[batch_idx]
+    
+    if "image" in hf_record and hf_record["image"] is not None:
+        pil = hf_record["image"]
+        if not isinstance(pil, Image.Image):
+            pil = Image.fromarray(pil)
+        pil = pil.convert("L")  # ensure grayscale
+    else:
+        # Fallback: load from stored path in dataset record
+        img_path_str = hf_record.get("image_path")
+        if not img_path_str:
+            raise ValueError(f"No image or image_path field for record {batch_idx}")
+        pil = Image.open(img_path_str).convert("L")
+    
+    # Create a folder for this specific image_id or batch index
+    img_folder = main_run_dir / f"image_{batch_idx}"
+    img_folder.mkdir(parents=True, exist_ok=True)
+    img_path = img_folder / "image.png"
+    pil.save(img_path)
+    
+    logger.info(f"Processing retrieval-augmented analysis for image {batch_idx}: {img_path}")
+    
+    # Setup metadata for prompt
+    metadata_for_prompt = {
+        "image_id": batch_idx,
+        "width": pil.width,
+        "height": pil.height,
+    }
+    
+    # Add clinical history for diagnosis task
+    if task == "diagnosis":
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_for_prompt["clinical_history"] = _meta_list[0].get("clinical_history", "")
+        else:
+            metadata_for_prompt["clinical_history"] = ""
+    
+    # Perform retrieval if retriever is available
+    passages = []
+    retrieval_debug_info = None
+    
+    if cfg.use_retrieval and retriever:
+        # Use metadata to create query (same as baseline)
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_rec = _meta_list[0]
+        else:
+            metadata_rec = {}
+        
+        query = (
+            metadata_rec.get("final_diagnosis")
+            or metadata_rec.get("diagnosis")
+            or metadata_rec.get("caption")
+            or metadata_rec.get("clinical_history")
+            or ""
+        )
+        
+        retrieval_debug_info = {"query": query, "success": False, "error": None, "passages": []}
+        
+        try:
+            passages = retriever(query, k=cfg.retrieval.top_k) if query else []
+            retrieval_debug_info["success"] = True
+            retrieval_debug_info["passages"] = passages
+            logger.info(f"Retrieved {len(passages)} passages for image {batch_idx}")
+        except Exception as exc:
+            logger.warning(f"Retrieval failed for image {batch_idx}: {exc}")
+            retrieval_debug_info["error"] = str(exc)
+    
+    # Save retrieval debug info
+    if retrieval_debug_info:
+        with open(img_folder / "retrieval_debug.txt", "w") as f:
+            f.write(f"Query: {retrieval_debug_info['query']}\n")
+            f.write(f"Success: {retrieval_debug_info['success']}\n")
+            if retrieval_debug_info.get("error"):
+                f.write(f"Error: {retrieval_debug_info['error']}\n")
+            f.write("\n=== PASSAGES ===\n")
+            for p in passages:
+                f.write(p + "\n\n")
+    
+    # Select template based on retrieval success (same as baseline)
+    if passages:
+        template_name = f"retrieval_{task}.jinja"
+    else:
+        template_name = f"baseline/{task}.jinja"
+    
+    # Load enhanced prompt 
+    prompt = load_enhanced_prompt(
+        template_name=template_name,
+        image_path=img_path,
+        passages=passages,
+        metadata=metadata_for_prompt,
+    )
+    
+    with open(img_folder / "prompt.txt", "w") as f:
+        f.write(prompt)
+    
+    # Generate response
+    text, log = asyncio.run(adapter.generate(img_path, passages, system_prompt=prompt))
+    logger.info(f"Retrieval-augmented generation cost: {log}")
+    
+    # Save raw output for debugging
+    with open(img_folder / "raw_output.txt", "w") as f:
+        f.write(text)
+    
+    # Parse result
+    result = robust_json_loads(text)
+    
+    # Add metadata
+    result["image_path"] = str(img_path)
+    result["ground_truth_image_idx"] = batch_idx
+    
+    # Ensure required keys are present
+    ensure_evaluation_keys(result)
+    
+    logger.info(f"Successfully processed result for image {batch_idx}")
+    
+    # Save individual prediction for this image
+    save_prediction(img_folder, result)
+    
+    # Generate and save reference
+    save_reference(img_folder, batch_idx, hf_ds)
+    
+    preds.append(result)
+
+
+def process_batch_web_search(
+    batch_idx: int,
+    batch: dict,
+    main_run_dir: Path,
+    task: str,
+    cfg: Config,
+    adapter,
+    retriever,
+    preds: list,
+    hf_ds,
+):
+    """Process a single batch using web search-augmented approach."""
+    
+    # Get image from HuggingFace dataset (same as baseline)
+    from PIL import Image
+    
+    hf_record = hf_ds[batch_idx]
+    
+    if "image" in hf_record and hf_record["image"] is not None:
+        pil = hf_record["image"]
+        if not isinstance(pil, Image.Image):
+            pil = Image.fromarray(pil)
+        pil = pil.convert("L")  # ensure grayscale
+    else:
+        # Fallback: load from stored path in dataset record
+        img_path_str = hf_record.get("image_path")
+        if not img_path_str:
+            raise ValueError(f"No image or image_path field for record {batch_idx}")
+        pil = Image.open(img_path_str).convert("L")
+    
+    # Create a folder for this specific image_id or batch index
+    img_folder = main_run_dir / f"image_{batch_idx}"
+    img_folder.mkdir(parents=True, exist_ok=True)
+    img_path = img_folder / "image.png"
+    pil.save(img_path)
+    
+    logger.info(f"Processing web search-augmented analysis for image {batch_idx}: {img_path}")
+    
+    # Setup metadata for prompt
+    metadata_for_prompt = {
+        "image_filename": img_path.name,
+        "batch_idx": batch_idx,
+        "task": task,
+        "approach": "web_search",
+        "web_search_enabled": cfg.use_web_search,
+    }
+    
+    # Initialize web searcher if enabled
+    web_search_results = []
+    if cfg.use_web_search:
+        try:
+            web_searcher = MedicalWebSearcher()
+            
+            # Create search queries based on task
+            queries = []
+            if task == "caption":
+                queries = [
+                    "brain MRI anatomy description medical terminology",
+                    "neuroimaging findings interpretation guidelines"
+                ]
+            elif task == "diagnosis":
+                queries = [
+                    "brain MRI diagnosis differential pathology",
+                    "neurological conditions MRI findings recent research"
+                ]
+            elif task == "localization":
+                queries = [
+                    "brain anatomy localization coordinates MRI",
+                    "neuroanatomical regions brain mapping"
+                ]
+            
+            for query in queries:
+                try:
+                    results = web_searcher.medical_search(query)
+                    web_search_results.append(f"Query: {query}\nResults: {results}")
+                except Exception as e:
+                    logger.warning(f"Web search failed for query '{query}': {e}")
+                    web_search_results.append(f"Query: {query}\nError: {str(e)}")
+            
+            metadata_for_prompt["web_search_results"] = "\n\n".join(web_search_results)
+            
+            with open(img_folder / "web_search_results.txt", "w") as f:
+                f.write(metadata_for_prompt["web_search_results"])
+                
+        except Exception as exc:
+            logger.warning(f"Web search setup failed for image {batch_idx}: {exc}")
+            metadata_for_prompt["web_search_results"] = f"Web search unavailable: {exc}"
+    
+    # Use web search system prompt with task-specific template
+    template_map = {
+        "caption": "baseline/caption.jinja",
+        "diagnosis": "baseline/diagnosis.jinja",
+        "localization": "baseline/localization.jinja",
+    }
+    
+    template_name = template_map.get(task, "baseline/caption.jinja")
+    
+    # Load enhanced prompt with web search mode
+    prompt = load_enhanced_prompt(
+        template_name=template_name,
+        image_path=img_path,
+        passages=[],
+        metadata=metadata_for_prompt,
+        mode="web_search"
+    )
+    
+    with open(img_folder / "prompt.txt", "w") as f:
+        f.write(prompt)
+    
+    # Generate response
+    text, log = asyncio.run(adapter.generate(img_path, [], system_prompt=prompt))
+    logger.info(f"Web search-augmented generation cost: {log}")
+    
+    with open(img_folder / "output.txt", "w") as f:
+        f.write(text)
+    
+    # Parse result
+    result = robust_json_loads(text)
+    
+    # Add metadata
+    result["image_path"] = str(img_path)
+    result["ground_truth_image_idx"] = batch_idx
+    result["approach"] = "web_search"
+    result["web_search_enabled"] = cfg.use_web_search
+    result["num_search_queries"] = len(web_search_results)
+    
+    # Ensure required keys are present
+    ensure_evaluation_keys(result)
+    
+    logger.info(f"Successfully processed web search-augmented result for image {batch_idx}")
+    
+    # Save individual prediction
+    save_prediction(img_folder, result)
+    save_reference(img_folder, batch_idx, hf_ds)
+    evaluate_prediction(img_folder, task)
+    
+    preds.append(result)
+
+
+def process_batch_comprehensive(
+    batch_idx: int,
+    batch: dict,
+    main_run_dir: Path,
+    task: str,
+    cfg: Config,
+    adapter,
+    retriever,
+    preds: list,
+    hf_ds,
+):
+    """Process a single batch using comprehensive analysis approach with all capabilities."""
+    
+    # Get image from HuggingFace dataset (same as baseline)
+    from PIL import Image
+    
+    hf_record = hf_ds[batch_idx]
+    
+    if "image" in hf_record and hf_record["image"] is not None:
+        pil = hf_record["image"]
+        if not isinstance(pil, Image.Image):
+            pil = Image.fromarray(pil)
+        pil = pil.convert("L")  # ensure grayscale
+    else:
+        # Fallback: load from stored path in dataset record
+        img_path_str = hf_record.get("image_path")
+        if not img_path_str:
+            raise ValueError(f"No image or image_path field for record {batch_idx}")
+        pil = Image.open(img_path_str).convert("L")
+    
+    # Create a folder for this specific image_id or batch index
+    img_folder = main_run_dir / f"image_{batch_idx}"
+    img_folder.mkdir(parents=True, exist_ok=True)
+    img_path = img_folder / "image.png"
+    pil.save(img_path)
+    
+    logger.info(f"Processing comprehensive analysis for image {batch_idx}: {img_path}")
+    
+    # Setup metadata for prompt
+    metadata_for_prompt = {
+        "image_filename": img_path.name,
+        "batch_idx": batch_idx,
+        "task": task,
+        "approach": "comprehensive",
+        "retrieval_enabled": retriever is not None,
+        "web_search_enabled": cfg.use_web_search,
+        "max_steps": cfg.multiturn_max_steps,
+    }
+    
+    # Perform retrieval if available
+    passages = []
+    if retriever:
+        try:
+            # Create comprehensive retrieval query
+            query = f"brain MRI {task} medical analysis comprehensive assessment"
+            passages = retriever.retrieve(query, top_k=cfg.retrieval.top_k)
+            logger.info(f"Retrieved {len(passages)} passages for comprehensive analysis")
+            
+            with open(img_folder / "retrieved_passages.txt", "w") as f:
+                for i, passage in enumerate(passages):
+                    f.write(f"Passage {i+1}:\n{passage}\n\n")
+                    
+        except Exception as exc:
+            logger.warning(f"Retrieval failed for comprehensive analysis: {exc}")
+            passages = []
+    
+    # Perform web search if enabled
+    web_search_results = []
+    if cfg.use_web_search:
+        try:
+            web_searcher = MedicalWebSearcher()
+            
+            # Comprehensive search queries
+            queries = [
+                f"brain MRI {task} comprehensive analysis guidelines",
+                f"neuroimaging {task} best practices recent research",
+                f"medical image analysis {task} clinical protocols"
+            ]
+            
+            for query in queries:
+                try:
+                    results = web_searcher.medical_search(query)
+                    web_search_results.append(f"Query: {query}\nResults: {results}")
+                except Exception as e:
+                    logger.warning(f"Web search failed: {e}")
+                    web_search_results.append(f"Query: {query}\nError: {str(e)}")
+            
+            metadata_for_prompt["web_search_results"] = "\n\n".join(web_search_results)
+            
+            with open(img_folder / "web_search_results.txt", "w") as f:
+                f.write(metadata_for_prompt["web_search_results"])
+                
+        except Exception as exc:
+            logger.warning(f"Web search failed for comprehensive analysis: {exc}")
+            metadata_for_prompt["web_search_results"] = f"Web search unavailable: {exc}"
+    
+    # Use comprehensive system prompt with task-specific template
+    template_map = {
+        "caption": "baseline/caption.jinja",
+        "diagnosis": "baseline/diagnosis.jinja",
+        "localization": "baseline/localization.jinja",
+    }
+    
+    template_name = template_map.get(task, "baseline/caption.jinja")
+    
+    # Load enhanced prompt with comprehensive mode
+    prompt = load_enhanced_prompt(
+        template_name=template_name,
+        image_path=img_path,
+        passages=passages,
+        metadata=metadata_for_prompt,
+        mode="comprehensive"
+    )
+    
+    with open(img_folder / "prompt.txt", "w") as f:
+        f.write(prompt)
+    
+    # Generate response with timeout for comprehensive analysis
+    try:
+        text, log = asyncio.run(
+            asyncio.wait_for(
+                adapter.generate(img_path, passages, system_prompt=prompt),
+                timeout=cfg.comprehensive_timeout
+            )
+        )
+        logger.info(f"Comprehensive analysis generation cost: {log}")
+        
+    except asyncio.TimeoutError:
+        logger.warning(f"Comprehensive analysis timed out for image {batch_idx}")
+        text = '{"error": "Analysis timed out", "caption": "Timeout during comprehensive analysis", "boxes": [], "scores": [], "labels": []}'
+        log = {"timeout": True}
+    
+    with open(img_folder / "output.txt", "w") as f:
+        f.write(text)
+    
+    # Parse result
+    result = robust_json_loads(text)
+    
+    # Add metadata
+    result["image_path"] = str(img_path)
+    result["ground_truth_image_idx"] = batch_idx
+    result["approach"] = "comprehensive"
+    result["num_passages"] = len(passages)
+    result["num_search_queries"] = len(web_search_results)
+    result["retrieval_enabled"] = retriever is not None
+    result["web_search_enabled"] = cfg.use_web_search
+    
+    # Ensure required keys are present
+    ensure_evaluation_keys(result)
+    
+    logger.info(f"Successfully processed comprehensive result for image {batch_idx}")
+    
+    # Save individual prediction
+    save_prediction(img_folder, result)
+    save_reference(img_folder, batch_idx, hf_ds)
     evaluate_prediction(img_folder, task)
     
     preds.append(result)

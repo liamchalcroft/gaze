@@ -1,4 +1,6 @@
 {# STEP 3 - Task-specific output: LOCALIZATION #}
+CRITICAL: This is your FINAL localization step. You MUST localize abnormalities based ONLY on your previous analysis steps and available information. Do NOT request additional images, sequences, or clinical information. This is your FINAL response.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 ANALYSIS CONTEXT:
@@ -16,8 +18,15 @@ ANALYSIS CONTEXT:
 - Additional retrieved passages: {{ passages | length }} passages available
 {% endif %}
 
-IMPORTANT: respond only with valid JSON:
+IMPORTANT: Return **valid JSON only** matching this exact schema – no markdown, no commentary, no requests for more information:
 {
+  "image_id": "{{ image_id }}",
+  #  Bounding boxes MUST be absolute pixel coordinates as
+  #  [x1, y1, x2, y2] with:
+  #    • x1 = left,  y1 = top
+  #    • x2 = right, y2 = bottom
+  #    (therefore x2 > x1 and y2 > y1)
+  #  Do NOT output [x, y, width, height].
   "boxes": [[x1, y1, x2, y2], ...],
   "labels": ["anomaly", ...],
   "scores": [0.8, 0.6, ...],
@@ -31,13 +40,22 @@ IMPORTANT: respond only with valid JSON:
 Identify and localize all abnormalities in the MRI using bounding boxes with precise coordinates.
 
 CRITICAL REQUIREMENTS:
-- Use normalized coordinates (0-1) for bounding boxes
-- Provide confidence scores for each detected abnormality
+- Bounding boxes MUST use absolute pixel coordinates [x1, y1, x2, y2]
+- Coordinates must satisfy: x2 > x1 and y2 > y1 (no zero-width/height boxes)
+- All coordinates must be non-negative integers
+- Provide confidence scores (0.0-1.0) for each detected abnormality
 - Use exactly the label "anomaly" for every box
 - If no abnormalities are detected, return empty boxes array
-- If localization is uncertain, explain why
+- If localization is uncertain, provide your best localization with available information
 - Leverage clinical guidelines and additional retrieved information
 - Acknowledge how the iterative retrieval process influenced your final localization
 - Indicate which analysis steps were most valuable for reaching your conclusions
+- Do NOT mention needing additional sequences, views, or clinical data
+- This is your FINAL and ONLY opportunity to provide the localization
+
+CONSTRAINTS:
+- Base your localization SOLELY on your previous analysis steps and available information
+- Provide your best localization with available information
+- This is your FINAL response - no further analysis is possible
 
 This task is critical for patient care. Double-check your answer before submitting. 

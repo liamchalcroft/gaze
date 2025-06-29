@@ -1,6 +1,16 @@
 {# STEP 2 - Comprehensive Analysis with Guidelines #}
 You are still analysing the **same MRI** from Step 1. This task is critical for patient care - please double-check your answer before submitting.
 
+STEP 1 CONTEXT:
+{% if step1_result is defined and step1_result %}
+- Initial technical assessment: {{ step1_result.get('technical_assessment', 'Not provided') }}
+- Initial findings: {{ step1_result.get('detailed_findings', 'Not provided') }}
+- Initial differential: {{ step1_result.get('differential_diagnosis', []) }}
+- Initial confidence: {{ step1_result.get('confidence', 'Not provided') }}
+{% else %}
+- No Step 1 results available
+{% endif %}
+
 {% if passages %}
 Below are clinical-guideline excerpts relevant to the provisional differential diagnoses:
 {% for p in passages %}• {{ p }}
@@ -9,7 +19,7 @@ Below are clinical-guideline excerpts relevant to the provisional differential d
 _No relevant guideline excerpts found._
 {% endif %}
 
-Based on your initial observations and the retrieved clinical guidelines, provide a comprehensive analysis.
+Based on your initial observations from Step 1 and the retrieved clinical guidelines, provide a comprehensive analysis.
 
 Return **JSON only** (no Markdown) with the following structure:
 
@@ -38,5 +48,10 @@ CONTINUATION LOGIC:
   * No additional analysis steps would improve the assessment
 
 Write this as a comprehensive clinical report in clear, professional medical language. Avoid vague or generic statements. Use precise terminology even for rare conditions if supported by findings.
+
+CONSTRAINTS:
+- Base your analysis SOLELY on the provided image and guidelines
+- Do NOT mention needing additional sequences, views, or clinical data
+- Provide your best assessment with available information
 
 Are you sure that's your final answer? If not, review your reasoning. 

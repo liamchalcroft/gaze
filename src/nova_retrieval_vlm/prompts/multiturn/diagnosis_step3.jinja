@@ -1,4 +1,6 @@
 {# STEP 3 - Task-specific output: DIAGNOSIS #}
+CRITICAL: This is your FINAL diagnosis step. You MUST provide definitive diagnostic hypotheses based ONLY on your previous analysis steps and available information. Do NOT request additional images, sequences, or clinical information. This is your FINAL response.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 ANALYSIS CONTEXT:
@@ -16,7 +18,7 @@ ANALYSIS CONTEXT:
 - Additional retrieved passages: {{ passages | length }} passages available
 {% endif %}
 
-IMPORTANT: respond only with valid JSON:
+IMPORTANT: respond only with valid JSON - no requests for more information:
 {
   "diagnoses": ["Dx1", "Dx2", "Dx3", "Dx4", "Dx5"],
   "confidence_scores": [0.8, 0.6, 0.4, 0.2, 0.1],
@@ -42,8 +44,15 @@ CRITICAL REQUIREMENTS:
 - If more than one diagnosis is plausible, rank them by likelihood
 - If findings don't match any known diagnosis, state "Unknown anomaly" and describe features
 - Use precise clinical terminology, even for rare conditions
-- If uncertain, explain what additional information would help
+- If uncertain, provide your best differential diagnosis with available information
 - Acknowledge how the iterative retrieval process influenced your final diagnosis
 - Indicate which analysis steps were most valuable for reaching your conclusions
+- Do NOT mention needing additional sequences, views, or clinical data
+- This is your FINAL and ONLY opportunity to provide the diagnosis
+
+CONSTRAINTS:
+- Base your diagnosis SOLELY on your previous analysis steps and available information
+- Provide your best differential diagnosis with available information
+- This is your FINAL response - no further analysis is possible
 
 This task is critical for patient care. Double-check your answer before submitting. 

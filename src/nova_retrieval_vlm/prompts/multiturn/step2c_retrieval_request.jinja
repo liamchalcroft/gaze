@@ -1,4 +1,6 @@
 {# STEP 2c - Additional Retrieval Request #}
+CRITICAL: Only request additional retrieval if it will SIGNIFICANTLY improve diagnostic confidence. If you have sufficient information for diagnosis, proceed to final steps instead. This is your FINAL opportunity for additional retrieval.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 CURRENT ANALYSIS SUMMARY:
@@ -8,7 +10,7 @@ CURRENT ANALYSIS SUMMARY:
 - Clinical history integration: {{ clinical_history_integration }}
 {% endif %}
 
-TASK: Based on your analysis so far, determine if you need additional clinical guidelines or information to improve your diagnostic confidence.
+TASK: Based on your analysis so far, determine if you GENUINELY need additional clinical guidelines to improve your diagnostic confidence, or if you should proceed to final diagnosis.
 
 Return **JSON only** (no Markdown) with the following keys exactly:
 {
@@ -29,11 +31,17 @@ Return **JSON only** (no Markdown) with the following keys exactly:
 }
 
 CRITICAL REQUIREMENTS:
-- Only request additional retrieval if it will significantly improve diagnostic confidence
+- Only request additional retrieval if it will SIGNIFICANTLY improve diagnostic confidence (>0.1 improvement expected)
+- If you have reasonable confidence (>0.7), proceed to final steps instead of requesting more retrieval
 - Be specific about what information you need and why
 - Consider if you have enough information to proceed to final diagnostic steps
-- If you have high confidence in your analysis, proceed to final steps
 - If uncertain about specific diagnoses or need guideline clarification, request additional searches
 - Use precise medical terminology in search requests
+- Bias towards proceeding to final steps rather than additional retrieval
+
+CONSTRAINTS:
+- This is your FINAL opportunity for additional retrieval
+- Prefer proceeding to diagnosis over requesting more information
+- Only retrieve if genuinely critical information is missing
 
 This is your opportunity to gather any missing information before final diagnosis. Are you sure that's your final answer? If not, review your reasoning. 

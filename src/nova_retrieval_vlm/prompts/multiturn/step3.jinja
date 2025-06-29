@@ -1,4 +1,6 @@
 {# STEP 3 - Conditional Analysis Continuation #}
+CRITICAL: This is your FINAL consolidation step. You MUST provide a definitive assessment based ONLY on your previous analysis steps and available information. Do NOT request additional images, sequences, or clinical information. This is your FINAL response.
+
 You are still analysing the **same MRI** from previous steps. This task is critical for patient care - please double-check your answer before submitting.
 
 ANALYSIS CONTEXT:
@@ -16,9 +18,9 @@ ANALYSIS CONTEXT:
 {{ consolidated_context }}
 {% endif %}
 
-TASK: Based on the previous analysis steps, determine if additional analysis is needed before proceeding to the final task-specific output. This is your **final consolidation step** - synthesize all previous findings into a comprehensive assessment.
+TASK: Based on the previous analysis steps, provide your final consolidated assessment. This is your **final consolidation step** - synthesize all previous findings into a comprehensive assessment.
 
-**IMPORTANT: This is the consolidation phase. Synthesize all previous analysis into a complete, final assessment. Be concise and focused.**
+**IMPORTANT: This is the consolidation phase. Synthesize all previous analysis into a complete, final assessment. Be concise and focused. Do NOT request additional sequences or views.**
 
 Return **JSON only** (no Markdown) with the following structure:
 
@@ -36,10 +38,13 @@ Return **JSON only** (no Markdown) with the following structure:
 - Be concise and focused - avoid verbosity
 - Ensure all key findings are included in the final assessment
 - Maintain precision and accuracy in medical terminology
+- Base assessment SOLELY on previous analysis steps and available information
+- Do NOT mention needing additional sequences, views, or clinical data
 
 **Completion Logic:**
 - Set `analysis_complete`: true if all necessary analysis is done
-- Set `analysis_complete`: false if additional steps would improve accuracy
+- Set `analysis_complete`: false ONLY if critical information is genuinely missing from previous steps
 - Provide clear reasoning for completion decision
+- This is your FINAL consolidation response
 
 Image: {{ img_path }} 

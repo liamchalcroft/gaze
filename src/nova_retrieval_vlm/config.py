@@ -48,5 +48,12 @@ class Config:
     max_iterations: int = 5  # Set to ≤0 for processing entire dataset
     request_delay: float = 3.0  # Delay in seconds between API requests to avoid rate limiting
     strict_mode: bool = True  # Whether to fail on non-critical errors
-    approach: str = "baseline"  # Options: baseline, multiturn, visual_multiturn
-    visual_rounds: int = 2  # Number of visual adjustment loops
+    
+    # Enhanced approach options with all optimized modes
+    approach: str = "baseline"  # Options: baseline, multiturn, visual, retrieval, web_search, comprehensive
+    
+    # Mode-specific configuration
+    visual_rounds: int = 2  # Number of visual adjustment loops for visual mode
+    use_web_search: bool = False  # Whether to enable web search capabilities
+    multiturn_max_steps: int = 3  # Maximum steps for multiturn analysis
+    comprehensive_timeout: int = 300  # Timeout for comprehensive analysis (seconds)

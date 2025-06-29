@@ -7,12 +7,42 @@ Based on the approach described in the Jinja2 prompting guide.
 """
 
 import os
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 from loguru import logger
 
 from .prompt_loader import load_jinja_template
+
+
+def sanitize_input(value: Any) -> Any:
+    """
+    Sanitize input values to prevent injection attacks.
+    
+    Args:
+        value: Input value to sanitize
+        
+    Returns:
+        Sanitized value
+    """
+    if isinstance(value, str):
+        # Remove potentially dangerous characters and patterns
+        # Keep alphanumeric, spaces, basic punctuation, and medical terms
+        sanitized = re.sub(r'[{}"\\\n\r\t]', ' ', value)
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+        
+        # Limit length to prevent extremely long inputs
+        if len(sanitized) > 10000:
+            sanitized = sanitized[:10000] + "... [truncated]"
+        
+        return sanitized
+    elif isinstance(value, dict):
+        return {k: sanitize_input(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [sanitize_input(item) for item in value]
+    else:
+        return value
 
 
 class EnhancedPromptLoader:
@@ -98,6 +128,11 @@ class EnhancedPromptLoader:
         Returns:
             Combined enhanced prompt string
         """
+        # Sanitize inputs to prevent injection attacks
+        sanitized_passages = sanitize_input(passages)
+        sanitized_metadata = sanitize_input(metadata)
+        sanitized_system_context = sanitize_input(system_context) if system_context else None
+        
         # Auto-detect mode if not provided
         if mode is None:
             mode = self._detect_mode_from_template(template_name)
@@ -106,14 +141,14 @@ class EnhancedPromptLoader:
         if system_prompt_override:
             system_prompt = system_prompt_override
         else:
-            system_context = system_context or {}
+            system_context_safe = sanitized_system_context or {}
             # Add retrieval context if passages are provided
-            if passages:
-                system_context['use_retrieval'] = True
-            system_prompt = self.get_system_prompt(mode, system_context)
+            if sanitized_passages:
+                system_context_safe['use_retrieval'] = True
+            system_prompt = self.get_system_prompt(mode, system_context_safe)
         
-        # Load task-specific prompt
-        task_prompt = load_jinja_template(template_name, image_path, passages, metadata)
+        # Load task-specific prompt with sanitized inputs
+        task_prompt = load_jinja_template(template_name, image_path, sanitized_passages, sanitized_metadata)
         
         # Combine prompts based on mode
         return self._combine_prompts(system_prompt, task_prompt, mode)
