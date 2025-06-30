@@ -35,7 +35,7 @@ set -euo pipefail
 # Defaults
 DATA_DIR="$HOME/data/nova"
 OUTPUT_DIR="$PWD/runs/full_benchmark"
-BATCH_SIZE=${BATCH_SIZE:-4}
+BATCH_SIZE=1
 MAX_ITERS=-1
 
 # Determine directory of this script so we can invoke companion scripts reliably

@@ -1,0 +1,17 @@
+\begin{table*}[t]
+  \caption{Task-specific performance breakdown on NOVA benchmark.}
+  \label{tab:task_breakdown}
+  \centering
+  \begin{tabular}{l|ccc|cccc|ccc}
+    \hline
+    & \multicolumn{3}{c|}{\textbf{Localization}} & \multicolumn{4}{c|}{\textbf{Caption}} & \multicolumn{3}{c}{\textbf{Diagnosis}} \\
+    \textbf{Approach} & mAP30 & mAP50 & mAP50:95 & BLEU & METEOR & BERT-F1 & RadGraph & Top1 & Top5 & Coverage \\
+    \hline
+    Baseline             & 18.9 & 4.3 & 1.2 & -- & -- & -- & -- & -- & -- & -- \\
+    Autonomous Reasoning & 35.0 & 20.0 & 6.0 & -- & -- & -- & -- & -- & -- & -- \\
+    Web-Augmented Agent  & 46.7 & 13.3 & 5.3 & -- & -- & -- & -- & -- & -- & -- \\
+    Visual Operations Agent & 38.9 & 11.1 & 4.4 & -- & -- & -- & -- & -- & -- & -- \\
+    Comprehensive Agent  & 38.5 & 19.2 & 6.9 & -- & -- & -- & -- & -- & -- & -- \\
+    \hline
+  \end{tabular}
+\end{table*}

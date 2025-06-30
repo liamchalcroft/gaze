@@ -39,8 +39,8 @@ Duaa Alim\inst{1}\thanks{Corresponding author: \email{d.alim@imperial.ac.uk}}%
 % -----------------------------------------------------------------------------
 \begin{abstract}
 Vision-language models struggle with rare brain pathologies that fall outside their web-scale pre-training distribution.  
-We investigate agentic reasoning approaches that enable models to autonomously direct their analytical process through iterative reasoning, tool selection, and evidence integration.  
-Five reasoning configurations are systematically compared on the NOVA benchmark \citep{bercea2025nova}: (i) baseline single-shot analysis, (ii) autonomous multi-turn reasoning, (iii) web search-augmented reasoning, (iv) visual operations-guided analysis, and (v) comprehensive tool-augmented reasoning agents.  
+We investigate agentic reasoning that lets models autonomously direct analysis through iterative reasoning, tool selection, and evidence integration.  
+Five reasoning configurations are systematically compared on the NOVA benchmark \citep{bercea2025novabenchmarkanomalylocalization}: (i) baseline single-shot analysis, (ii) autonomous multi-turn reasoning, (iii) web search-augmented reasoning, (iv) visual operations-guided analysis, and (v) comprehensive tool-augmented reasoning agents.  
 Our agentic framework enables models to make autonomous decisions about reasoning continuation, tool usage (medical web search, visual operations), and evidence synthesis across iterative turns.  
 Results demonstrate that agentic reasoning significantly outperforms baseline approaches across captioning, diagnosis, and localisation tasks, with tool-augmented reasoning agents achieving the strongest performance on rare pathology analysis through autonomous analytical decision-making.
 \end{abstract}
@@ -51,32 +51,30 @@ Results demonstrate that agentic reasoning significantly outperforms baseline ap
 \section{Introduction}
 % =============================================================================
 Large vision-language models demonstrate impressive cross-modal reasoning but perform poorly on out-of-distribution medical cases.  
-The NOVA benchmark \citep{bercea2025nova} contains approximately 900 brain MRI scans covering 281 rare conditions and reveals substantial performance drops for current models.  
-Recent advances in agentic reasoning suggest that enabling models to autonomously direct their analytical process—through iterative reasoning, tool selection, and evidence integration—can significantly improve performance on specialised medical tasks.  
-This work therefore investigates: How can agentic reasoning frameworks enhance vision-language model capabilities when analysing rare brain MRI pathologies?
+The NOVA benchmark \citep{bercea2025novabenchmarkanomalylocalization} contains approximately 900 brain MRI scans covering 281 rare conditions and reveals substantial performance drops for current models.  
+Recent advances in agentic reasoning suggest that enabling models to autonomously direct their analytical process—through iterative reasoning, tool selection, and evidence integration—can significantly improve performance on specialised medical tasks.
 
 % =============================================================================
 \section{Related work}
 % =============================================================================
 \subsection{Medical VLM benchmarks}
-CARES measures hallucination, bias and calibration, whilst MultiMedEval aggregates multi-task scores.  
-LLaVA-Med and XrayGPT adapt general models for clinical images but rarely cover uncommon disorders.
+CARES \citep{xia2024carescomprehensivebenchmarktrustworthiness} measures hallucination, bias and calibration, whilst MultiMedEval \citep{royer2024multimedevalbenchmarktoolkitevaluating} aggregates multi-task scores.  
+LLaVA-Med \citep{li2023llavamedtraininglargelanguageandvision} and XrayGPT \citep{thawakar2025xraygptchestradiographssummarization} adapt general models for clinical images but rarely cover uncommon disorders.
 
 \subsection{Agentic reasoning and tool-augmented models}
-Large language models exhibit emergent capabilities for autonomous reasoning when equipped with external tools and iterative decision-making frameworks \citep{tian2023role}.  
-Chain-of-thought and visual prompting reduce hallucination in medical VQA \citep{guo2024vqaprompting,medvp2024}, whilst surveys by \citet{wang2024promptsurvey} and \citet{lee2024medvlmsurvey} demonstrate the potential for autonomous analytical processes.  
+Large language models exhibit emergent capabilities for autonomous reasoning when equipped with external tools and iterative decision-making frameworks \citep{berti2025emergentabilitieslargelanguage}.  
+Chain-of-thought and visual prompting reduce hallucination in medical VQA \citep{Guo_2025,zhu2025guidingmedicalvisionlanguagemodels}, whilst surveys by \citet{wang2024promptengineeringhealthcaremethodologies} and \citet{chen2024surveymedicalvisionandlanguageapplications} demonstrate the potential for autonomous analytical processes.  
 Recent work shows that models can effectively direct their own reasoning through tool selection, evidence integration, and iterative refinement.
 
 \subsection{Multi-turn reasoning and autonomous decision-making}
 Agentic frameworks enable models to autonomously determine reasoning continuation, tool usage, and evidence synthesis strategies.  
-Integration of clinical context and external knowledge sources provides models with the information needed for autonomous decision-making in medical image analysis.  
-Our approach enables models to autonomously direct their analytical process through iterative reasoning chains, tool selection (web search, visual operations), and evidence integration across multiple reasoning turns.
+Integration of clinical context and external knowledge sources provides models with the information needed for autonomous decision-making in medical image analysis.
 
 % =============================================================================
 \section{Methodology}
 % =============================================================================
 \subsection{Dataset}
-The NOVA benchmark provides brain MRI scans across multiple sequences (T1, T2, FLAIR) with expert annotations including bounding boxes, clinical narratives, and ground truth diagnoses for rare neurological pathologies \citep{bercea2025nova}.  
+The NOVA benchmark provides brain MRI scans across multiple sequences (T1, T2, FLAIR) with expert annotations including bounding boxes, clinical narratives, and ground truth diagnoses for rare neurological pathologies \citep{bercea2025novabenchmarkanomalylocalization}.  
 We evaluate on the public test split with no model fine-tuning, focusing on out-of-distribution generalisation capabilities.
 
 \subsection{Agentic reasoning configurations}
@@ -92,14 +90,14 @@ We compare five distinct agentic reasoning configurations on the NOVA benchmark:
 \subsection{Tasks and evaluation metrics}
 We evaluate three core medical image analysis tasks:
 \begin{itemize}
-  \item \textbf{Caption}: Generate comprehensive radiological descriptions with clinical findings and anatomical regions. Evaluated using BLEU-4, ROUGE-L, and clinical terminology overlap.
-  \item \textbf{Diagnosis}: Provide differential diagnoses with confidence levels and supporting evidence. Evaluated using accuracy and macro-F1 against ground truth diagnoses.
-  \item \textbf{Localisation}: Identify and localise abnormalities with precise bounding boxes and anatomical descriptions. Evaluated using intersection-over-union (IoU) and average precision at IoU ≥ 0.3.
+  \item \textbf{Caption}: Generate comprehensive radiological descriptions with clinical findings and anatomical regions. Evaluated using BLEU, METEOR, BERT-F1, and RadGraph-F1 for clinical terminology overlap.
+  \item \textbf{Diagnosis}: Provide differential diagnoses with confidence levels and supporting evidence. Evaluated using Top-1 and Top-5 accuracy, coverage, and prediction entropy.
+  \item \textbf{Localisation}: Identify and localise abnormalities with precise bounding boxes and anatomical descriptions. Evaluated using mean Average Precision (mAP) at IoU thresholds of 0.3, 0.5, and 0.5:0.95.
 \end{itemize}
 
 \subsection{Implementation details}
 Our agentic reasoning framework is implemented as a modular Python system with Hydra configuration management.  
-Multiple vision-language models are supported, with comprehensive evaluation conducted using Google Gemini models.  
+Multiple vision-language models are supported, with comprehensive evaluation conducted using Google Gemini 2.5 Flash \citep{geminiteam2025geminifamilyhighlycapable}.  
 The framework enables autonomous decision-making through: (i) structured reasoning schemas allowing agents to decide on analysis continuation; (ii) clinical context integration providing essential medical background; (iii) spatial reasoning capabilities with coordinate validation for visual operations; (iv) sophisticated evidence integration preserving reasoning history, search results, and tool outcomes across autonomous reasoning turns.
 
 Tool capabilities include curated medical web search (guidelines, research, anatomy) and coordinate-validated visual operations, with agents autonomously determining when and how to employ these tools.  
@@ -122,7 +120,7 @@ All agentic reasoning processes, tool usage decisions, and outcomes are systemat
   \centering
   \begin{tabular}{lccc}
     \hline
-    \textbf{Agent Configuration} & \textbf{Localisation IoU} & \textbf{Caption BLEU-4} & \textbf{Diagnosis Acc.}\\
+    \textbf{Agent Configuration} & \textbf{Localisation mAP50} & \textbf{Caption BLEU} & \textbf{Diagnosis Top-1}\\
     \hline
     Baseline                   & -- & -- & --\\
     Autonomous Reasoning       & -- & -- & --\\
