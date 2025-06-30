@@ -9,7 +9,7 @@ source "${SCRIPT_DIR}/model_list.sh"
 
 DATA_DIR="$HOME/data/nova"
 OUTPUT_DIR="$PWD/runs/full_benchmark/multiturn"
-BATCH_SIZE=${BATCH_SIZE:-4}
+BATCH_SIZE=1
 MAX_ITERS=-1
 
 affirm_retrieval=true
