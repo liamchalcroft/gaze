@@ -31,10 +31,10 @@ APPROACH_COLORS = {
 
 APPROACH_DISPLAY_NAMES = {
     "baseline": "Baseline",
-    "comprehensive": "Comprehensive", 
-    "multiturn": "Autonomous",
-    "visual": "Visual Ops",
-    "web_search": "Web-Augmented"
+    "comprehensive": "Reasoning + Web + Visual", 
+    "multiturn": "Reasoning",
+    "visual": "Reasoning + Visual",
+    "web_search": "Reasoning + Web"
 }
 
 def load_aggregated_results(results_file: Path) -> pd.DataFrame:
@@ -199,12 +199,14 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
             ylabel = 'Score'
             title = 'Diagnosis Classification Performance'
         
-        # Create grouped bar chart
-        approaches = task_data['approach'].unique()
+        # Create grouped bar chart - use consistent ordering
+        all_approaches = ["baseline", "multiturn", "web_search", "visual", "comprehensive"]
+        available_approaches = [app for app in all_approaches if app in task_data['approach'].values]
+        
         x = np.arange(len(metric_labels))
         width = 0.15
         
-        for i, approach in enumerate(approaches):
+        for i, approach in enumerate(available_approaches):
             if approach not in APPROACH_COLORS:
                 continue
                 
@@ -237,9 +239,9 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
         ax.set_xlabel('Metrics', fontweight='bold')
         ax.set_ylabel(ylabel, fontweight='bold')
         ax.set_title(title, fontweight='bold', fontsize=14)
-        ax.set_xticks(x + width * (len(approaches) - 1) / 2)
+        ax.set_xticks(x + width * (len(available_approaches) - 1) / 2)
         ax.set_xticklabels(metric_labels)
-        ax.legend()
+        ax.legend()  # Legend will be in correct order since we iterate approaches correctly
         ax.grid(True, alpha=0.3)
         
         output_file = output_dir / f"{task}_comparison.png"
@@ -268,7 +270,13 @@ def create_sample_count_visualization(df: pd.DataFrame, output_file: Path) -> No
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    # Sample counts
+    # Sample counts - use consistent ordering
+    all_approaches = ["baseline", "multiturn", "web_search", "visual", "comprehensive"]
+    available_approaches = [app for app in all_approaches if app in approach_stats['approach'].values]
+    
+    # Reorder approach_stats to match our standard order
+    approach_stats = approach_stats.set_index('approach').reindex(available_approaches).reset_index()
+    
     approaches = approach_stats['approach'].tolist()
     colors = [APPROACH_COLORS[app] for app in approaches]
     labels = [APPROACH_DISPLAY_NAMES.get(app, app) for app in approaches]

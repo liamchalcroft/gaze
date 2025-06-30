@@ -1,43 +1,53 @@
 # NOVA Benchmark Results Analysis Report
 
-**Generated:** 2025-06-30 14:35:09
+**Generated:** 2025-06-30 15:10:41
 
 ## Executive Summary
 
-- **Total benchmark combinations:** 5
+- **Total benchmark combinations:** 6
 - **Approaches evaluated:** 5 (baseline, comprehensive, multiturn, visual, web_search)
-- **Tasks:** 1 (localization)
+- **Tasks:** 2 (caption, localization)
 - **Models:** 1 (google_gemini-2.5-flash-preview-05-20)
-- **Total samples processed:** 206
+- **Total samples processed:** 667
 - **Overall success rate:** 100.0%
 
 ## Best Performing Approaches by Task
 
+### Caption
+- **Winner:** baseline
+- **Score:** 1.4 (BLEU)
+
 ### Localization
-- **Winner:** multiturn
-- **Score:** 20.0% (IoU)
+- **Winner:** comprehensive
+- **Score:** 12.7% (IoU)
 
 ## Overall Approach Rankings
 
 Ranked by average normalized performance across all tasks:
 
-1. **Multiturn** - 0.200
-2. **Comprehensive** - 0.192
-3. **Web_Search** - 0.133
-4. **Visual** - 0.111
-5. **Baseline** - 0.043
+1. **Comprehensive** - 0.127
+2. **Visual** - 0.083
+3. **Web_Search** - 0.076
+4. **Multiturn** - 0.073
+5. **Baseline** - 0.040
 
 ## Task-Specific Performance Summary
+
+### Caption
+
+| Approach | BLEU | METEOR | BERT-F1 | RadGraph-F1 |
+|----------|------|--------|---------|-------------|
+| baseline | 1.365 | 17.616 | 0.028 | 0.039 |
 
 ### Localization
 
 | Approach | mAP@30 | mAP@50 | mAP@50:95 | IoU |
 |----------|--------|--------|-----------|-----|
-| baseline | 18.9% | 4.3% | 1.2% | 4.3% |
-| comprehensive | 38.5% | 19.2% | 6.9% | 19.2% |
-| multiturn | 35.0% | 20.0% | 6.0% | 20.0% |
-| visual | 38.9% | 11.1% | 4.4% | 11.1% |
-| web_search | 46.7% | 13.3% | 5.3% | 13.3% |
+| baseline | 21.1% | 6.6% | 2.1% | 6.6% |
+| comprehensive | 31.6% | 12.7% | 4.0% | 12.7% |
+| multiturn | 26.0% | 7.3% | 3.1% | 7.3% |
+| visual | 25.4% | 8.3% | 3.0% | 8.3% |
+| web_search | 29.3% | 7.6% | 2.7% | 7.6% |
 
 ## Files Generated
 

@@ -15,10 +15,10 @@ from loguru import logger
 # Mapping from internal approach names to display names for the table
 APPROACH_DISPLAY_NAMES = {
     "baseline": "Baseline",
-    "comprehensive": "Comprehensive Agent", 
-    "multiturn": "Autonomous Reasoning",
-    "visual": "Visual Operations Agent",
-    "web_search": "Web-Augmented Agent",
+    "comprehensive": "Reasoning + Web + Visual", 
+    "multiturn": "Reasoning",
+    "visual": "Reasoning + Visual",
+    "web_search": "Reasoning + Web",
     # Add retrieval when it appears
     "retrieval": "Retrieval-Augmented Agent",
 }
