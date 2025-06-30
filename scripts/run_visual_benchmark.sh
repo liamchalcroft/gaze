@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/model_list.sh"
 
 DATA_DIR="$HOME/data/nova"
-OUTPUT_DIR="$PWD/runs/visual_benchmark"
+OUTPUT_DIR="$PWD/runs/full_benchmark/visual"
 BATCH_SIZE=${BATCH_SIZE:-4}
 MAX_ITERS=-1
 
@@ -48,7 +48,6 @@ for MODEL in "${MODELS_DEFAULT[@]}"; do
     if python -m nova_retrieval_vlm.cli \
       task=${TASK} \
       approach=visual \
-      # use_retrieval=true \
       use_retrieval=false \
       visual_rounds=2 \
       retrieval.type=hybrid \

@@ -1322,8 +1322,7 @@ def process_batch_visual_multiturn(
                 if visual_ops.get("zoom_factor") and visual_ops["zoom_factor"] != 1.0:
                     current_image = zoom_image(
                         current_image, 
-                        visual_ops["zoom_factor"],
-                        visual_ops.get("zoom_center")
+                        visual_ops["zoom_factor"]
                     )
                 
                 # Apply crop if requested
@@ -1929,8 +1928,7 @@ def process_batch_comprehensive(
                 if visual_ops.get("zoom_factor") and visual_ops["zoom_factor"] != 1.0:
                     current_image = zoom_image(
                         current_image, 
-                        visual_ops["zoom_factor"],
-                        visual_ops.get("zoom_center")
+                        visual_ops["zoom_factor"]
                     )
                 
                 # Apply crop if requested

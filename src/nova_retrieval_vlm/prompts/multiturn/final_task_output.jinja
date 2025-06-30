@@ -109,7 +109,16 @@ Return **valid JSON only** with this exact schema – no markdown, no commentary
 - Describe findings in relation to anatomical landmarks
 - Ensure bounding boxes are accurate and tight around findings
 - If no abnormalities are present, return empty localizations array
-- Maximum 5 localizations to focus on most significant findings
+
+**CONSERVATIVE LOCALIZATION APPROACH:**
+- **RARE BRAIN PATHOLOGIES TYPICALLY PRESENT AS SINGLE LESIONS** - be very conservative about multiple findings
+- Only include findings with HIGH CONFIDENCE (≥0.7) to avoid false positives
+- It is better to accurately identify ONE abnormality than to generate multiple uncertain boxes
+- Do NOT use a "shotgun" approach with multiple low-confidence localizations
+- If uncertain about additional findings, err on the side of caution and omit them
+- Multiple abnormalities in rare brain conditions are uncommon - prioritize the most definitive finding
+- **MAXIMUM 2 localizations** to focus on most significant and confident findings only
+- **AVOID MULTIPLE BOXES** unless you are highly confident (≥0.8) in each finding
 {% endif %}
 
 **IMPORTANT:**

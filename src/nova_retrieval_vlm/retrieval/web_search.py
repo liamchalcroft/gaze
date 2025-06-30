@@ -86,11 +86,11 @@ class WebSearcher:
     
     def search(self, query: str, medical_focus: bool = True) -> List[WebSearchResult]:
         """
-        Perform web search with medical focus.
+        Perform web search across multiple engines.
         
         Args:
             query: Search query
-            medical_focus: Whether to prioritize medical sites
+            medical_focus: Whether to add medical context to the query
             
         Returns:
             List of web search results
@@ -100,11 +100,41 @@ class WebSearcher:
         # Add medical context to query if medical_focus is True
         if medical_focus:
             # Enhance query with medical terms while keeping it natural
-            enhanced_query = f"{query} medical radiology imaging"
+            # Avoid duplication if medical terms already present
+            query_lower = query.lower()
+            if not any(term in query_lower for term in ['medical', 'radiology', 'imaging']):
+                enhanced_query = f"{query} medical radiology imaging"
+            else:
+                enhanced_query = query
         else:
             enhanced_query = query
         
         logger.info(f"Starting web search for: '{enhanced_query}'")
+        
+        # Try the original query first
+        results = self._try_search_engines(enhanced_query)
+        
+        # If no results and query is complex, try fallback strategies
+        if not results and medical_focus:
+            logger.info("No results from original query, trying fallback strategies...")
+            results = self._try_fallback_searches(query)
+        
+        if not results:
+            logger.warning("No results from any search engine")
+            return []
+        
+        # Remove duplicates and rank results
+        unique_results = self._deduplicate_results(results)
+        ranked_results = self._rank_results(unique_results, query)
+        
+        final_results = ranked_results[:self.max_results]
+        logger.info(f"Returning {len(final_results)} final results")
+        
+        return final_results
+    
+    def _try_search_engines(self, query: str) -> List[WebSearchResult]:
+        """Try all configured search engines with the given query."""
+        results = []
         
         # Search across different engines
         for engine in self.search_engines:
@@ -112,11 +142,11 @@ class WebSearcher:
                 logger.info(f"Searching with {engine}...")
                 
                 if engine == 'duckduckgo_html':
-                    engine_results = self._search_duckduckgo_html(enhanced_query)
+                    engine_results = self._search_duckduckgo_html(query)
                 elif engine == 'pubmed':
-                    engine_results = self._search_pubmed(enhanced_query)
+                    engine_results = self._search_pubmed(query)
                 elif engine == 'google_scrape':
-                    engine_results = self._search_google_scrape(enhanced_query)
+                    engine_results = self._search_google_scrape(query)
                 else:
                     logger.warning(f"Unknown search engine: {engine}")
                     continue
@@ -134,18 +164,70 @@ class WebSearcher:
                 logger.error(f"Search failed for {engine}: {e}")
                 continue
         
-        if not results:
-            logger.warning("No results from any search engine")
-            return []
+        return results
+    
+    def _try_fallback_searches(self, original_query: str) -> List[WebSearchResult]:
+        """Try simplified versions of complex queries."""
+        fallback_queries = self._generate_fallback_queries(original_query)
         
-        # Remove duplicates and rank results
-        unique_results = self._deduplicate_results(results)
-        ranked_results = self._rank_results(unique_results, query)
+        for fallback_query in fallback_queries:
+            logger.info(f"Trying fallback query: '{fallback_query}'")
+            results = self._try_search_engines(fallback_query)
+            if results:
+                logger.info(f"Fallback query successful with {len(results)} results")
+                return results
+            
+            # Small delay between fallback attempts
+            time.sleep(1)
         
-        final_results = ranked_results[:self.max_results]
-        logger.info(f"Returning {len(final_results)} final results")
+        return []
+    
+    def _generate_fallback_queries(self, query: str) -> List[str]:
+        """Generate simpler versions of complex queries."""
+        fallback_queries = []
         
-        return final_results
+        # Extract key medical terms
+        important_terms = []
+        medical_keywords = [
+            'hyperintensity', 'glioma', 'metastasis', 'abscess', 'tumor', 'lesion',
+            'cerebellar', 'brain', 'mri', 'ct', 'flair', 't1', 't2', 'diagnosis',
+            'differential', 'imaging', 'radiology', 'pathology', 'anatomy'
+        ]
+        
+        query_words = query.lower().split()
+        for word in query_words:
+            # Remove common connectors and extract meaningful terms
+            clean_word = word.strip('.,!?()[]{}')
+            if clean_word in medical_keywords:
+                important_terms.append(clean_word)
+        
+        # Strategy 1: Use first few important terms
+        if len(important_terms) >= 2:
+            fallback_queries.append(' '.join(important_terms[:3]))
+        
+        # Strategy 2: Extract main anatomical/pathological terms
+        anatomy_terms = ['cerebellar', 'brain', 'cerebral', 'spinal']
+        pathology_terms = ['hyperintensity', 'glioma', 'metastasis', 'abscess', 'tumor', 'lesion']
+        
+        anatomy_found = [term for term in important_terms if term in anatomy_terms]
+        pathology_found = [term for term in important_terms if term in pathology_terms]
+        
+        if anatomy_found and pathology_found:
+            fallback_queries.append(f"{anatomy_found[0]} {pathology_found[0]}")
+        
+        # Strategy 3: Just use the most specific medical term
+        if pathology_found:
+            fallback_queries.append(pathology_found[0])
+        elif anatomy_found:
+            fallback_queries.append(anatomy_found[0])
+        
+        # Remove duplicates while preserving order
+        unique_fallbacks = []
+        for q in fallback_queries:
+            if q and q not in unique_fallbacks:
+                unique_fallbacks.append(q)
+        
+        return unique_fallbacks[:3]  # Limit to 3 fallback attempts
     
     def _search_duckduckgo_html(self, query: str) -> List[WebSearchResult]:
         """Search DuckDuckGo by scraping HTML results."""
@@ -154,30 +236,101 @@ class WebSearcher:
             search_url = "https://html.duckduckgo.com/html/"
             params = {'q': query}
             
-            response = requests.get(search_url, params=params, headers=self.headers, timeout=self.timeout)
+            # Use better headers to avoid detection
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
+            
+            response = requests.get(search_url, params=params, headers=headers, timeout=self.timeout)
             response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.warning(f"DuckDuckGo returned status {response.status_code}")
+                return []
             
             soup = BeautifulSoup(response.text, 'html.parser')
             results = []
             
-            # Find search result divs
-            result_divs = soup.find_all('div', class_='result')
+            # Try multiple selectors as DuckDuckGo structure changes
+            selectors_to_try = [
+                'div.result',  # Original selector
+                'div[class*="result"]',  # Contains "result"
+                'div.web-result',  # Alternative
+                'article',  # Generic article tags
+                'div.links_main'  # Another possible selector
+            ]
+            
+            result_divs = []
+            for selector in selectors_to_try:
+                result_divs = soup.select(selector)
+                if result_divs:
+                    logger.debug(f"Found {len(result_divs)} results with selector: {selector}")
+                    break
+            
+            if not result_divs:
+                logger.warning("No result divs found with any selector")
+                return []
             
             for div in result_divs[:5]:  # Limit to top 5 results
                 try:
-                    # Extract title and URL
-                    title_link = div.find('a', class_='result__a')
-                    if not title_link:
-                        continue
+                    # Try multiple approaches to extract title and URL
+                    title_link = None
+                    title = ""
+                    url = ""
+                    snippet = ""
                     
-                    title = title_link.get_text(strip=True)
-                    url = title_link.get('href', '')
+                    # Try different selectors for title/link
+                    title_selectors = [
+                        'a.result__a',
+                        'a[class*="result"]',
+                        'h2 a',
+                        'h3 a',
+                        'a[href*="http"]'
+                    ]
                     
-                    # Extract snippet
-                    snippet_div = div.find('a', class_='result__snippet')
-                    snippet = snippet_div.get_text(strip=True) if snippet_div else ""
+                    for title_selector in title_selectors:
+                        title_link = div.select_one(title_selector)
+                        if title_link:
+                            break
                     
-                    if title and url:
+                    if title_link:
+                        title = title_link.get_text(strip=True)
+                        url = title_link.get('href', '')
+                    else:
+                        # Fallback: look for any link
+                        all_links = div.find_all('a', href=True)
+                        for link in all_links:
+                            href = link.get('href', '')
+                            if href.startswith('http') and not href.startswith('https://duckduckgo.com'):
+                                title = link.get_text(strip=True)
+                                url = href
+                                break
+                    
+                    # Try to extract snippet
+                    snippet_selectors = [
+                        'a.result__snippet',
+                        'div.result__snippet',
+                        'span.result__snippet',
+                        'div[class*="snippet"]',
+                        'p'
+                    ]
+                    
+                    for snippet_selector in snippet_selectors:
+                        snippet_elem = div.select_one(snippet_selector)
+                        if snippet_elem:
+                            snippet = snippet_elem.get_text(strip=True)
+                            break
+                    
+                    # If still no snippet, use any text content
+                    if not snippet:
+                        snippet = div.get_text(strip=True)[:200]  # First 200 chars
+                    
+                    # Only add if we have at least title and URL
+                    if title and url and url.startswith('http'):
                         results.append(WebSearchResult(
                             title=title,
                             url=url,
@@ -191,8 +344,15 @@ class WebSearcher:
                     logger.debug(f"Error parsing result div: {e}")
                     continue
             
+            logger.debug(f"DuckDuckGo extracted {len(results)} results")
             return results
             
+        except requests.exceptions.Timeout:
+            logger.warning("DuckDuckGo search timed out")
+            return []
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"DuckDuckGo request failed: {e}")
+            return []
         except Exception as e:
             logger.error(f"DuckDuckGo HTML search failed: {e}")
             return []
@@ -270,59 +430,105 @@ class WebSearcher:
                 'term': query,
                 'retmax': 5,
                 'retmode': 'json',
-                'sort': 'relevance'
+                'sort': 'relevance',
+                'tool': 'nova_retrieval_vlm',  # Identify our tool to NCBI
+                'email': 'research@example.com'  # Required by NCBI guidelines
             }
+            
+            # Add extra delay for NCBI rate limiting
+            time.sleep(1)
             
             response = requests.get(search_url, params=search_params, timeout=self.timeout)
             response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.warning(f"PubMed search returned status {response.status_code}")
+                return []
+                
             search_data = response.json()
+            
+            # Check for errors in the response
+            if 'error' in search_data:
+                logger.warning(f"PubMed API error: {search_data['error']}")
+                return []
             
             # Get article details
             if 'esearchresult' in search_data and 'idlist' in search_data['esearchresult']:
                 pmid_list = search_data['esearchresult']['idlist']
                 
-                if pmid_list:
-                    # Fetch article details
-                    fetch_url = f"{base_url}esummary.fcgi"
-                    fetch_params = {
-                        'db': 'pubmed',
-                        'id': ','.join(pmid_list),
-                        'retmode': 'json'
-                    }
-                    
-                    fetch_response = requests.get(fetch_url, params=fetch_params, timeout=self.timeout)
-                    fetch_response.raise_for_status()
-                    fetch_data = fetch_response.json()
-                    
-                    results = []
-                    for pmid in pmid_list:
-                        if pmid in fetch_data.get('result', {}):
-                            article = fetch_data['result'][pmid]
-                            
-                            # Get authors
-                            authors = []
-                            if 'authors' in article:
-                                authors = [author.get('name', '') for author in article['authors'][:3]]
-                            
-                            title = article.get('title', 'No title')
-                            abstract = article.get('abstract', '')
-                            
-                            results.append(WebSearchResult(
-                                title=title,
-                                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                                snippet=abstract[:300] + "..." if len(abstract) > 300 else abstract,
-                                source='pubmed',
-                                relevance_score=0.9,  # High relevance for PubMed medical results
-                                medical_concepts=self._extract_medical_concepts(f"{title} {abstract}"),
-                                publication_date=article.get('pubdate', '')
-                            ))
-                    
-                    return results
-            
+                if not pmid_list:
+                    logger.debug("PubMed search returned empty ID list")
+                    return []
+                
+                # Fetch article details
+                fetch_url = f"{base_url}esummary.fcgi"
+                fetch_params = {
+                    'db': 'pubmed',
+                    'id': ','.join(pmid_list),
+                    'retmode': 'json',
+                    'tool': 'nova_retrieval_vlm',
+                    'email': 'research@example.com'
+                }
+                
+                # Add delay for rate limiting
+                time.sleep(1)
+                
+                fetch_response = requests.get(fetch_url, params=fetch_params, timeout=self.timeout)
+                fetch_response.raise_for_status()
+                
+                if fetch_response.status_code != 200:
+                    logger.warning(f"PubMed fetch returned status {fetch_response.status_code}")
+                    return []
+                
+                fetch_data = fetch_response.json()
+                
+                # Check for errors in fetch response
+                if 'error' in fetch_data:
+                    logger.warning(f"PubMed fetch error: {fetch_data['error']}")
+                    return []
+                
+                results = []
+                for pmid in pmid_list:
+                    if pmid in fetch_data.get('result', {}):
+                        article = fetch_data['result'][pmid]
+                        
+                        title = article.get('title', 'No title')
+                        authors = article.get('authors', [])
+                        journal = article.get('fulljournalname', 'Unknown journal')
+                        pub_date = article.get('pubdate', 'Unknown date')
+                        
+                        # Create snippet from title and journal
+                        snippet = f"Journal: {journal}. Published: {pub_date}"
+                        if authors:
+                            author_list = authors[:3]  # First 3 authors
+                            author_names = [author.get('name', '') for author in author_list]
+                            snippet += f". Authors: {', '.join(filter(None, author_names))}"
+                        
+                        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                        
+                        results.append(WebSearchResult(
+                            title=title,
+                            url=url,
+                            snippet=snippet,
+                            source='pubmed',
+                            relevance_score=0.9,
+                            medical_concepts=self._extract_medical_concepts(f"{title} {snippet}"),
+                            publication_date=pub_date
+                        ))
+                
+                return results
+            else:
+                logger.debug("PubMed search returned no esearchresult or idlist")
+                return []
+                
+        except requests.exceptions.Timeout:
+            logger.warning("PubMed search timed out")
             return []
-            
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"PubMed request failed: {e}")
+            return []
         except Exception as e:
-            logger.error(f"PubMed search failed: {e}")
+            logger.error(f"PubMed search failed with unexpected error: {e}")
             return []
     
     def _extract_medical_concepts(self, text: str) -> List[str]:
@@ -436,8 +642,9 @@ class MedicalWebSearcher(WebSearcher):
     """Specialized web searcher for medical information."""
     
     def __init__(self, **kwargs):
-        # Use medical-optimized search engines
-        kwargs.setdefault('search_engines', ['pubmed', 'duckduckgo_html'])
+        # Use medical-optimized search engines - prioritize PubMed
+        kwargs.setdefault('search_engines', ['pubmed'])  # Start with just PubMed for reliability
+        kwargs.setdefault('timeout', 20)  # Longer timeout for medical searches
         super().__init__(**kwargs)
         
         # Medical query templates

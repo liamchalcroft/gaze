@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/model_list.sh"
 
 DATA_DIR="$HOME/data/nova"
-OUTPUT_DIR="$PWD/runs/comprehensive_benchmark"
+OUTPUT_DIR="$PWD/runs/full_benchmark/comprehensive"
 BATCH_SIZE=${BATCH_SIZE:-4}
 MAX_ITERS=-1
 

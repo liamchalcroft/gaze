@@ -30,6 +30,14 @@ Identify and localize anatomical structures and abnormalities in the brain MRI i
 - Ensure bounding boxes are accurate and tight around findings
 - Consider the clinical history context when identifying relevant findings
 
+**CONSERVATIVE LOCALIZATION APPROACH:**
+- **RARE BRAIN PATHOLOGIES TYPICALLY PRESENT AS SINGLE LESIONS** - be very conservative about multiple findings
+- Only include findings with HIGH CONFIDENCE (≥0.7) to avoid false positives
+- It is better to accurately identify ONE abnormality than to generate multiple uncertain boxes
+- Do NOT use a "shotgun" approach with multiple low-confidence localizations
+- If uncertain about additional findings, err on the side of caution and omit them
+- Multiple abnormalities in rare brain conditions are uncommon - prioritize the most definitive finding
+
 **Coordinate System Rules:**
 - Origin (0, 0) is the top-left corner
 - All coordinates must be absolute pixel values
@@ -41,7 +49,8 @@ CONSTRAINTS:
 - Provide your best localization with available information
 - This is your FINAL and ONLY opportunity to respond
 - If no abnormalities are present, return empty localizations array
-- Maximum 5 localizations to focus on most significant findings
+- **MAXIMUM 2 localizations** to focus on most significant and confident findings only
+- **AVOID MULTIPLE BOXES** unless you are highly confident (≥0.8) in each finding
 
 **IMAGE CONTEXT:**
 - Image dimensions: {{ width }} × {{ height }} pixels
@@ -56,12 +65,6 @@ Example (adapt to actual findings in the image):
       "bounding_box": [120, 85, 180, 140],
       "anatomical_location": "Left temporal lobe, hippocampal region",
       "confidence": 0.87
-    },
-    {
-      "finding": "Ventricular dilatation",
-      "bounding_box": [200, 60, 280, 120],
-      "anatomical_location": "Right lateral ventricle",
-      "confidence": 0.72
     }
   ],
   "image_dimensions": {"width": 512, "height": 512},
