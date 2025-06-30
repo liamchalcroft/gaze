@@ -1,14 +1,14 @@
 # NOVA Benchmark Results Analysis Report
 
-**Generated:** 2025-06-30 19:39:45
+**Generated:** 2025-06-30 22:11:28
 
 ## Executive Summary
 
-- **Total benchmark combinations:** 10
+- **Total benchmark combinations:** 11
 - **Approaches evaluated:** 5 (baseline, comprehensive, multiturn, visual, web_search)
 - **Tasks:** 3 (caption, diagnosis, localization)
 - **Models:** 1 (google_gemini-2.5-flash-preview-05-20)
-- **Total samples processed:** 5,116
+- **Total samples processed:** 6,126
 - **Overall success rate:** 100.0%
 
 ## Best Performing Approaches by Task
@@ -23,16 +23,16 @@
 
 ### Localization
 - **Winner:** comprehensive
-- **Score:** 13.8% (IoU)
+- **Score:** 13.7% (IoU)
 
 ## Overall Approach Rankings
 
 Ranked by average normalized performance across all tasks:
 
-1. **Comprehensive** - 0.138
-2. **Web_Search** - 0.067
-3. **Visual** - 0.059
-4. **Multiturn** - 0.057
+1. **Comprehensive** - 0.075
+2. **Web_Search** - 0.064
+3. **Multiturn** - 0.057
+4. **Visual** - 0.056
 5. **Baseline** - 0.030
 
 ## Task-Specific Performance Summary
@@ -42,9 +42,10 @@ Ranked by average normalized performance across all tasks:
 | Approach | BLEU | METEOR | BERT-F1 | RadGraph-F1 |
 |----------|------|--------|---------|-------------|
 | baseline | 1.652 | 19.037 | 0.051 | 0.046 |
-| multiturn | 1.331 | 18.026 | -0.080 | 0.040 |
+| comprehensive | 1.380 | 19.762 | 0.042 | 0.034 |
+| multiturn | 1.346 | 18.350 | -0.071 | 0.042 |
 | visual | 1.311 | 17.745 | -0.114 | 0.046 |
-| web_search | 1.525 | 20.210 | 0.042 | 0.040 |
+| web_search | 1.420 | 19.337 | 0.017 | 0.045 |
 
 ### Diagnosis
 
@@ -56,11 +57,11 @@ Ranked by average normalized performance across all tasks:
 
 | Approach | mAP@30 | mAP@50 | mAP@50:95 | IoU |
 |----------|--------|--------|-----------|-----|
-| baseline | 21.7% | 7.4% | 2.5% | 7.4% |
-| comprehensive | 30.6% | 13.8% | 5.0% | 13.8% |
+| baseline | 21.6% | 7.2% | 2.5% | 7.2% |
+| comprehensive | 31.0% | 13.7% | 4.6% | 13.7% |
 | multiturn | 28.5% | 10.1% | 3.7% | 10.1% |
-| visual | 27.3% | 10.5% | 4.0% | 10.5% |
-| web_search | 28.6% | 11.8% | 4.1% | 11.8% |
+| visual | 28.8% | 9.8% | 4.0% | 9.8% |
+| web_search | 28.4% | 11.4% | 3.9% | 11.4% |
 
 ## Files Generated
 

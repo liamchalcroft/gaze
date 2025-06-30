@@ -39,22 +39,78 @@ def load_aggregated_results(results_file: Path) -> pd.DataFrame:
     
     return pd.read_csv(results_file)
 
-def format_metric_value(value: float, metric_type: str = "percentage") -> str:
+def load_statistical_results(stats_dir: Path) -> Optional[pd.DataFrame]:
+    """Load statistical significance test results."""
+    stats_file = stats_dir / "significant_results.csv"
+    if not stats_file.exists():
+        logger.warning(f"Statistical results file not found: {stats_file}")
+        return None
+    
+    return pd.read_csv(stats_file)
+
+def is_significantly_better(approach_a: str, approach_b: str, task: str, metric: str, stats_df: Optional[pd.DataFrame]) -> bool:
+    """Check if approach_a is significantly better than approach_b for a given metric."""
+    if stats_df is None:
+        return False
+    
+    # Map internal metric names to statistical test metric names
+    metric_mapping = {
+        'map50': 'detection_mAP50',
+        'map30': 'detection_mAP30', 
+        'map50_95': 'detection_mAP50_95',
+        'bleu': 'caption_bleu',
+        'meteor': 'caption_meteor',
+        'bert_f1': 'caption_bert_f1',
+        'radgraph_f1': 'caption_radgraph_f1',
+        'top1': 'diagnosis_top1',
+        'top5': 'diagnosis_top5'
+    }
+    
+    stat_metric = metric_mapping.get(metric, metric)
+    
+    # Check if there's a significant result for this comparison
+    result = stats_df[
+        (stats_df['approach_a'] == approach_a) & 
+        (stats_df['approach_b'] == approach_b) & 
+        (stats_df['task'] == task) & 
+        (stats_df['metric'] == stat_metric) &
+        (stats_df['significant'] == True)
+    ]
+    
+    # Also check the reverse comparison
+    if result.empty:
+        result = stats_df[
+            (stats_df['approach_a'] == approach_b) & 
+            (stats_df['approach_b'] == approach_a) & 
+            (stats_df['task'] == task) & 
+            (stats_df['metric'] == stat_metric) &
+            (stats_df['significant'] == True)
+        ]
+    
+    return not result.empty
+
+def format_metric_value(value: float, metric_type: str = "percentage", is_significant: bool = False) -> str:
     """Format a metric value for display in LaTeX table."""
     if pd.isna(value) or value == 0.0:
         return "--"
     
     if metric_type == "percentage":
         # Convert to percentage and format with 1 decimal place
-        return f"{value * 100:.1f}"
+        formatted = f"{value * 100:.1f}"
     elif metric_type == "score":
         # Format as score with 3 decimal places
-        return f"{value:.3f}"
+        formatted = f"{value:.3f}"
     else:
         # Default formatting
-        return f"{value:.2f}"
+        formatted = f"{value:.2f}"
+    
+    # Add significance marker
+    if is_significant:
+        formatted += "*"
+    
+    return formatted
 
-def generate_performance_table(df: pd.DataFrame, output_file: Path) -> None:
+def generate_performance_table(df: pd.DataFrame, output_file: Path, stats_df: Optional[pd.DataFrame] = None) -> None:
     """Generate the main performance comparison table."""
     
     # Create summary by approach (average across models)
@@ -94,6 +150,11 @@ def generate_performance_table(df: pd.DataFrame, output_file: Path) -> None:
         "    \\hline"
     ]
     
+    # Find best values for bolding
+    best_map50 = max(summary_data[a]['localization_map50'] for a in summary_data if not pd.isna(summary_data[a]['localization_map50']))
+    best_bleu = max(summary_data[a]['caption_bleu'] for a in summary_data if not pd.isna(summary_data[a]['caption_bleu']))
+    best_top1 = max(summary_data[a]['diagnosis_top1'] for a in summary_data if not pd.isna(summary_data[a]['diagnosis_top1']))
+    
     # Add rows for each approach
     for approach in APPROACH_ORDER:
         if approach not in summary_data:
@@ -102,15 +163,32 @@ def generate_performance_table(df: pd.DataFrame, output_file: Path) -> None:
         display_name = APPROACH_DISPLAY_NAMES.get(approach, approach.title())
         data = summary_data[approach]
         
-        map50_str = format_metric_value(data['localization_map50'], "percentage")
-        bleu_str = format_metric_value(data['caption_bleu'], "score")
-        top1_str = format_metric_value(data['diagnosis_top1'], "percentage")
+        # Check for significance vs baseline and if it's the best score
+        is_map50_significant = stats_df is not None and is_significantly_better(approach, 'baseline', 'localization', 'map50', stats_df)
+        is_bleu_significant = stats_df is not None and is_significantly_better(approach, 'baseline', 'caption', 'bleu', stats_df)
+        is_top1_significant = stats_df is not None and is_significantly_better(approach, 'baseline', 'diagnosis', 'top1', stats_df)
+        
+        map50_str = format_metric_value(data['localization_map50'], "percentage", is_map50_significant)
+        bleu_str = format_metric_value(data['caption_bleu'], "score", is_bleu_significant)
+        top1_str = format_metric_value(data['diagnosis_top1'], "percentage", is_top1_significant)
+        
+        # Bold the best scores
+        if not pd.isna(data['localization_map50']) and abs(data['localization_map50'] - best_map50) < 1e-6:
+            map50_str = f"\\textbf{{{map50_str}}}"
+        if not pd.isna(data['caption_bleu']) and abs(data['caption_bleu'] - best_bleu) < 1e-6:
+            bleu_str = f"\\textbf{{{bleu_str}}}"
+        if not pd.isna(data['diagnosis_top1']) and abs(data['diagnosis_top1'] - best_top1) < 1e-6:
+            top1_str = f"\\textbf{{{top1_str}}}"
         
         latex_lines.append(f"    {display_name:<25} & {map50_str} & {bleu_str} & {top1_str}\\\\")
     
+    # Add footnote for significance markers
     latex_lines.extend([
         "    \\hline",
         "  \\end{tabular}",
+        "" if stats_df is None else "  \\begin{flushleft}",
+        "" if stats_df is None else "  \\footnotesize{* Statistically significant difference vs. baseline (p < 0.05, FDR corrected)}",
+        "" if stats_df is None else "  \\end{flushleft}",
         "\\end{table}"
     ])
     
@@ -294,6 +372,12 @@ def main():
         help="Directory to save LaTeX tables"
     )
     parser.add_argument(
+        "--stats-dir",
+        type=str,
+        default="outputs/statistical_analysis",
+        help="Directory containing statistical test results"
+    )
+    parser.add_argument(
         "--table-type",
         choices=["all", "performance", "detailed", "breakdown", "summary"],
         default="all",
@@ -304,12 +388,21 @@ def main():
     
     results_file = Path(args.results_file)
     output_dir = Path(args.output_dir)
+    stats_dir = Path(args.stats_dir)
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load results
     logger.info(f"Loading results from {results_file}")
     df = load_aggregated_results(results_file)
+    
+    # Load statistical results
+    logger.info(f"Loading statistical results from {stats_dir}")
+    stats_df = load_statistical_results(stats_dir)
+    if stats_df is not None:
+        logger.info(f"Loaded {len(stats_df)} significant statistical results")
+    else:
+        logger.warning("No statistical results found - tables will not include significance markers")
     
     logger.info(f"Loaded {len(df)} result rows")
     logger.info(f"Approaches: {sorted(df['approach'].unique())}")
@@ -318,7 +411,7 @@ def main():
     
     # Generate tables based on requested type
     if args.table_type in ["all", "performance"]:
-        generate_performance_table(df, output_dir / "performance_table.tex")
+        generate_performance_table(df, output_dir / "performance_table.tex", stats_df)
     
     if args.table_type in ["all", "detailed"]:
         generate_detailed_table(df, output_dir / "detailed_table.tex")

@@ -6,11 +6,14 @@
     \hline
     \textbf{Agent Configuration} & \textbf{Localisation mAP50} & \textbf{Caption BLEU} & \textbf{Diagnosis Top-1}\\
     \hline
-    Baseline                  & 7.4 & 1.652 & --\\
-    Reasoning                 & 10.1 & 1.331 & --\\
-    Reasoning + Web           & 11.8 & 1.525 & --\\
-    Reasoning + Visual        & 10.5 & 1.311 & --\\
-    Reasoning + Web + Visual  & 13.8 & -- & --\\
+    Baseline                  & 7.2 & \textbf{1.652} & \textbf{--}\\
+    Reasoning                 & 10.1 & 1.346* & --\\
+    Reasoning + Web           & 11.4 & 1.420 & --\\
+    Reasoning + Visual        & 9.8 & 1.311* & --\\
+    Reasoning + Web + Visual  & \textbf{13.7*} & 1.380 & --\\
     \hline
   \end{tabular}
+  \begin{flushleft}
+  \footnotesize{* Statistically significant difference vs. baseline (p < 0.05, FDR corrected)}
+  \end{flushleft}
 \end{table}

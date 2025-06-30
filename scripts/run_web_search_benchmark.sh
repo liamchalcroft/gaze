@@ -24,7 +24,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # TASKS=(localization caption diagnosis)
-TASKS=(localization caption)
+# TASKS=(localization caption)
+TASKS=(caption)
 
 mkdir -p "${OUTPUT_DIR}"
 

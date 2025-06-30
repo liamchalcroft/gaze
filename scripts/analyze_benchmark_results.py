@@ -284,7 +284,7 @@ def main():
     logger.info(f"📁 Output directory: {output_dir}")
     
     success_count = 0
-    total_steps = 4  # gather, tables, figures, report
+    total_steps = 5  # gather, tables, statistical_analysis, figures, report
     
     # Step 1: Gather and aggregate results
     if not args.skip_gather:
@@ -312,22 +312,37 @@ def main():
     
     # Step 2: Generate LaTeX tables
     if not args.skip_tables:
-        logger.info("📝 Step 2/4: Generating LaTeX tables...")
+        logger.info("📝 Step 2/5: Generating LaTeX tables...")
         cmd = [
             sys.executable, "scripts/generate_latex_tables.py",
             "--results-file", str(aggregated_results_file),
-            "--output-dir", str(output_dir / "tables")
+            "--output-dir", str(output_dir / "tables"),
+            "--stats-dir", str(output_dir / "statistical_analysis")
         ]
         
         if run_command(cmd, "Generating LaTeX tables"):
             success_count += 1
     else:
-        logger.info("⏭️  Step 2/4: Skipping LaTeX table generation")
+        logger.info("⏭️  Step 2/5: Skipping LaTeX table generation")
         success_count += 1
     
-    # Step 3: Generate figures
+    # Step 3: Perform statistical analysis
+    logger.info("📊 Step 3/5: Performing statistical significance testing...")
+    cmd = [
+        sys.executable, "scripts/statistical_analysis.py",
+        "--results-dir", str(results_dir),
+        "--output-dir", str(output_dir / "statistical_analysis"),
+        "--correction-method", "fdr"
+    ]
+    if args.verbose:
+        cmd.append("--verbose")
+    
+    if run_command(cmd, "Statistical significance testing"):
+        success_count += 1
+    
+    # Step 4: Generate figures
     if not args.skip_figures:
-        logger.info("📈 Step 3/4: Generating figures...")
+        logger.info("📈 Step 4/5: Generating figures...")
         cmd = [
             sys.executable, "scripts/generate_figures.py",
             "--results-file", str(aggregated_results_file),
@@ -338,11 +353,11 @@ def main():
         if run_command(cmd, "Generating figures"):
             success_count += 1
     else:
-        logger.info("⏭️  Step 3/4: Skipping figure generation")
+        logger.info("⏭️  Step 4/5: Skipping figure generation")
         success_count += 1
     
-    # Step 4: Generate summary report
-    logger.info("📋 Step 4/4: Generating summary report...")
+    # Step 5: Generate summary report
+    logger.info("📋 Step 5/5: Generating summary report...")
     try:
         generate_summary_report(aggregated_results_file, output_dir)
         success_count += 1
