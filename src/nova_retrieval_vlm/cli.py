@@ -34,6 +34,7 @@ from nova_retrieval_vlm.visual_reasoning.image_ops import (
     zoom_image,
 )
 from nova_retrieval_vlm.retrieval.web_search import MedicalWebSearcher
+from nova_retrieval_vlm.utils.io import BatchCtx, common_postprocess
 
 # ---------------------------------------------------------------------------
 # Robust JSON parsing helper (shared by all pipelines)
@@ -387,8 +388,37 @@ def main(cfg: Config) -> None:
     max_iterations = cfg.max_iterations if cfg.max_iterations > 0 else float("inf")
     current_iteration = 0
 
-    # Create a main run directory with timestamp
-    main_run_dir = create_run_directory(output_dir)
+    # -------------------------------------------------------------
+    # Determine (or create) the main run directory.  We support three
+    # scenarios:
+    #   1. `resume_dir` explicitly provided → use that directory.
+    #   2. No explicit path, but an *existing* timestamped directory is
+    #      present under `output_dir` and `skip_existing=True` → automatically
+    #      resume in the *latest* directory.
+    #   3. Fresh run → create a new timestamped directory.
+    # -------------------------------------------------------------
+
+    if cfg.resume_dir:
+        main_run_dir = Path(to_absolute_path(cfg.resume_dir))
+        if not main_run_dir.exists():
+            raise FileNotFoundError(
+                f"resume_dir={cfg.resume_dir} does not exist – unable to resume.")
+        logger.info(f"🔄 Resuming in user-specified run directory: {main_run_dir}")
+    else:
+        # Auto-resume heuristic – pick the most recent numeric sub-directory
+        # (created via create_run_directory) if the user asked to skip
+        # existing samples.
+        candidates = [
+            p for p in Path(output_dir).iterdir()
+            if p.is_dir() and p.name.isdigit()
+        ] if Path(output_dir).exists() else []
+
+        if cfg.skip_existing and candidates:
+            main_run_dir = sorted(candidates, key=lambda p: int(p.name))[-1]
+            logger.info(
+                f"🔄 Auto-resuming in latest run directory: {main_run_dir}")
+        else:
+            main_run_dir = create_run_directory(output_dir)
 
     # ---------------------------------------------------------------------
     # Reference dataset (needed for creating refs.jsonl)
@@ -424,6 +454,14 @@ def main(cfg: Config) -> None:
             logger.info(f"Reached MAX_ITERATIONS ({max_iterations}), breaking loop.")
             break
 
+        # -------------------------------------------------------------
+        # Skip if prediction already exists (resumable runs)
+        # -------------------------------------------------------------
+
+        if _skip_if_existing(batch_idx, main_run_dir, cfg):
+            logger.info(f"⏭️  Skipping image {batch_idx} – existing prediction found (resume mode).")
+            continue
+
         # Process each batch according to the chosen *approach*
         if cfg.approach == "baseline":
             process_batch_baseline(
@@ -450,7 +488,7 @@ def main(cfg: Config) -> None:
                 hf_ds=hf_ds,
             )
         elif cfg.approach == "visual":
-            process_batch_visual(
+            process_batch_visual_multiturn(
                 batch_idx=batch_idx,
                 batch=batch,
                 main_run_dir=main_run_dir,
@@ -500,7 +538,7 @@ def main(cfg: Config) -> None:
         # Legacy support for old approach names
         elif cfg.approach == "visual_multiturn":
             logger.warning("approach='visual_multiturn' is deprecated, use approach='visual' instead")
-            process_batch_visual(
+            process_batch_visual_multiturn(
                 batch_idx=batch_idx,
                 batch=batch,
                 main_run_dir=main_run_dir,
@@ -521,19 +559,36 @@ def main(cfg: Config) -> None:
         # Increment counter
         current_iteration += 1
 
-    logger.info(f"Finished processing {len(preds)} predictions. Performing overall evaluation...")
+    logger.info(f"Finished processing {len(preds)} predictions in this session.")
 
-    # Save predictions
-    ts = int(time.time())
-    run_dir = Path(output_dir) / str(ts)
-    logger.info(f"Creating run directory: {run_dir}")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    preds_file = run_dir / "preds.jsonl"
+    if len(preds) == 0:
+        logger.info("No new predictions generated – skipping evaluation and summary file creation.")
+        return {"run_dir": str(main_run_dir), "metrics": {}}
+
+    # Save predictions directly to main_run_dir (fixes auto-resume issue)
+    preds_file = main_run_dir / "preds.jsonl"
     logger.info(f"Saving predictions to: {preds_file}")
     with open(preds_file, "w") as fw:
         for pred in preds:
             # Standardize for evaluation
             if isinstance(pred, dict):
+                # Convert new localization schema to legacy format if needed
+                if "localizations" in pred and "boxes" not in pred:
+                    localizations = pred["localizations"]
+                    boxes = []
+                    labels = []
+                    scores = []
+                    
+                    for loc in localizations:
+                        if "bounding_box" in loc:
+                            boxes.append(loc["bounding_box"])
+                            labels.append("anomaly")  # Standard label for compatibility
+                            scores.append(loc.get("confidence", 1.0))
+                    
+                    pred["boxes"] = boxes
+                    pred["labels"] = labels
+                    pred["scores"] = scores
+                
                 boxes_len = len(pred.get("boxes", []))
                 if "labels" not in pred:
                     pred["labels"] = ["anomaly"] * boxes_len
@@ -542,7 +597,7 @@ def main(cfg: Config) -> None:
             fw.write(json.dumps(pred) + "\n")
 
     # Create references file
-    refs_file = run_dir / "refs.jsonl"
+    refs_file = main_run_dir / "refs.jsonl"
     logger.info(f"Saving references to: {refs_file}")
     with open(refs_file, "w") as fr:
         for i, rec in enumerate(hf_ds):
@@ -579,7 +634,7 @@ def main(cfg: Config) -> None:
     logger.info(f"Overall evaluation metrics: {metrics}")
 
     # Return summary of the run
-    return {"run_dir": str(run_dir), "metrics": metrics}
+    return {"run_dir": str(main_run_dir), "metrics": metrics}
 
 
 def setup_adapter(cfg: Config):
@@ -890,9 +945,44 @@ def process_batch_baseline(
     # Add to combined predictions list
     preds.append(result)
 
+    # ------------------------------------------------------------------
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    # ------------------------------------------------------------------
+
+    from nova_retrieval_vlm.utils.io import BatchCtx, common_postprocess
+
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
+    )
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
+
+    return
+
 
 def ensure_evaluation_keys(result: dict):
     """Ensure all required keys are present in the result dict."""
+    # Convert new localization schema to legacy format if needed
+    if "localizations" in result and "boxes" not in result:
+        localizations = result["localizations"]
+        boxes = []
+        labels = []
+        scores = []
+        
+        for loc in localizations:
+            if "bounding_box" in loc:
+                boxes.append(loc["bounding_box"])
+                labels.append("anomaly")  # Standard label for compatibility
+                scores.append(loc.get("confidence", 1.0))
+        
+        result["boxes"] = boxes
+        result["labels"] = labels
+        result["scores"] = scores
+    
     if "boxes" not in result:
         result["boxes"] = []
     if "labels" not in result:
@@ -969,7 +1059,7 @@ def process_batch_multiturn(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using enhanced multi-turn reasoning approach with conditional continuation."""
+    """Process a single batch using new chain of thought multi-turn reasoning approach."""
     from PIL import Image  # local import to avoid top-level PIL dependency
 
     hf_record = hf_ds[batch_idx]
@@ -1006,288 +1096,123 @@ def process_batch_multiturn(
         else:
             metadata_for_prompt["clinical_history"] = ""
 
-    # Initialize multi-turn tracking
-    multiturn_data = {
-        "steps_completed": [],
-        "step_results": {},
-        "total_steps": 0,
-        "continuation_reasons": [],
+    # Initialize chain of thought tracking
+    chain_of_thought_data = {
+        "turns_completed": [],
+        "turn_results": {},
+        "total_turns": 0,
+        "reasoning_complete": False,
         "final_analysis_complete": False
     }
 
-    # Step 1: Initial observations and differential diagnosis
-    logger.info(f"Multi-turn Step 1 for image {batch_idx}")
-    step1_prompt = load_enhanced_prompt(
-        template_name="multiturn/step1.jinja",
+    # Chain of thought reasoning loop (up to 3 turns)
+    max_turns = 3
+    current_turn = 0
+    previous_turns = []
+    
+    while current_turn < max_turns and not chain_of_thought_data["reasoning_complete"]:
+        current_turn += 1
+        logger.info(f"Multi-turn Turn {current_turn} for image {batch_idx}")
+        
+        # Prepare metadata for this turn
+        turn_metadata = metadata_for_prompt.copy()
+        turn_metadata["turn_number"] = current_turn
+        turn_metadata["previous_turns"] = previous_turns
+        turn_metadata["approach"] = "multiturn"
+        
+        # Load chain of thought prompt
+        chain_prompt = load_enhanced_prompt(
+            template_name="multiturn/chain_of_thought.jinja",
+            image_path=img_path,
+            passages=[],
+            metadata=turn_metadata,
+        )
+        
+        with open(img_folder / f"turn_{current_turn}_prompt.txt", "w") as f:
+            f.write(chain_prompt)
+        
+        turn_text, turn_log = asyncio.run(adapter.generate(img_path, [], system_prompt=chain_prompt))
+        logger.info(f"Turn {current_turn} generation cost: {turn_log}")
+        
+        with open(img_folder / f"turn_{current_turn}_output.txt", "w") as f:
+            f.write(turn_text)
+        
+        turn_result = robust_json_loads(turn_text)
+        chain_of_thought_data["turns_completed"].append(f"turn_{current_turn}")
+        chain_of_thought_data["turn_results"][f"turn_{current_turn}"] = turn_result
+        chain_of_thought_data["total_turns"] += 1
+        
+        # Add to previous turns for next iteration
+        previous_turns.append(turn_result)
+        
+        # Check if reasoning is complete
+        reasoning_complete = turn_result.get("reasoning_complete", False)
+        continue_reasoning = turn_result.get("continue_reasoning", True)
+        
+        if reasoning_complete or not continue_reasoning:
+            logger.info(f"Turn {current_turn} indicates reasoning complete")
+            chain_of_thought_data["reasoning_complete"] = True
+            break
+    
+    # Generate final task output
+    logger.info(f"Generating final task output for image {batch_idx}")
+    
+    # Prepare metadata for final task output
+    final_metadata = metadata_for_prompt.copy()
+    final_metadata["task"] = task
+    final_metadata["chain_of_thought_turns"] = previous_turns
+    final_metadata["overall_confidence"] = max([turn.get("confidence", 0.0) for turn in previous_turns]) if previous_turns else 0.0
+    
+    # Extract key findings and differential diagnoses from all turns
+    all_findings = []
+    all_differential_diagnoses = []
+    for turn in previous_turns:
+        all_findings.extend(turn.get("findings", []))
+        all_differential_diagnoses.extend(turn.get("differential_diagnoses", []))
+    
+    final_metadata["key_findings"] = list(set(all_findings))  # Remove duplicates
+    final_metadata["final_differential_diagnoses"] = list(set(all_differential_diagnoses))  # Remove duplicates
+    
+    # Load final task output prompt
+    final_prompt = load_enhanced_prompt(
+        template_name="multiturn/final_task_output.jinja",
         image_path=img_path,
         passages=[],
-        metadata=metadata_for_prompt,
-    )
-    
-    with open(img_folder / "step1_prompt.txt", "w") as f:
-        f.write(step1_prompt)
-    
-    step1_text, step1_log = asyncio.run(adapter.generate(img_path, [], system_prompt=step1_prompt))
-    logger.info(f"Step 1 generation cost: {step1_log}")
-    
-    with open(img_folder / "step1_output.txt", "w") as f:
-        f.write(step1_text)
-    
-    step1_result = robust_json_loads(step1_text)
-    multiturn_data["steps_completed"].append("step1")
-    multiturn_data["step_results"]["step1"] = step1_result
-    multiturn_data["total_steps"] += 1
-    
-    # Check if step 1 indicates continuation is needed
-    continue_analysis = step1_result.get("continue_analysis", True)
-    continuation_reason = step1_result.get("continuation_reason", "Default continuation")
-    multiturn_data["continuation_reasons"].append(continuation_reason)
-    
-    if not continue_analysis:
-        logger.info(f"Step 1 indicates analysis complete: {continuation_reason}")
-        multiturn_data["final_analysis_complete"] = True
-        # Proceed directly to final task output
-        result = _generate_final_task_output(
-            task, img_path, [], metadata_for_prompt, 
-            multiturn_data, step1_result, None, adapter
-        )
-    else:
-        # Step 2: Comprehensive analysis with guidelines
-        logger.info(f"Multi-turn Step 2 for image {batch_idx}")
-        
-        # Prepare retrieval query based on step 1 findings
-        passages = []
-        retrieval_debug_info = None
-        if cfg.use_retrieval and retriever:
-            # Use step 1 findings to create a targeted query
-            query_parts = []
-            if step1_result.get("differential"):
-                query_parts.extend(step1_result["differential"][:3])  # Top 3 diagnoses
-            if step1_result.get("observations"):
-                query_parts.append(step1_result["observations"])
-            
-            query = " ".join(query_parts) if query_parts else ""
-            retrieval_debug_info = {"query": query, "success": False, "error": None, "passages": []}
-            
-            try:
-                passages = retriever(query, k=cfg.retrieval.top_k) if query else []
-                retrieval_debug_info["success"] = True
-                retrieval_debug_info["passages"] = passages
-            except Exception as exc:
-                logger.warning("[multiturn] Retrieval failed: %s", exc)
-                retrieval_debug_info["error"] = str(exc)
-        
-        step2_prompt = load_enhanced_prompt(
-            template_name="multiturn/step2.jinja",
-            image_path=img_path,
-            passages=passages,
-            metadata=metadata_for_prompt,
-        )
-        
-        with open(img_folder / "step2_prompt.txt", "w") as f:
-            f.write(step2_prompt)
-        
-        step2_text, step2_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step2_prompt))
-        logger.info(f"Step 2 generation cost: {step2_log}")
-        
-        with open(img_folder / "step2_output.txt", "w") as f:
-            f.write(step2_text)
-        
-        step2_result = robust_json_loads(step2_text)
-        multiturn_data["steps_completed"].append("step2")
-        multiturn_data["step_results"]["step2"] = step2_result
-        multiturn_data["total_steps"] += 1
-        
-        # Check if step 2 indicates continuation is needed
-        continue_analysis = step2_result.get("continue_analysis", True)
-        continuation_reason = step2_result.get("continuation_reason", "Default continuation")
-        multiturn_data["continuation_reasons"].append(continuation_reason)
-        
-        if not continue_analysis:
-            logger.info(f"Step 2 indicates analysis complete: {continuation_reason}")
-            multiturn_data["final_analysis_complete"] = True
-            # Proceed to final task output
-            result = _generate_final_task_output(
-                task, img_path, passages, metadata_for_prompt, 
-                multiturn_data, step1_result, step2_result, adapter
-            )
-        else:
-            # Step 3: Conditional analysis continuation
-            logger.info(f"Multi-turn Step 3 (conditional) for image {batch_idx}")
-            
-            step3_metadata = metadata_for_prompt.copy()
-            step3_metadata["step1_result"] = step1_result
-            step3_metadata["step2_analysis"] = step2_result
-            
-            step3_prompt = load_enhanced_prompt(
-                template_name="multiturn/step3.jinja",
-                image_path=img_path,
-                passages=passages,
-                metadata=step3_metadata,
-            )
-            
-            with open(img_folder / "step3_prompt.txt", "w") as f:
-                f.write(step3_prompt)
-            
-            step3_text, step3_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=step3_prompt))
-            logger.info(f"Step 3 generation cost: {step3_log}")
-            
-            with open(img_folder / "step3_output.txt", "w") as f:
-                f.write(step3_text)
-            
-            step3_result = robust_json_loads(step3_text)
-            multiturn_data["steps_completed"].append("step3")
-            multiturn_data["step_results"]["step3"] = step3_result
-            multiturn_data["total_steps"] += 1
-            
-            # Check if step 3 indicates analysis is complete
-            analysis_complete = step3_result.get("analysis_complete", True)
-            completion_reason = step3_result.get("completion_reason", "Analysis complete")
-            multiturn_data["continuation_reasons"].append(completion_reason)
-            
-            if analysis_complete:
-                logger.info(f"Step 3 indicates analysis complete: {completion_reason}")
-                multiturn_data["final_analysis_complete"] = True
-                # Proceed to final task output
-                result = _generate_final_task_output(
-                    task, img_path, passages, metadata_for_prompt, 
-                    multiturn_data, step1_result, step2_result, adapter, step3_result
-                )
-            else:
-                logger.warning(f"Step 3 indicates analysis incomplete: {completion_reason}")
-                # Force completion and proceed to final task output
-                multiturn_data["final_analysis_complete"] = True
-                result = _generate_final_task_output(
-                    task, img_path, passages, metadata_for_prompt, 
-                    multiturn_data, step1_result, step2_result, adapter, step3_result
-                )
-
-    # Add metadata
-    result["image_path"] = str(img_path)
-    result["ground_truth_image_idx"] = batch_idx
-    result["multiturn_data"] = multiturn_data
-    
-    # Ensure required keys are present
-    ensure_evaluation_keys(result)
-    
-    logger.info(f"Successfully processed enhanced multi-turn result for image {batch_idx} ({multiturn_data['total_steps']} steps)")
-    
-    # Save individual prediction for this image
-    save_prediction(img_folder, result)
-    
-    # Generate and save reference
-    save_reference(img_folder, batch_idx, hf_ds)
-    
-    # Save retrieval debug info if available
-    if 'retrieval_debug_info' in locals() and retrieval_debug_info:
-        with open(img_folder / "retrieval_debug.txt", "w") as f:
-            f.write(f"Query: {retrieval_debug_info['query']}\n")
-            f.write(f"Success: {retrieval_debug_info['success']}\n")
-            if retrieval_debug_info.get("error"):
-                f.write(f"Error: {retrieval_debug_info['error']}\n")
-            f.write("\n=== PASSAGES ===\n")
-            for p in passages:
-                f.write(p + "\n\n")
-    
-    preds.append(result)
-
-
-def _consolidate_multiturn_context(
-    step_results: dict,
-    passages: list,
-    metadata: dict
-) -> str:
-    """
-    Consolidate multi-turn context into a single comprehensive prompt to mitigate
-    multi-turn conversation failures (39% performance drop identified in research).
-    
-    This implements the 'consolidate before generation' strategy recommended by
-    PromptHub research to avoid premature answer attempts and lost-in-middle issues.
-    """
-    consolidation = []
-    
-    # Add step-by-step analysis summary
-    consolidation.append("## MULTI-TURN ANALYSIS SUMMARY")
-    consolidation.append("The following analysis was conducted through multiple reasoning steps:")
-    
-    for step_name, step_result in step_results.items():
-        if step_result:
-            consolidation.append(f"\n### {step_name.upper()}")
-            consolidation.append(f"**Key Findings:** {step_result.get('detailed_findings', 'N/A')}")
-            consolidation.append(f"**Confidence:** {step_result.get('confidence', 'N/A')}")
-            if step_result.get('differential_diagnosis'):
-                consolidation.append(f"**Differential:** {', '.join(step_result['differential_diagnosis'])}")
-            if step_result.get('continuation_reason'):
-                consolidation.append(f"**Reason for Continuation:** {step_result['continuation_reason']}")
-    
-    # Add retrieved passages if available
-    if passages:
-        consolidation.append("\n## RETRIEVED CLINICAL GUIDELINES")
-        for i, passage in enumerate(passages, 1):
-            consolidation.append(f"{i}. {passage}")
-    
-    # Add metadata context
-    if metadata.get('clinical_history'):
-        consolidation.append(f"\n## CLINICAL HISTORY")
-        consolidation.append(metadata['clinical_history'])
-    
-    return "\n".join(consolidation)
-
-
-def _generate_final_task_output(
-    task: str,
-    img_path: Path,
-    passages: list,
-    metadata_for_prompt: dict,
-    multiturn_data: dict,
-    step1_result: dict,
-    step2_result: dict,
-    adapter,
-    step3_result: dict = None
-) -> dict:
-    """Generate the final task-specific output based on completed analysis steps."""
-    
-    # Consolidate all multi-turn context to avoid conversation failures
-    step_results = {
-        "step1": step1_result,
-        "step2": step2_result,
-        "step3": step3_result
-    }
-    
-    consolidated_context = _consolidate_multiturn_context(
-        step_results, passages, metadata_for_prompt
-    )
-    
-    # Determine the appropriate step 3 template based on task
-    step3_template_map = {
-        "caption": "multiturn/caption_step3.jinja",
-        "diagnosis": "multiturn/diagnosis_step3.jinja", 
-        "localization": "multiturn/localization_step3.jinja",
-    }
-    
-    step3_template = step3_template_map.get(task, "multiturn/caption_step3.jinja")
-    
-    # Add consolidated context to metadata for final output
-    final_metadata = metadata_for_prompt.copy()
-    final_metadata["step1_result"] = step1_result
-    final_metadata["step2_analysis"] = step2_result
-    final_metadata["step3_analysis"] = step3_result
-    final_metadata["consolidated_context"] = consolidated_context
-    
-    final_prompt = load_enhanced_prompt(
-        template_name=step3_template,
-        image_path=img_path,
-        passages=passages,
         metadata=final_metadata,
     )
     
-    final_text, final_log = asyncio.run(adapter.generate(img_path, passages, system_prompt=final_prompt))
+    with open(img_folder / "final_task_prompt.txt", "w") as f:
+        f.write(final_prompt)
+    
+    final_text, final_log = asyncio.run(adapter.generate(img_path, [], system_prompt=final_prompt))
     logger.info(f"Final task output generation cost: {final_log}")
+    
+    with open(img_folder / "final_task_output.txt", "w") as f:
+        f.write(final_text)
     
     # Parse final result
     result = robust_json_loads(final_text)
     
-    return result
+    # Add metadata
+    result["image_path"] = str(img_path)
+    result["ground_truth_image_idx"] = batch_idx
+    result["chain_of_thought_data"] = chain_of_thought_data
+    
+    # Ensure required keys are present
+    ensure_evaluation_keys(result)
+    
+    logger.info(f"Successfully processed multi-turn result for image {batch_idx} ({chain_of_thought_data['total_turns']} turns)")
+    
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
+    )
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
 
 
 def process_batch_visual_multiturn(
@@ -1301,7 +1226,7 @@ def process_batch_visual_multiturn(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using enhanced visual multi-turn reasoning approach with conditional continuation."""
+    """Process a single batch using new visual chain of thought multi-turn reasoning approach."""
     from PIL import Image  # local import to avoid top-level PIL dependency
 
     hf_record = hf_ds[batch_idx]
@@ -1338,182 +1263,156 @@ def process_batch_visual_multiturn(
         else:
             metadata_for_prompt["clinical_history"] = ""
 
-    # Initialize web searcher for visual multi-turn
-    web_searcher = MedicalWebSearcher() if cfg.approach == "visual_multiturn" else None
-    
-    # Initialize visual multi-turn tracking
-    visual_multiturn_data = {
-        "rounds_completed": [],
-        "round_results": {},
-        "total_rounds": 0,
-        "continuation_reasons": [],
-        "final_analysis_complete": False
+    # Initialize visual chain of thought tracking
+    visual_chain_data = {
+        "turns_completed": [],
+        "turn_results": {},
+        "total_turns": 0,
+        "reasoning_complete": False,
+        "final_analysis_complete": False,
+        "visual_operations_applied": []
     }
-    
-    # Visual multi-turn analysis with conditional continuation
+
+    # Visual chain of thought reasoning loop (up to 3 turns)
+    max_turns = 3
+    current_turn = 0
+    previous_turns = []
     current_image_path = img_path
-    analysis_notes = []
-    visual_operations = []
-    web_search_results = []
     
-    max_rounds = getattr(cfg, 'visual_rounds', 3)  # Default to 3 rounds max
-    round_num = 0
-    
-    while round_num < max_rounds:
-        round_num += 1
-        logger.info(f"Visual multi-turn round {round_num} for image {batch_idx}")
+    while current_turn < max_turns and not visual_chain_data["reasoning_complete"]:
+        current_turn += 1
+        logger.info(f"Visual multi-turn Turn {current_turn} for image {batch_idx}")
         
-        # Load visual operations request prompt
-        ops_prompt = load_enhanced_prompt(
-            template_name="visual_multiturn/ops_request.jinja",
+        # Prepare metadata for this turn
+        turn_metadata = metadata_for_prompt.copy()
+        turn_metadata["turn_number"] = current_turn
+        turn_metadata["previous_turns"] = previous_turns
+        turn_metadata["approach"] = "visual"
+        
+        # Load visual chain of thought prompt
+        chain_prompt = load_enhanced_prompt(
+            template_name="multiturn/chain_of_thought.jinja",
             image_path=current_image_path,
             passages=[],
-            metadata={
-                **metadata_for_prompt,
-                "round": round_num,
-                "total_rounds": max_rounds,
-                "analysis_notes": "\n".join(analysis_notes) if analysis_notes else "None",
-                "web_search_results": "\n".join(web_search_results) if web_search_results else "None",
-            },
+            metadata=turn_metadata,
         )
         
-        with open(img_folder / f"round_{round_num}_ops_prompt.txt", "w") as f:
-            f.write(ops_prompt)
+        with open(img_folder / f"turn_{current_turn}_prompt.txt", "w") as f:
+            f.write(chain_prompt)
         
-        ops_text, ops_log = asyncio.run(adapter.generate(current_image_path, [], system_prompt=ops_prompt))
-        logger.info(f"Round {round_num} operations generation cost: {ops_log}")
+        turn_text, turn_log = asyncio.run(adapter.generate(current_image_path, [], system_prompt=chain_prompt))
+        logger.info(f"Turn {current_turn} generation cost: {turn_log}")
         
-        with open(img_folder / f"round_{round_num}_ops_output.txt", "w") as f:
-            f.write(ops_text)
+        with open(img_folder / f"turn_{current_turn}_output.txt", "w") as f:
+            f.write(turn_text)
         
-        ops_result = robust_json_loads(ops_text)
-        visual_multiturn_data["rounds_completed"].append(f"round_{round_num}")
-        visual_multiturn_data["round_results"][f"round_{round_num}"] = ops_result
-        visual_multiturn_data["total_rounds"] += 1
-        
-        # Check if continuation is needed
-        continue_analysis = ops_result.get("continue_analysis", True)
-        continuation_reason = ops_result.get("continuation_reason", "Default continuation")
-        visual_multiturn_data["continuation_reasons"].append(continuation_reason)
+        turn_result = robust_json_loads(turn_text)
+        visual_chain_data["turns_completed"].append(f"turn_{current_turn}")
+        visual_chain_data["turn_results"][f"turn_{current_turn}"] = turn_result
+        visual_chain_data["total_turns"] += 1
         
         # Apply visual operations if requested
-        if ops_result.get("zoom_factor") or ops_result.get("crop_box") or ops_result.get("contrast_factor") or ops_result.get("intensity_range"):
+        visual_ops = turn_result.get("visual_operations", {})
+        if visual_ops.get("requested", False):
             try:
                 # Load the current image
                 current_image = Image.open(current_image_path).convert("L")
                 
                 # Apply zoom if requested
-                if ops_result.get("zoom_factor") and ops_result["zoom_factor"] != 1.0:
+                if visual_ops.get("zoom_factor") and visual_ops["zoom_factor"] != 1.0:
                     current_image = zoom_image(
                         current_image, 
-                        ops_result["zoom_factor"]
+                        visual_ops["zoom_factor"],
+                        visual_ops.get("zoom_center")
                     )
                 
                 # Apply crop if requested
-                if ops_result.get("crop_box"):
+                if visual_ops.get("crop_box"):
                     current_image = crop_image(
                         current_image,
-                        ops_result["crop_box"]
+                        visual_ops["crop_box"]
                     )
                 
                 # Apply contrast if requested
-                if ops_result.get("contrast_factor") and ops_result["contrast_factor"] != 1.0:
+                if visual_ops.get("contrast_factor") and visual_ops["contrast_factor"] != 1.0:
                     current_image = adjust_contrast(
                         current_image,
-                        ops_result["contrast_factor"]
+                        visual_ops["contrast_factor"]
                     )
                 
                 # Apply intensity threshold if requested
-                if ops_result.get("intensity_range"):
+                if visual_ops.get("intensity_range"):
                     current_image = apply_intensity_threshold(
                         current_image,
-                        ops_result["intensity_range"][0],
-                        ops_result["intensity_range"][1]
+                        visual_ops["intensity_range"][0],
+                        visual_ops["intensity_range"][1]
                     )
                 
                 # Save the modified image
-                modified_image_path = img_folder / f"modified_round_{round_num}.png"
+                modified_image_path = img_folder / f"modified_round_{current_turn}.png"
                 current_image.save(modified_image_path)
                 current_image_path = modified_image_path
                 
-                visual_operations.append({
-                    "round": round_num,
-                    "operations": {
-                        "zoom_factor": ops_result.get("zoom_factor"),
-                        "crop_box": ops_result.get("crop_box"),
-                        "contrast_factor": ops_result.get("contrast_factor"),
-                        "intensity_range": ops_result.get("intensity_range"),
-                        "reset_to_original": ops_result.get("reset_to_original", False)
-                    }
+                # Record the visual operation
+                visual_chain_data["visual_operations_applied"].append({
+                    "turn": current_turn,
+                    "operations": visual_ops,
+                    "modified_image_path": str(modified_image_path)
                 })
-            except Exception as e:
-                logger.warning(f"Visual operation failed: {e}")
+                
+                logger.info(f"Applied visual operations for turn {current_turn}")
+                
+            except Exception as exc:
+                logger.warning(f"Visual operations failed for turn {current_turn}: {exc}")
+                # Continue with original image if operations fail
+                current_image_path = img_path
         
-        # Perform web search if requested
-        if ops_result.get("web_search_requests") and web_searcher:
-            for search_req in ops_result["web_search_requests"]:
-                try:
-                    search_type = search_req.get("search_type", "general")
-                    query = search_req.get("query", "")
-                    
-                    if search_type == "medical":
-                        results = web_searcher.medical_search(query)
-                    else:
-                        results = web_searcher.general_search(query)
-                    
-                    web_search_results.append(f"Query: {query}\nResults: {results}")
-                except Exception as e:
-                    logger.warning(f"Web search failed: {e}")
-                    web_search_results.append(f"Query: {query}\nError: {str(e)}")
+        # Add to previous turns for next iteration
+        previous_turns.append(turn_result)
         
-        # Add analysis notes
-        if ops_result.get("analysis_notes"):
-            analysis_notes.append(f"Round {round_num}: {ops_result['analysis_notes']}")
+        # Check if reasoning is complete
+        reasoning_complete = turn_result.get("reasoning_complete", False)
+        continue_reasoning = turn_result.get("continue_reasoning", True)
         
-        # Check if we should continue or stop
-        if not continue_analysis:
-            logger.info(f"Round {round_num} indicates analysis complete: {continuation_reason}")
-            visual_multiturn_data["final_analysis_complete"] = True
-            break
-        
-        # Check if we need more operations
-        need_more_ops = ops_result.get("need_more_ops", True)
-        if not need_more_ops:
-            logger.info(f"Round {round_num} indicates no more operations needed")
+        if reasoning_complete or not continue_reasoning:
+            logger.info(f"Turn {current_turn} indicates reasoning complete")
+            visual_chain_data["reasoning_complete"] = True
             break
     
-    # Final analysis using original image
-    logger.info(f"Final analysis for image {batch_idx}")
+    # Generate final task output
+    logger.info(f"Generating final task output for image {batch_idx}")
     
-    # Determine the appropriate final template based on task
-    final_template_map = {
-        "caption": "baseline/caption.jinja",
-        "diagnosis": "baseline/diagnosis.jinja",
-        "localization": "baseline/localization.jinja",
-    }
-    
-    final_template = final_template_map.get(task, "baseline/caption.jinja")
-    
-    # Add visual analysis context to metadata
+    # Prepare metadata for final task output
     final_metadata = metadata_for_prompt.copy()
-    final_metadata["visual_operations"] = visual_operations
-    final_metadata["analysis_notes"] = "\n".join(analysis_notes)
-    final_metadata["web_search_results"] = "\n".join(web_search_results)
+    final_metadata["task"] = task
+    final_metadata["chain_of_thought_turns"] = previous_turns
+    final_metadata["overall_confidence"] = max([turn.get("confidence", 0.0) for turn in previous_turns]) if previous_turns else 0.0
     
+    # Extract key findings and differential diagnoses from all turns
+    all_findings = []
+    all_differential_diagnoses = []
+    for turn in previous_turns:
+        all_findings.extend(turn.get("findings", []))
+        all_differential_diagnoses.extend(turn.get("differential_diagnoses", []))
+    
+    final_metadata["key_findings"] = list(set(all_findings))  # Remove duplicates
+    final_metadata["final_differential_diagnoses"] = list(set(all_differential_diagnoses))  # Remove duplicates
+    
+    # Load final task output prompt
     final_prompt = load_enhanced_prompt(
-        template_name=final_template,
-        image_path=img_path,  # Use original image for final analysis
+        template_name="multiturn/final_task_output.jinja",
+        image_path=img_path,  # Use original image for final output
         passages=[],
         metadata=final_metadata,
     )
     
-    with open(img_folder / "final_prompt.txt", "w") as f:
+    with open(img_folder / "final_task_prompt.txt", "w") as f:
         f.write(final_prompt)
     
     final_text, final_log = asyncio.run(adapter.generate(img_path, [], system_prompt=final_prompt))
-    logger.info(f"Final analysis generation cost: {final_log}")
+    logger.info(f"Final task output generation cost: {final_log}")
     
-    with open(img_folder / "final_output.txt", "w") as f:
+    with open(img_folder / "final_task_output.txt", "w") as f:
         f.write(final_text)
     
     # Parse final result
@@ -1522,225 +1421,23 @@ def process_batch_visual_multiturn(
     # Add metadata
     result["image_path"] = str(img_path)
     result["ground_truth_image_idx"] = batch_idx
-    result["visual_multiturn_data"] = {
-        "visual_operations": visual_operations,
-        "analysis_notes": analysis_notes,
-        "web_search_results": web_search_results,
-        "rounds_completed": visual_multiturn_data["rounds_completed"],
-        "total_rounds": visual_multiturn_data["total_rounds"],
-        "continuation_reasons": visual_multiturn_data["continuation_reasons"],
-        "final_analysis_complete": visual_multiturn_data["final_analysis_complete"]
-    }
+    result["visual_chain_data"] = visual_chain_data
     
     # Ensure required keys are present
     ensure_evaluation_keys(result)
     
-    logger.info(f"Successfully processed enhanced visual multi-turn result for image {batch_idx} ({visual_multiturn_data['total_rounds']} rounds)")
+    logger.info(f"Successfully processed visual multi-turn result for image {batch_idx} ({visual_chain_data['total_turns']} turns)")
     
-    # Save individual prediction for this image
-    save_prediction(img_folder, result)
-    
-    # Generate and save reference
-    save_reference(img_folder, batch_idx, hf_ds)
-    
-    # ---------------------------------------------------------------------
-    # Visualisation - draw GT & predicted bounding-boxes
-    # ---------------------------------------------------------------------
-
-    def _draw_boxes(img_path: Path, gt: list[Any], pred: list[Any], out_path: Path):
-        """Draw *gt* (green) and *pred* (red) boxes on *img_path* and save.
-
-        The helper is now tolerant to various box formats:
-
-        1. [x1, y1, x2, y2] - preferred.
-        2. Dicts with keys (x1,y1,x2,y2) or (x,y,width,height).
-        Invalid or incomplete entries are silently skipped.
-        """
-        import matplotlib
-
-        matplotlib.use("Agg")  # headless
-        import matplotlib.patches as patches
-        import matplotlib.pyplot as plt
-        from matplotlib import patheffects as pe
-        from PIL import Image
-
-        img = Image.open(img_path).convert("L")
-        fig, ax = plt.subplots(1, figsize=(6, 6))
-        ax.imshow(img, cmap="gray")
-
-        def _iter_boxes(raw_boxes):
-            for b in raw_boxes:
-                if isinstance(b, (list, tuple)) and len(b) == 4:
-                    yield b
-                elif isinstance(b, dict):
-                    if all(k in b for k in ("x1", "y1", "x2", "y2")):
-                        yield [b["x1"], b["y1"], b["x2"], b["y2"]]
-                    elif all(k in b for k in ("x", "y", "width", "height")):
-                        yield [b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]]
-
-        for box in _iter_boxes(gt):
-            x1, y1, x2, y2 = box
-            w, h = x2 - x1, y2 - y1
-            rect = patches.Rectangle(
-                (x1, y1), w, h, linewidth=1.5, edgecolor="lime", facecolor="none"
-            )
-            ax.add_patch(rect)
-
-        for box in _iter_boxes(pred):
-            x1, y1, x2, y2 = box
-            w, h = x2 - x1, y2 - y1
-            rect = patches.Rectangle(
-                (x1, y1), w, h, linewidth=1.2, edgecolor="red", facecolor="none", linestyle="--"
-            )
-            ax.add_patch(rect)
-
-        ax.axis("off")
-
-        # ------------------------------------------------------------------
-        # Add legend (only for categories that are present)
-        # ------------------------------------------------------------------
-        from matplotlib.lines import Line2D  # imported here to keep the
-
-        # function self-contained even when matplotlib is not globally
-        # available at import time.
-
-        legend_elements = []
-        if gt:
-            legend_elements.append(Line2D([0], [0], color="lime", lw=2, label="Ground Truth"))
-        if pred:
-            legend_elements.append(
-                Line2D([0], [0], color="red", lw=2, linestyle="--", label="Prediction")
-            )
-
-        if legend_elements:
-            leg = ax.legend(
-                handles=legend_elements, loc="upper right", fontsize="x-small", frameon=False
-            )
-            # Improve readability - bright text with thin black outline
-            for text in leg.get_texts():
-                text.set_color("yellow")
-                text.set_path_effects(
-                    [
-                        pe.Stroke(linewidth=1.0, foreground="black"),
-                        pe.Normal(),
-                    ]
-                )
-
-        fig.tight_layout(pad=0)
-        fig.savefig(out_path, bbox_inches="tight", dpi=150)
-        plt.close(fig)
-
-    gt_bg = hf_ds[batch_idx].get("bbox_gold", {})
-    gt_boxes = [
-        [x, y, x + w, y + h]
-        for x, y, w, h in zip(
-            gt_bg.get("x", []), gt_bg.get("y", []), gt_bg.get("width", []), gt_bg.get("height", [])
-        )
-    ]
-    viz_path = img_folder / "bboxes.png"
-    _draw_boxes(img_path, gt_boxes, result.get("boxes", []), viz_path)
-    
-    # Evaluate this individual prediction
-    evaluate_prediction(img_folder, task)
-    
-    preds.append(result)
-
-
-def process_batch_visual(
-    batch_idx: int,
-    batch: dict,
-    main_run_dir: Path,
-    task: str,
-    cfg: Config,
-    adapter,
-    retriever,
-    preds: list,
-    hf_ds,
-):
-    """Process a single batch using enhanced visual operations approach."""
-    # This is a simplified version of visual_multiturn that uses the visual system prompt
-    # but with streamlined operations
-    
-    # Get image from HuggingFace dataset (same as baseline)
-    from PIL import Image
-    
-    hf_record = hf_ds[batch_idx]
-    
-    if "image" in hf_record and hf_record["image"] is not None:
-        pil = hf_record["image"]
-        if not isinstance(pil, Image.Image):
-            pil = Image.fromarray(pil)
-        pil = pil.convert("L")  # ensure grayscale
-    else:
-        # Fallback: load from stored path in dataset record
-        img_path_str = hf_record.get("image_path")
-        if not img_path_str:
-            raise ValueError(f"No image or image_path field for record {batch_idx}")
-        pil = Image.open(img_path_str).convert("L")
-    
-    # Create a folder for this specific image_id or batch index
-    img_folder = main_run_dir / f"image_{batch_idx}"
-    img_folder.mkdir(parents=True, exist_ok=True)
-    img_path = img_folder / "image.png"
-    pil.save(img_path)
-    
-    logger.info(f"Processing visual analysis for image {batch_idx}: {img_path}")
-    
-    # Setup metadata for prompt
-    metadata_for_prompt = {
-        "image_filename": img_path.name,
-        "batch_idx": batch_idx,
-        "task": task,
-        "approach": "visual",
-    }
-    
-    # Use visual system prompt with task-specific template
-    template_map = {
-        "caption": "baseline/caption.jinja",
-        "diagnosis": "baseline/diagnosis.jinja", 
-        "localization": "baseline/localization.jinja",
-    }
-    
-    template_name = template_map.get(task, "baseline/caption.jinja")
-    
-    # Load enhanced prompt with visual mode
-    prompt = load_enhanced_prompt(
-        template_name=template_name,
-        image_path=img_path,
-        passages=[],
-        metadata=metadata_for_prompt,
-        mode="visual"
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
     )
-    
-    with open(img_folder / "prompt.txt", "w") as f:
-        f.write(prompt)
-    
-    # Generate response
-    text, log = asyncio.run(adapter.generate(img_path, [], system_prompt=prompt))
-    logger.info(f"Visual analysis generation cost: {log}")
-    
-    with open(img_folder / "output.txt", "w") as f:
-        f.write(text)
-    
-    # Parse result
-    result = robust_json_loads(text)
-    
-    # Add metadata
-    result["image_path"] = str(img_path)
-    result["ground_truth_image_idx"] = batch_idx
-    result["approach"] = "visual"
-    
-    # Ensure required keys are present
-    ensure_evaluation_keys(result)
-    
-    logger.info(f"Successfully processed visual result for image {batch_idx}")
-    
-    # Save individual prediction
-    save_prediction(img_folder, result)
-    save_reference(img_folder, batch_idx, hf_ds)
-    evaluate_prediction(img_folder, task)
-    
-    preds.append(result)
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
 
 
 def process_batch_retrieval(
@@ -1881,7 +1578,20 @@ def process_batch_retrieval(
     # Generate and save reference
     save_reference(img_folder, batch_idx, hf_ds)
     
-    preds.append(result)
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    from nova_retrieval_vlm.utils.io import BatchCtx, common_postprocess
+
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
+    )
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
+
+    return
 
 
 def process_batch_web_search(
@@ -1895,13 +1605,11 @@ def process_batch_web_search(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using web search-augmented approach."""
-    
-    # Get image from HuggingFace dataset (same as baseline)
-    from PIL import Image
-    
+    """Process a single batch using new web search chain of thought multi-turn reasoning approach."""
+    from PIL import Image  # local import to avoid top-level PIL dependency
+
     hf_record = hf_ds[batch_idx]
-    
+
     if "image" in hf_record and hf_record["image"] is not None:
         pil = hf_record["image"]
         if not isinstance(pil, Image.Image):
@@ -1913,114 +1621,198 @@ def process_batch_web_search(
         if not img_path_str:
             raise ValueError(f"No image or image_path field for record {batch_idx}")
         pil = Image.open(img_path_str).convert("L")
-    
+
     # Create a folder for this specific image_id or batch index
     img_folder = main_run_dir / f"image_{batch_idx}"
     img_folder.mkdir(parents=True, exist_ok=True)
     img_path = img_folder / "image.png"
     pil.save(img_path)
-    
-    logger.info(f"Processing web search-augmented analysis for image {batch_idx}: {img_path}")
-    
-    # Setup metadata for prompt
+
+    # Prepare metadata for the prompt
     metadata_for_prompt = {
-        "image_filename": img_path.name,
-        "batch_idx": batch_idx,
-        "task": task,
-        "approach": "web_search",
-        "web_search_enabled": cfg.use_web_search,
+        "image_id": batch_idx,
+        "width": pil.width,
+        "height": pil.height,
     }
-    
-    # Initialize web searcher if enabled
+    if task == "diagnosis":
+        # Safe access to optional metadata list
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_for_prompt["clinical_history"] = _meta_list[0].get("clinical_history", "")
+        else:
+            metadata_for_prompt["clinical_history"] = ""
+
+    # Initialize web search chain of thought tracking
+    web_chain_data = {
+        "turns_completed": [],
+        "turn_results": {},
+        "total_turns": 0,
+        "reasoning_complete": False,
+        "final_analysis_complete": False,
+        "web_searches_performed": []
+    }
+
+    # Initialize web searcher
+    web_searcher = MedicalWebSearcher() if cfg.use_web_search else None
+
+    # Web search chain of thought reasoning loop (up to 3 turns)
+    max_turns = 3
+    current_turn = 0
+    previous_turns = []
     web_search_results = []
-    if cfg.use_web_search:
-        try:
-            web_searcher = MedicalWebSearcher()
-            
-            # Create search queries based on task
-            queries = []
-            if task == "caption":
-                queries = [
-                    "brain MRI anatomy description medical terminology",
-                    "neuroimaging findings interpretation guidelines"
-                ]
-            elif task == "diagnosis":
-                queries = [
-                    "brain MRI diagnosis differential pathology",
-                    "neurological conditions MRI findings recent research"
-                ]
-            elif task == "localization":
-                queries = [
-                    "brain anatomy localization coordinates MRI",
-                    "neuroanatomical regions brain mapping"
-                ]
-            
-            for query in queries:
-                try:
-                    results = web_searcher.medical_search(query)
-                    web_search_results.append(f"Query: {query}\nResults: {results}")
-                except Exception as e:
-                    logger.warning(f"Web search failed for query '{query}': {e}")
-                    web_search_results.append(f"Query: {query}\nError: {str(e)}")
-            
-            metadata_for_prompt["web_search_results"] = "\n\n".join(web_search_results)
-            
-            with open(img_folder / "web_search_results.txt", "w") as f:
-                f.write(metadata_for_prompt["web_search_results"])
+    
+    while current_turn < max_turns and not web_chain_data["reasoning_complete"]:
+        current_turn += 1
+        logger.info(f"Web search multi-turn Turn {current_turn} for image {batch_idx}")
+        
+        # Prepare metadata for this turn
+        turn_metadata = metadata_for_prompt.copy()
+        turn_metadata["turn_number"] = current_turn
+        turn_metadata["previous_turns"] = previous_turns
+        turn_metadata["approach"] = "web_search"
+        turn_metadata["web_search_results"] = web_search_results
+        
+        # Load web search chain of thought prompt
+        chain_prompt = load_enhanced_prompt(
+            template_name="multiturn/chain_of_thought.jinja",
+            image_path=img_path,
+            passages=[],
+            metadata=turn_metadata,
+            mode="web_search",
+        )
+        
+        with open(img_folder / f"turn_{current_turn}_prompt.txt", "w") as f:
+            f.write(chain_prompt)
+        
+        turn_text, turn_log = asyncio.run(adapter.generate(img_path, [], system_prompt=chain_prompt))
+        logger.info(f"Turn {current_turn} generation cost: {turn_log}")
+        
+        with open(img_folder / f"turn_{current_turn}_output.txt", "w") as f:
+            f.write(turn_text)
+        
+        turn_result = robust_json_loads(turn_text)
+        web_chain_data["turns_completed"].append(f"turn_{current_turn}")
+        web_chain_data["turn_results"][f"turn_{current_turn}"] = turn_result
+        web_chain_data["total_turns"] += 1
+        
+        # Perform web search if requested
+        web_search = turn_result.get("web_search", {})
+        if web_search.get("requested", False) and web_searcher:
+            try:
+                search_type = web_search.get("search_type", "diagnosis")
+                query = web_search.get("query", "")
                 
-        except Exception as exc:
-            logger.warning(f"Web search setup failed for image {batch_idx}: {exc}")
-            metadata_for_prompt["web_search_results"] = f"Web search unavailable: {exc}"
+                if search_type == "diagnosis":
+                    results = web_searcher.medical_search(query)
+                elif search_type == "guidelines":
+                    results = web_searcher.guidelines_search(query)
+                elif search_type == "research":
+                    results = web_searcher.research_search(query)
+                elif search_type == "anatomy":
+                    results = web_searcher.anatomy_search(query)
+                else:
+                    results = web_searcher.general_search(query)
+                
+                web_search_results.append(f"Query: {query}\nResults: {results}")
+                
+                # Record the web search (convert WebSearchResult objects to dicts for JSON serialization)
+                results_dicts = []
+                for result in results:
+                    results_dicts.append({
+                        "title": result.title,
+                        "url": result.url,
+                        "snippet": result.snippet,
+                        "source": result.source,
+                        "relevance_score": result.relevance_score,
+                        "medical_concepts": result.medical_concepts,
+                        "publication_date": result.publication_date
+                    })
+                
+                web_chain_data["web_searches_performed"].append({
+                    "turn": current_turn,
+                    "search_type": search_type,
+                    "query": query,
+                    "results": results_dicts
+                })
+                
+                logger.info(f"Performed web search for turn {current_turn}: {search_type} - {query}")
+                
+            except Exception as exc:
+                logger.warning(f"Web search failed for turn {current_turn}: {exc}")
+                web_search_results.append(f"Query: {query}\nError: {str(exc)}")
+        
+        # Add to previous turns for next iteration
+        previous_turns.append(turn_result)
+        
+        # Check if reasoning is complete
+        reasoning_complete = turn_result.get("reasoning_complete", False)
+        continue_reasoning = turn_result.get("continue_reasoning", True)
+        
+        if reasoning_complete or not continue_reasoning:
+            logger.info(f"Turn {current_turn} indicates reasoning complete")
+            web_chain_data["reasoning_complete"] = True
+            break
     
-    # Use web search system prompt with task-specific template
-    template_map = {
-        "caption": "baseline/caption.jinja",
-        "diagnosis": "baseline/diagnosis.jinja",
-        "localization": "baseline/localization.jinja",
-    }
+    # Generate final task output
+    logger.info(f"Generating final task output for image {batch_idx}")
     
-    template_name = template_map.get(task, "baseline/caption.jinja")
+    # Prepare metadata for final task output
+    final_metadata = metadata_for_prompt.copy()
+    final_metadata["task"] = task
+    final_metadata["chain_of_thought_turns"] = previous_turns
+    final_metadata["overall_confidence"] = max([turn.get("confidence", 0.0) for turn in previous_turns]) if previous_turns else 0.0
     
-    # Load enhanced prompt with web search mode
-    prompt = load_enhanced_prompt(
-        template_name=template_name,
+    # Extract key findings and differential diagnoses from all turns
+    all_findings = []
+    all_differential_diagnoses = []
+    for turn in previous_turns:
+        all_findings.extend(turn.get("findings", []))
+        all_differential_diagnoses.extend(turn.get("differential_diagnoses", []))
+    
+    final_metadata["key_findings"] = list(set(all_findings))  # Remove duplicates
+    final_metadata["final_differential_diagnoses"] = list(set(all_differential_diagnoses))  # Remove duplicates
+    
+    # Load final task output prompt
+    final_prompt = load_enhanced_prompt(
+        template_name="multiturn/final_task_output.jinja",
         image_path=img_path,
         passages=[],
-        metadata=metadata_for_prompt,
-        mode="web_search"
+        metadata=final_metadata,
+        mode="web_search",
     )
     
-    with open(img_folder / "prompt.txt", "w") as f:
-        f.write(prompt)
+    with open(img_folder / "final_task_prompt.txt", "w") as f:
+        f.write(final_prompt)
     
-    # Generate response
-    text, log = asyncio.run(adapter.generate(img_path, [], system_prompt=prompt))
-    logger.info(f"Web search-augmented generation cost: {log}")
+    final_text, final_log = asyncio.run(adapter.generate(img_path, [], system_prompt=final_prompt))
+    logger.info(f"Final task output generation cost: {final_log}")
     
-    with open(img_folder / "output.txt", "w") as f:
-        f.write(text)
+    with open(img_folder / "final_task_output.txt", "w") as f:
+        f.write(final_text)
     
-    # Parse result
-    result = robust_json_loads(text)
+    # Parse final result
+    result = robust_json_loads(final_text)
     
     # Add metadata
     result["image_path"] = str(img_path)
     result["ground_truth_image_idx"] = batch_idx
-    result["approach"] = "web_search"
-    result["web_search_enabled"] = cfg.use_web_search
-    result["num_search_queries"] = len(web_search_results)
+    result["web_chain_data"] = web_chain_data
     
     # Ensure required keys are present
     ensure_evaluation_keys(result)
     
-    logger.info(f"Successfully processed web search-augmented result for image {batch_idx}")
+    logger.info(f"Successfully processed web search multi-turn result for image {batch_idx} ({web_chain_data['total_turns']} turns)")
     
-    # Save individual prediction
-    save_prediction(img_folder, result)
-    save_reference(img_folder, batch_idx, hf_ds)
-    evaluate_prediction(img_folder, task)
-    
-    preds.append(result)
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
+    )
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
 
 
 def process_batch_comprehensive(
@@ -2034,13 +1826,11 @@ def process_batch_comprehensive(
     preds: list,
     hf_ds,
 ):
-    """Process a single batch using comprehensive analysis approach with all capabilities."""
-    
-    # Get image from HuggingFace dataset (same as baseline)
-    from PIL import Image
-    
+    """Process a single batch using new comprehensive chain of thought multi-turn reasoning approach."""
+    from PIL import Image  # local import to avoid top-level PIL dependency
+
     hf_record = hf_ds[batch_idx]
-    
+
     if "image" in hf_record and hf_record["image"] is not None:
         pil = hf_record["image"]
         if not isinstance(pil, Image.Image):
@@ -2052,135 +1842,275 @@ def process_batch_comprehensive(
         if not img_path_str:
             raise ValueError(f"No image or image_path field for record {batch_idx}")
         pil = Image.open(img_path_str).convert("L")
-    
+
     # Create a folder for this specific image_id or batch index
     img_folder = main_run_dir / f"image_{batch_idx}"
     img_folder.mkdir(parents=True, exist_ok=True)
     img_path = img_folder / "image.png"
     pil.save(img_path)
-    
-    logger.info(f"Processing comprehensive analysis for image {batch_idx}: {img_path}")
-    
-    # Setup metadata for prompt
+
+    # Prepare metadata for the prompt
     metadata_for_prompt = {
-        "image_filename": img_path.name,
-        "batch_idx": batch_idx,
-        "task": task,
-        "approach": "comprehensive",
-        "retrieval_enabled": retriever is not None,
-        "web_search_enabled": cfg.use_web_search,
-        "max_steps": cfg.multiturn_max_steps,
+        "image_id": batch_idx,
+        "width": pil.width,
+        "height": pil.height,
     }
-    
-    # Perform retrieval if available
-    passages = []
-    if retriever:
-        try:
-            # Create comprehensive retrieval query
-            query = f"brain MRI {task} medical analysis comprehensive assessment"
-            passages = retriever.retrieve(query, top_k=cfg.retrieval.top_k)
-            logger.info(f"Retrieved {len(passages)} passages for comprehensive analysis")
-            
-            with open(img_folder / "retrieved_passages.txt", "w") as f:
-                for i, passage in enumerate(passages):
-                    f.write(f"Passage {i+1}:\n{passage}\n\n")
-                    
-        except Exception as exc:
-            logger.warning(f"Retrieval failed for comprehensive analysis: {exc}")
-            passages = []
-    
-    # Perform web search if enabled
+    if task == "diagnosis":
+        # Safe access to optional metadata list
+        _meta_list = batch.get("metadata", []) or []
+        if isinstance(_meta_list, (list, tuple)) and _meta_list and isinstance(_meta_list[0], dict):
+            metadata_for_prompt["clinical_history"] = _meta_list[0].get("clinical_history", "")
+        else:
+            metadata_for_prompt["clinical_history"] = ""
+
+    # Initialize comprehensive chain of thought tracking
+    comprehensive_chain_data = {
+        "turns_completed": [],
+        "turn_results": {},
+        "total_turns": 0,
+        "reasoning_complete": False,
+        "final_analysis_complete": False,
+        "visual_operations_applied": [],
+        "web_searches_performed": []
+    }
+
+    # Initialize web searcher
+    web_searcher = MedicalWebSearcher() if cfg.use_web_search else None
+
+    # Comprehensive chain of thought reasoning loop (up to 3 turns)
+    max_turns = 3
+    current_turn = 0
+    previous_turns = []
+    current_image_path = img_path
     web_search_results = []
-    if cfg.use_web_search:
-        try:
-            web_searcher = MedicalWebSearcher()
-            
-            # Comprehensive search queries
-            queries = [
-                f"brain MRI {task} comprehensive analysis guidelines",
-                f"neuroimaging {task} best practices recent research",
-                f"medical image analysis {task} clinical protocols"
-            ]
-            
-            for query in queries:
-                try:
-                    results = web_searcher.medical_search(query)
-                    web_search_results.append(f"Query: {query}\nResults: {results}")
-                except Exception as e:
-                    logger.warning(f"Web search failed: {e}")
-                    web_search_results.append(f"Query: {query}\nError: {str(e)}")
-            
-            metadata_for_prompt["web_search_results"] = "\n\n".join(web_search_results)
-            
-            with open(img_folder / "web_search_results.txt", "w") as f:
-                f.write(metadata_for_prompt["web_search_results"])
+    
+    while current_turn < max_turns and not comprehensive_chain_data["reasoning_complete"]:
+        current_turn += 1
+        logger.info(f"Comprehensive multi-turn Turn {current_turn} for image {batch_idx}")
+        
+        # Prepare metadata for this turn
+        turn_metadata = metadata_for_prompt.copy()
+        turn_metadata["turn_number"] = current_turn
+        turn_metadata["previous_turns"] = previous_turns
+        turn_metadata["approach"] = "comprehensive"
+        turn_metadata["web_search_results"] = web_search_results
+        
+        # Load comprehensive chain of thought prompt
+        chain_prompt = load_enhanced_prompt(
+            template_name="multiturn/chain_of_thought.jinja",
+            image_path=current_image_path,
+            passages=[],
+            metadata=turn_metadata,
+            mode="comprehensive",
+        )
+        
+        with open(img_folder / f"turn_{current_turn}_prompt.txt", "w") as f:
+            f.write(chain_prompt)
+        
+        turn_text, turn_log = asyncio.run(adapter.generate(current_image_path, [], system_prompt=chain_prompt))
+        logger.info(f"Turn {current_turn} generation cost: {turn_log}")
+        
+        with open(img_folder / f"turn_{current_turn}_output.txt", "w") as f:
+            f.write(turn_text)
+        
+        turn_result = robust_json_loads(turn_text)
+        comprehensive_chain_data["turns_completed"].append(f"turn_{current_turn}")
+        comprehensive_chain_data["turn_results"][f"turn_{current_turn}"] = turn_result
+        comprehensive_chain_data["total_turns"] += 1
+        
+        # Apply visual operations if requested
+        visual_ops = turn_result.get("visual_operations", {})
+        if visual_ops.get("requested", False):
+            try:
+                # Load the current image
+                current_image = Image.open(current_image_path).convert("L")
                 
-        except Exception as exc:
-            logger.warning(f"Web search failed for comprehensive analysis: {exc}")
-            metadata_for_prompt["web_search_results"] = f"Web search unavailable: {exc}"
+                # Apply zoom if requested
+                if visual_ops.get("zoom_factor") and visual_ops["zoom_factor"] != 1.0:
+                    current_image = zoom_image(
+                        current_image, 
+                        visual_ops["zoom_factor"],
+                        visual_ops.get("zoom_center")
+                    )
+                
+                # Apply crop if requested
+                if visual_ops.get("crop_box"):
+                    current_image = crop_image(
+                        current_image,
+                        visual_ops["crop_box"]
+                    )
+                
+                # Apply contrast if requested
+                if visual_ops.get("contrast_factor") and visual_ops["contrast_factor"] != 1.0:
+                    current_image = adjust_contrast(
+                        current_image,
+                        visual_ops["contrast_factor"]
+                    )
+                
+                # Apply intensity threshold if requested
+                if visual_ops.get("intensity_range"):
+                    current_image = apply_intensity_threshold(
+                        current_image,
+                        visual_ops["intensity_range"][0],
+                        visual_ops["intensity_range"][1]
+                    )
+                
+                # Save the modified image
+                modified_image_path = img_folder / f"modified_round_{current_turn}.png"
+                current_image.save(modified_image_path)
+                current_image_path = modified_image_path
+                
+                # Record the visual operation
+                comprehensive_chain_data["visual_operations_applied"].append({
+                    "turn": current_turn,
+                    "operations": visual_ops,
+                    "modified_image_path": str(modified_image_path)
+                })
+                
+                logger.info(f"Applied visual operations for turn {current_turn}")
+                
+            except Exception as exc:
+                logger.warning(f"Visual operations failed for turn {current_turn}: {exc}")
+                # Continue with original image if operations fail
+                current_image_path = img_path
+        
+        # Perform web search if requested
+        web_search = turn_result.get("web_search", {})
+        if web_search.get("requested", False) and web_searcher:
+            try:
+                search_type = web_search.get("search_type", "diagnosis")
+                query = web_search.get("query", "")
+                
+                if search_type == "diagnosis":
+                    results = web_searcher.medical_search(query)
+                elif search_type == "guidelines":
+                    results = web_searcher.guidelines_search(query)
+                elif search_type == "research":
+                    results = web_searcher.research_search(query)
+                elif search_type == "anatomy":
+                    results = web_searcher.anatomy_search(query)
+                else:
+                    results = web_searcher.general_search(query)
+                
+                web_search_results.append(f"Query: {query}\nResults: {results}")
+                
+                # Record the web search (convert WebSearchResult objects to dicts for JSON serialization)
+                results_dicts = []
+                for result in results:
+                    results_dicts.append({
+                        "title": result.title,
+                        "url": result.url,
+                        "snippet": result.snippet,
+                        "source": result.source,
+                        "relevance_score": result.relevance_score,
+                        "medical_concepts": result.medical_concepts,
+                        "publication_date": result.publication_date
+                    })
+                
+                comprehensive_chain_data["web_searches_performed"].append({
+                    "turn": current_turn,
+                    "search_type": search_type,
+                    "query": query,
+                    "results": results_dicts
+                })
+                
+                logger.info(f"Performed web search for turn {current_turn}: {search_type} - {query}")
+                
+            except Exception as exc:
+                logger.warning(f"Web search failed for turn {current_turn}: {exc}")
+                web_search_results.append(f"Query: {query}\nError: {str(exc)}")
+        
+        # Add to previous turns for next iteration
+        previous_turns.append(turn_result)
+        
+        # Check if reasoning is complete
+        reasoning_complete = turn_result.get("reasoning_complete", False)
+        continue_reasoning = turn_result.get("continue_reasoning", True)
+        
+        if reasoning_complete or not continue_reasoning:
+            logger.info(f"Turn {current_turn} indicates reasoning complete")
+            comprehensive_chain_data["reasoning_complete"] = True
+            break
     
-    # Use comprehensive system prompt with task-specific template
-    template_map = {
-        "caption": "baseline/caption.jinja",
-        "diagnosis": "baseline/diagnosis.jinja",
-        "localization": "baseline/localization.jinja",
-    }
+    # Generate final task output
+    logger.info(f"Generating final task output for image {batch_idx}")
     
-    template_name = template_map.get(task, "baseline/caption.jinja")
+    # Prepare metadata for final task output
+    final_metadata = metadata_for_prompt.copy()
+    final_metadata["task"] = task
+    final_metadata["chain_of_thought_turns"] = previous_turns
+    final_metadata["overall_confidence"] = max([turn.get("confidence", 0.0) for turn in previous_turns]) if previous_turns else 0.0
     
-    # Load enhanced prompt with comprehensive mode
-    prompt = load_enhanced_prompt(
-        template_name=template_name,
-        image_path=img_path,
-        passages=passages,
-        metadata=metadata_for_prompt,
-        mode="comprehensive"
+    # Extract key findings and differential diagnoses from all turns
+    all_findings = []
+    all_differential_diagnoses = []
+    for turn in previous_turns:
+        all_findings.extend(turn.get("findings", []))
+        all_differential_diagnoses.extend(turn.get("differential_diagnoses", []))
+    
+    final_metadata["key_findings"] = list(set(all_findings))  # Remove duplicates
+    final_metadata["final_differential_diagnoses"] = list(set(all_differential_diagnoses))  # Remove duplicates
+    
+    # Load final task output prompt
+    final_prompt = load_enhanced_prompt(
+        template_name="multiturn/final_task_output.jinja",
+        image_path=img_path,  # Use original image for final output
+        passages=[],
+        metadata=final_metadata,
+        mode="comprehensive",
     )
     
-    with open(img_folder / "prompt.txt", "w") as f:
-        f.write(prompt)
+    with open(img_folder / "final_task_prompt.txt", "w") as f:
+        f.write(final_prompt)
     
-    # Generate response with timeout for comprehensive analysis
-    try:
-        text, log = asyncio.run(
-            asyncio.wait_for(
-                adapter.generate(img_path, passages, system_prompt=prompt),
-                timeout=cfg.comprehensive_timeout
-            )
-        )
-        logger.info(f"Comprehensive analysis generation cost: {log}")
-        
-    except asyncio.TimeoutError:
-        logger.warning(f"Comprehensive analysis timed out for image {batch_idx}")
-        text = '{"error": "Analysis timed out", "caption": "Timeout during comprehensive analysis", "boxes": [], "scores": [], "labels": []}'
-        log = {"timeout": True}
+    final_text, final_log = asyncio.run(adapter.generate(img_path, [], system_prompt=final_prompt))
+    logger.info(f"Final task output generation cost: {final_log}")
     
-    with open(img_folder / "output.txt", "w") as f:
-        f.write(text)
+    with open(img_folder / "final_task_output.txt", "w") as f:
+        f.write(final_text)
     
-    # Parse result
-    result = robust_json_loads(text)
+    # Parse final result
+    result = robust_json_loads(final_text)
     
     # Add metadata
     result["image_path"] = str(img_path)
     result["ground_truth_image_idx"] = batch_idx
-    result["approach"] = "comprehensive"
-    result["num_passages"] = len(passages)
-    result["num_search_queries"] = len(web_search_results)
-    result["retrieval_enabled"] = retriever is not None
-    result["web_search_enabled"] = cfg.use_web_search
+    result["comprehensive_chain_data"] = comprehensive_chain_data
     
     # Ensure required keys are present
     ensure_evaluation_keys(result)
     
-    logger.info(f"Successfully processed comprehensive result for image {batch_idx}")
+    logger.info(f"Successfully processed comprehensive multi-turn result for image {batch_idx} ({comprehensive_chain_data['total_turns']} turns)")
     
-    # Save individual prediction
-    save_prediction(img_folder, result)
-    save_reference(img_folder, batch_idx, hf_ds)
-    evaluate_prediction(img_folder, task)
-    
-    preds.append(result)
+    # Shared post-processing (ensures keys, saves files, visualises, evals)
+    ctx = BatchCtx(
+        idx=batch_idx,
+        folder=img_folder,
+        img_path=img_path,
+        width=pil.width,
+        height=pil.height,
+    )
+
+    common_postprocess(ctx, result, task, hf_ds, preds)
+
+
+# ---------------------------------------------------------------------------
+# Helper for resumable runs – determines whether a given sample has already
+# been processed in a previous (possibly interrupted) session.
+# ---------------------------------------------------------------------------
+
+
+def _skip_if_existing(batch_idx: int, main_run_dir: Path, cfg: Config) -> bool:  # noqa: D401
+    """Return True if *image_{batch_idx}/pred.jsonl* exists in *main_run_dir*.
+
+    The helper honours the **skip_existing** flag in the runtime *cfg*.
+    """
+
+    if not getattr(cfg, "skip_existing", False):
+        return False
+
+    pred_path = main_run_dir / f"image_{batch_idx}" / "pred.jsonl"
+    return pred_path.exists()
 
 
 if __name__ == "__main__":

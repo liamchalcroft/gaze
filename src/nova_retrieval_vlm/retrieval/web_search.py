@@ -533,4 +533,40 @@ class MedicalWebSearcher(WebSearcher):
             results = self._search_pubmed(query)
             return results
         finally:
-            self.max_results = old_max 
+            self.max_results = old_max
+    
+    def guidelines_search(self, query: str) -> List[WebSearchResult]:
+        """
+        Search for clinical guidelines and protocols.
+        
+        Args:
+            query: Search query for guidelines
+            
+        Returns:
+            List of web search results focused on clinical guidelines
+        """
+        return self.search_medical(query, search_type='guidelines')
+    
+    def research_search(self, query: str) -> List[WebSearchResult]:
+        """
+        Search for recent research and studies.
+        
+        Args:
+            query: Search query for research
+            
+        Returns:
+            List of web search results focused on recent research
+        """
+        return self.search_medical(query, search_type='research')
+    
+    def anatomy_search(self, query: str) -> List[WebSearchResult]:
+        """
+        Search for anatomical information.
+        
+        Args:
+            query: Search query for anatomical information
+            
+        Returns:
+            List of web search results focused on anatomy
+        """
+        return self.search_medical(query, search_type='anatomy') 

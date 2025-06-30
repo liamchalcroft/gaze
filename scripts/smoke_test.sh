@@ -17,12 +17,11 @@
 #   APPROACHES   – space-separated list of approaches (default: all 6 enhanced modes)
 #
 # Enhanced System Modes Tested:
-#   baseline        – Enhanced JSON format and clinical accuracy
-#   retrieval       – Knowledge synthesis and evidence integration
-#   multiturn       – Conditional continuation and systematic analysis
-#   visual          – Enhanced visual operations guidance
-#   web_search      – Query formulation strategies
-#   comprehensive   – All capabilities combined with optimization
+#   baseline        – Standard single-turn analysis with enhanced JSON format
+#   multiturn       – Chain of thought reasoning with up to 3 turns
+#   visual          – Chain of thought with visual operations (zoom, crop, contrast)
+#   web_search      – Chain of thought with web search capabilities
+#   comprehensive   – Chain of thought with both visual operations AND web search
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -31,15 +30,15 @@ set -euo pipefail
 NUM_IMAGES="${NUM_IMAGES:-3}"
 # Tasks to exercise.  Adjust via `TASKS="caption diagnosis" bash ...` if desired.
 TASKS=( ${TASKS:-caption diagnosis localization} )
-# Enhanced approaches to test.  All six optimized system modes:
-#   baseline        – Enhanced JSON format specification and clinical accuracy
-#   retrieval       – Knowledge synthesis and evidence integration
-#   multiturn       – Conditional continuation and systematic analysis
-#   visual          – Enhanced visual operations guidance
-#   web_search      – Query formulation strategies and current information
-#   comprehensive   – All capabilities combined with performance optimization
-# Override via `APPROACHES="baseline retrieval"` for subset testing.
-APPROACHES=( ${APPROACHES:-baseline retrieval multiturn visual web_search comprehensive} )
+# Enhanced approaches to test.  All five optimized system modes:
+#   baseline        – Standard single-turn analysis with enhanced JSON format
+#   multiturn       – Chain of thought reasoning with up to 3 turns
+#   visual          – Chain of thought with visual operations (zoom, crop, contrast)
+#   web_search      – Chain of thought with web search capabilities
+#   comprehensive   – Chain of thought with both visual operations AND web search
+# Override via `APPROACHES="baseline multiturn"` for subset testing.
+# APPROACHES=( ${APPROACHES:-baseline multiturn visual web_search comprehensive} )
+APPROACHES=( ${APPROACHES:-web_search comprehensive} )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./model_list.sh
@@ -77,29 +76,30 @@ for model in ${MODEL_LIST}; do
       extra_args=()
       case "$approach" in
         "baseline")
-          extra_args+=(strict_mode=true)
-          ;;
-        "retrieval")
-          extra_args+=(use_retrieval=true retrieval.type=hybrid "retrieval.top_k=5")
+          # Baseline uses standard single-turn analysis
+          extra_args=()
           ;;
         "multiturn")
-          extra_args+=(use_retrieval=true "multiturn_max_steps=3" retrieval.type=hybrid "retrieval.top_k=5")
+          # Multi-turn chain of thought reasoning (up to 3 turns)
+          extra_args=()
           ;;
         "visual")
-          extra_args+=(use_retrieval=true "visual_rounds=2" retrieval.type=hybrid "retrieval.top_k=5")
+          # Visual chain of thought with visual operations
+          extra_args=()
           ;;
         "web_search")
+          # Web search chain of thought with web search capabilities
           extra_args+=(use_web_search=true)
           ;;
         "comprehensive")
-          extra_args+=(use_retrieval=true use_web_search=true retrieval.type=hybrid "retrieval.top_k=8")
-          extra_args+=("multiturn_max_steps=3" "comprehensive_timeout=300")
+          # Comprehensive chain of thought with both visual operations AND web search
+          extra_args+=(use_web_search=true)
           ;;
         "visual_multiturn")
           # Legacy support - map to visual
           echo "   ⚠️  [smoke] Legacy approach 'visual_multiturn' mapped to 'visual'" 1>&2
           approach="visual"
-          extra_args+=(use_retrieval=true "visual_rounds=2" retrieval.type=hybrid "retrieval.top_k=5")
+          extra_args=()
           ;;
         *)
           echo "   ❌ [smoke] Unknown approach: $approach" 1>&2
@@ -118,18 +118,26 @@ for model in ${MODEL_LIST}; do
         echo "Task: $task"
         echo "Model: $model"
         echo "Approach: $approach"
-        echo "Enhanced Features: ${extra_args[*]}"
+        echo "Enhanced Features: ${extra_args[*]:-none}"
         echo "Max Iterations: $NUM_IMAGES"
       } > "$output_dir/smoke_config.txt"
 
-      if python -m nova_retrieval_vlm.cli \
-        task="$task" \
-        model.name="$model" \
-        approach="$approach" \
-        batch_size=1 \
-        max_iterations="$NUM_IMAGES" \
-        paths.output_dir="$output_dir" \
-        ${extra_args[@]+"${extra_args[@]}"} \
+      # Build command arguments
+      cmd_args=(
+        task="$task"
+        model.name="$model"
+        approach="$approach"
+        batch_size=1
+        max_iterations="$NUM_IMAGES"
+        paths.output_dir="$output_dir"
+      )
+      
+      # Add extra args if any
+      if [[ ${#extra_args[@]} -gt 0 ]]; then
+        cmd_args+=("${extra_args[@]}")
+      fi
+
+      if python -m nova_retrieval_vlm.cli "${cmd_args[@]}" \
         > "$output_dir/smoke_output.log" 2>&1; then
         
         echo "   ✅ [smoke] SUCCESS" 1>&2

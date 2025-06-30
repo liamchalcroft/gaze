@@ -1,50 +1,74 @@
 CRITICAL: You MUST localize abnormalities based ONLY on this single image. Do NOT request additional sequences, views, or clinical information. This is your FINAL response.
 
-Return **valid JSON only** matching this exact schema – no markdown, no commentary, no requests for more information:
+Return **valid JSON only** with this exact schema – no markdown, no commentary, no requests for more information:
 {
-  "image_id": "{{ image_id }}",
-  #  Bounding boxes MUST be absolute pixel coordinates as
-  #  [x1, y1, x2, y2] with:
-  #    • x1 = left,  y1 = top
-  #    • x2 = right, y2 = bottom
-  #    (therefore x2 > x1 and y2 > y1)
-  #  Do NOT output [x, y, width, height].
-  "boxes": [[x1, y1, x2, y2], ...],
-  "labels": ["label1", ...],
-  "scores": [0.9, ...]
+  "localizations": [
+    {
+      "finding": "<abnormality description>",
+      "bounding_box": [x1, y1, x2, y2],
+      "anatomical_location": "<precise anatomical description>",
+      "confidence": 0.85
+    }
+  ],
+  "image_dimensions": {"width": {{ width }}, "height": {{ height }}},
+  "coordinate_system": "absolute_pixels"
 }
 
-You are an expert neuroradiology assistant.
-Analyze the following MRI image to identify and localize ALL abnormalities.
+You are an expert neuroradiology assistant. This task is critical for patient care - please double-check your analysis.
 
-Image coordinate system:
-• Origin (0, 0) is the top-left corner.
-• Use normalized coordinates [0, 1] for x and y positions.
-• Convert to pixel coordinates based on image dimensions.
-• All coordinates must be within image bounds.
+**LOCALIZATION TASK:**
+Identify and localize anatomical structures and abnormalities in the brain MRI image.
 
-Response rules (STRICT):
-1. Return **valid JSON only** - no markdown, no extra keys, no commentary.
-2. Up to **3** bounding boxes. Omit detections with confidence < 0.05.
-3. Use exactly the label string "anomaly" for every box (single-class setup).
-4. If no abnormality is present, return empty lists for boxes, labels, scores.
-5. Boxes MUST follow the schema above (x1< x2, y1< y2). Width/height format is INVALID.
-6. Violating any rule will result in a score of 0.
-7. Do NOT mention needing additional sequences or views.
+**Localization Guidelines:**
+- Use absolute pixel coordinates [x1, y1, x2, y2] format for bounding boxes
+- (x1,y1) is top-left corner and (x2,y2) is bottom-right corner  
+- Provide precise anatomical descriptions for each finding
+- Include confidence levels for each localization (0.0-1.0)
+- Use correct anatomical terminology
+- Focus on clinically significant abnormalities
+- Describe findings in relation to anatomical landmarks
+- Ensure bounding boxes are accurate and tight around findings
+- Consider the clinical history context when identifying relevant findings
+
+**Coordinate System Rules:**
+- Origin (0, 0) is the top-left corner
+- All coordinates must be absolute pixel values
+- Ensure x2 > x1 and y2 > y1 for valid bounding boxes
+- All coordinates must be within image bounds
 
 CONSTRAINTS:
 - Base your analysis SOLELY on this single image
 - Provide your best localization with available information
 - This is your FINAL and ONLY opportunity to respond
+- If no abnormalities are present, return empty localizations array
+- Maximum 5 localizations to focus on most significant findings
 
-Example (illustrative - adapt to this image):
+**IMAGE CONTEXT:**
+- Image dimensions: {{ width }} × {{ height }} pixels
+- Image ID: {{ image_id }}
+- Valid coordinate ranges: x=[0, {{ width-1 }}], y=[0, {{ height-1 }}]
+
+Example (adapt to actual findings in the image):
 {
-  "image_id": {{ image_id }},
-  "boxes": [[34, 20, 78, 120], [90, 60, 140, 160]],
-  "labels": ["anomaly", "anomaly"],
-  "scores": [0.87, 0.46]
+  "localizations": [
+    {
+      "finding": "Hyperintense lesion with surrounding edema",
+      "bounding_box": [120, 85, 180, 140],
+      "anatomical_location": "Left temporal lobe, hippocampal region",
+      "confidence": 0.87
+    },
+    {
+      "finding": "Ventricular dilatation",
+      "bounding_box": [200, 60, 280, 120],
+      "anatomical_location": "Right lateral ventricle",
+      "confidence": 0.72
+    }
+  ],
+  "image_dimensions": {"width": 512, "height": 512},
+  "coordinate_system": "absolute_pixels"
 }
 
-Now respond with your JSON prediction only.
-
-Image: {{ img_path }} 
+Image: {{ img_path }}
+{% if clinical_history %}
+Clinical History: {{ clinical_history }}
+{% endif %} 

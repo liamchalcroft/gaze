@@ -46,7 +46,7 @@ for MODEL in "${MODELS_DEFAULT[@]}"; do
     echo "Configuration: approach=retrieval, task=${TASK}, model=${MODEL}" > "${RUN_DIR}/config.txt"
     echo "Enhanced features: knowledge synthesis, evidence integration, retrieval optimization" >> "${RUN_DIR}/config.txt"
     
-    python -m nova_retrieval_vlm.cli \
+    if python -m nova_retrieval_vlm.cli \
       task=${TASK} \
       approach=retrieval \
       use_retrieval=true \
@@ -57,10 +57,8 @@ for MODEL in "${MODELS_DEFAULT[@]}"; do
       max_iterations=${MAX_ITERS} \
       paths.data_dir="${DATA_DIR}" \
       paths.output_dir="${RUN_DIR}" \
-      strict_mode=true
-      
-    # Log completion status
-    if [ $? -eq 0 ]; then
+      skip_existing=true \
+      strict_mode=true; then
       echo "✓ SUCCESS" >> "${RUN_DIR}/status.txt"
     else
       echo "✗ FAILED" >> "${RUN_DIR}/status.txt"

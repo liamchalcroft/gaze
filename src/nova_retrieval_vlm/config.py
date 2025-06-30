@@ -57,3 +57,14 @@ class Config:
     use_web_search: bool = False  # Whether to enable web search capabilities
     multiturn_max_steps: int = 3  # Maximum steps for multiturn analysis
     comprehensive_timeout: int = 300  # Timeout for comprehensive analysis (seconds)
+
+    # --- New options for resumable runs -----------------------------------
+    # Path to an existing run directory created by a previous interrupted
+    # execution.  When provided, nova_retrieval_vlm.cli will *resume* in that
+    # directory instead of creating a fresh timestamped one.
+    resume_dir: Optional[str] = None
+
+    # Skip processing samples that already contain a saved prediction.  Works
+    # in tandem with *resume_dir* (or automatic directory detection) to
+    # continue long-running benchmarks that were interrupted half-way.
+    skip_existing: bool = True

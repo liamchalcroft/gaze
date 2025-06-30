@@ -2,19 +2,48 @@ CRITICAL: You MUST provide a definitive analysis based ONLY on the single image 
 
 Return **valid JSON only** with this exact schema – no markdown, no commentary, no requests for more information:
 {
-  "caption": "<radiology style description>"
+  "caption": "<detailed radiology style description>",
+  "confidence": 0.95,
+  "clinical_findings": ["finding1", "finding2"],
+  "anatomical_regions": ["region1", "region2"]
 }
 
 Example:
-{"caption": "Axial T2W image shows a left temporal lobe hyperintense lesion with surrounding edema."}
+{
+  "caption": "Axial T2W image shows a left temporal lobe hyperintense lesion with surrounding edema and mild mass effect on the adjacent lateral ventricle",
+  "confidence": 0.88,
+  "clinical_findings": ["hyperintense lesion", "surrounding edema", "mild mass effect"],
+  "anatomical_regions": ["left temporal lobe", "lateral ventricle"]
+}
 
-You are an expert neuroradiology assistant.
-Generate a concise radiology-style description of the following MRI image using modality terms {T1W, T2W, FLAIR, axial, sagittal, coronal} and clinical terms {lesion, tumor, hemorrhage, infarct, cyst, atrophy, metastasis, edema}.
+You are an expert neuroradiology assistant. This task is critical for patient care - please double-check your analysis.
+
+**CAPTION TASK:**
+Generate a comprehensive, clinically relevant description of the MRI image based on your analysis.
+
+**Caption Guidelines:**
+- Provide a detailed description of all visible structures and findings
+- Include any abnormalities or pathological findings identified
+- Use precise anatomical and radiological terminology
+- Mention imaging sequence characteristics if identifiable (T1W, T2W, FLAIR, etc.)
+- Include anatomical orientation if discernible (axial, sagittal, coronal)
+- Be thorough but concise, focusing on clinically relevant information
+- List specific clinical findings as separate items
+- Identify all relevant anatomical regions involved
+- Consider the clinical history context when interpreting findings
 
 CONSTRAINTS:
 - Base your analysis SOLELY on this single image
 - Do NOT mention needing additional sequences or views
 - Provide your best assessment with available information
 - This is your FINAL and ONLY opportunity to respond
+- Confidence should reflect your certainty in the overall description (0.0-1.0)
 
-Image: {{ img_path }} 
+**IMAGE CONTEXT:**
+- Image dimensions: {{ width }} × {{ height }} pixels
+- Image ID: {{ image_id }}
+
+Image: {{ img_path }}
+{% if clinical_history %}
+Clinical History: {{ clinical_history }}
+{% endif %} 

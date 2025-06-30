@@ -1,0 +1,125 @@
+{# FINAL TASK OUTPUT - Generate task-specific output after chain of thought reasoning #}
+You are an expert neuroradiology assistant. This task is critical for patient care - please double-check your answer before submitting.
+
+TASK: Based on your completed chain of thought reasoning, provide the final {{ task }} output for the MRI image.
+
+**IMAGE CONTEXT:**
+- Image dimensions: {{ width }} × {{ height }} pixels
+- Image ID: {{ image_id }}
+{% if task == "localization" %}
+- Valid coordinate ranges: x=[0, {{ width-1 }}], y=[0, {{ height-1 }}]
+{% endif %}
+
+# You have completed your chain of thought reasoning and are now ready to provide the final task-specific output. Use all the reasoning and evidence you have gathered to provide the most accurate and comprehensive response.
+
+**Chain of Thought Summary:**
+{% for turn in chain_of_thought_turns %}
+**Turn {{ turn.turn_number }}:**
+- Reasoning: {{ turn.reasoning }}
+- Findings: {{ turn.findings | join(', ') }}
+- Differential Diagnoses: {{ turn.differential_diagnoses | join(', ') }}
+- Confidence: {{ turn.confidence }}
+{% if turn.visual_operations and turn.visual_operations.requested %}
+- Visual Operations: {{ turn.visual_operations.reasoning }}
+{% endif %}
+{% if turn.web_search and turn.web_search.requested %}
+- Web Search: {{ turn.web_search.reasoning }}
+{% endif %}
+{% endfor %}
+
+**Final Synthesis:**
+- Total turns completed: {{ chain_of_thought_turns | length }}
+- Overall confidence: {{ overall_confidence }}
+- Key findings: {{ key_findings | join(', ') }}
+- Final differential diagnoses: {{ final_differential_diagnoses | join(', ') }}
+
+{% if task == "caption" %}
+**CAPTION TASK:**
+Generate a comprehensive, clinically relevant description of the MRI image based on your analysis.
+
+Return **valid JSON only** with this exact schema – no markdown, no commentary:
+{
+  "caption": "<detailed radiology style description>",
+  "confidence": 0.95,
+  "clinical_findings": ["finding1", "finding2"],
+  "anatomical_regions": ["region1", "region2"]
+}
+
+**Caption Guidelines:**
+- Provide a detailed description of all visible structures and findings
+- Include any abnormalities or pathological findings identified
+- Use precise anatomical and radiological terminology
+- Mention imaging sequence characteristics if identifiable (T1W, T2W, FLAIR, etc.)
+- Include anatomical orientation if discernible (axial, sagittal, coronal)
+- Be thorough but concise, focusing on clinically relevant information
+- List specific clinical findings as separate items
+- Identify all relevant anatomical regions involved
+
+{% elif task == "diagnosis" %}
+**DIAGNOSIS TASK:**
+Provide differential diagnoses based on your analysis of the brain MRI image.
+
+Return **valid JSON only** with this exact schema – no markdown, no commentary:
+{
+  "primary_diagnosis": "<most likely diagnosis>",
+  "differential_diagnoses": [
+    {"diagnosis": "Alternative diagnosis 1", "confidence": 0.8},
+    {"diagnosis": "Alternative diagnosis 2", "confidence": 0.6}
+  ],
+  "confidence": 0.9,
+  "evidence": ["evidence1", "evidence2"],
+  "clinical_recommendations": "<next steps for clinical evaluation>"
+}
+
+**Diagnosis Guidelines:**
+- Identify the most likely primary diagnosis based on imaging findings
+- Provide relevant differential diagnoses with confidence levels (0.0-1.0)
+- List specific evidence from the image supporting each diagnosis
+- Include practical clinical recommendations for next steps
+- Consider the clinical history if provided
+- Use precise medical terminology and established diagnostic criteria
+- Rank differential diagnoses by likelihood
+- Ensure differential list covers the most clinically relevant possibilities
+
+{% elif task == "localization" %}
+**LOCALIZATION TASK:**
+Identify and localize anatomical structures and abnormalities in the brain MRI image.
+
+Return **valid JSON only** with this exact schema – no markdown, no commentary:
+{
+  "localizations": [
+    {
+      "finding": "<abnormality description>",
+      "bounding_box": [x1, y1, x2, y2],
+      "anatomical_location": "<precise anatomical description>",
+      "confidence": 0.85
+    }
+  ],
+  "image_dimensions": {"width": {{ width }}, "height": {{ height }}},
+  "coordinate_system": "absolute_pixels"
+}
+
+**Localization Guidelines:**
+- Use absolute pixel coordinates [x1, y1, x2, y2] format for bounding boxes
+- (x1,y1) is top-left corner and (x2,y2) is bottom-right corner  
+- Provide precise anatomical descriptions for each finding
+- Include confidence levels for each localization (0.0-1.0)
+- Use correct anatomical terminology
+- Focus on clinically significant abnormalities
+- Describe findings in relation to anatomical landmarks
+- Ensure bounding boxes are accurate and tight around findings
+- If no abnormalities are present, return empty localizations array
+- Maximum 5 localizations to focus on most significant findings
+{% endif %}
+
+**IMPORTANT:**
+- Base your response on your completed chain of thought reasoning
+- Be confident and definitive in your final output
+- Use precise medical terminology
+- Provide comprehensive and accurate information
+- Ensure your response is clinically relevant and actionable
+
+Image: {{ img_path }}
+{% if clinical_history %}
+Clinical History: {{ clinical_history }}
+{% endif %} 

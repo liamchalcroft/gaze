@@ -47,22 +47,20 @@ for MODEL in "${MODELS_DEFAULT[@]}"; do
     echo "Configuration: approach=multiturn, task=${TASK}, model=${MODEL}" > "${RUN_DIR}/config.txt"
     echo "Enhanced features: conditional continuation, systematic analysis steps, performance optimization" >> "${RUN_DIR}/config.txt"
     
-    python -m nova_retrieval_vlm.cli \
+    if python -m nova_retrieval_vlm.cli \
       task=${TASK} \
       approach=multiturn \
       model.name="${MODEL}" \
       batch_size=${BATCH_SIZE} \
       max_iterations=${MAX_ITERS} \
-      use_retrieval=true \
+      use_retrieval=false \
       multiturn_max_steps=3 \
       retrieval.type=hybrid \
       retrieval.top_k=5 \
       paths.data_dir="${DATA_DIR}" \
       paths.output_dir="${RUN_DIR}" \
-      strict_mode=true
-      
-    # Log completion status
-    if [ $? -eq 0 ]; then
+      skip_existing=true \
+      strict_mode=true; then
       echo "✓ SUCCESS" >> "${RUN_DIR}/status.txt"
     else
       echo "✗ FAILED" >> "${RUN_DIR}/status.txt"
