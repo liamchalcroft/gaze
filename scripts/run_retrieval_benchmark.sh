@@ -24,7 +24,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-TASKS=(localization caption diagnosis)
+# TASKS=(localization caption diagnosis)
+TASKS=(localization caption)
 
 mkdir -p "${OUTPUT_DIR}"
 

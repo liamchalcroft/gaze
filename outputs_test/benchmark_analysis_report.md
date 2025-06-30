@@ -1,35 +1,39 @@
 # NOVA Benchmark Results Analysis Report
 
-**Generated:** 2025-06-30 15:10:41
+**Generated:** 2025-06-30 19:39:45
 
 ## Executive Summary
 
-- **Total benchmark combinations:** 6
+- **Total benchmark combinations:** 10
 - **Approaches evaluated:** 5 (baseline, comprehensive, multiturn, visual, web_search)
-- **Tasks:** 2 (caption, localization)
+- **Tasks:** 3 (caption, diagnosis, localization)
 - **Models:** 1 (google_gemini-2.5-flash-preview-05-20)
-- **Total samples processed:** 667
+- **Total samples processed:** 5,116
 - **Overall success rate:** 100.0%
 
 ## Best Performing Approaches by Task
 
 ### Caption
 - **Winner:** baseline
-- **Score:** 1.4 (BLEU)
+- **Score:** 1.7 (BLEU)
+
+### Diagnosis
+- **Winner:** baseline
+- **Score:** 0.0% (Accuracy)
 
 ### Localization
 - **Winner:** comprehensive
-- **Score:** 12.7% (IoU)
+- **Score:** 13.8% (IoU)
 
 ## Overall Approach Rankings
 
 Ranked by average normalized performance across all tasks:
 
-1. **Comprehensive** - 0.127
-2. **Visual** - 0.083
-3. **Web_Search** - 0.076
-4. **Multiturn** - 0.073
-5. **Baseline** - 0.040
+1. **Comprehensive** - 0.138
+2. **Web_Search** - 0.067
+3. **Visual** - 0.059
+4. **Multiturn** - 0.057
+5. **Baseline** - 0.030
 
 ## Task-Specific Performance Summary
 
@@ -37,17 +41,26 @@ Ranked by average normalized performance across all tasks:
 
 | Approach | BLEU | METEOR | BERT-F1 | RadGraph-F1 |
 |----------|------|--------|---------|-------------|
-| baseline | 1.365 | 17.616 | 0.028 | 0.039 |
+| baseline | 1.652 | 19.037 | 0.051 | 0.046 |
+| multiturn | 1.331 | 18.026 | -0.080 | 0.040 |
+| visual | 1.311 | 17.745 | -0.114 | 0.046 |
+| web_search | 1.525 | 20.210 | 0.042 | 0.040 |
+
+### Diagnosis
+
+| Approach | Top-1 | Top-5 | Coverage | Entropy |
+|----------|-------|-------|----------|---------|
+| baseline | 0.0% | 0.0% | 1.000 | -0.000 |
 
 ### Localization
 
 | Approach | mAP@30 | mAP@50 | mAP@50:95 | IoU |
 |----------|--------|--------|-----------|-----|
-| baseline | 21.1% | 6.6% | 2.1% | 6.6% |
-| comprehensive | 31.6% | 12.7% | 4.0% | 12.7% |
-| multiturn | 26.0% | 7.3% | 3.1% | 7.3% |
-| visual | 25.4% | 8.3% | 3.0% | 8.3% |
-| web_search | 29.3% | 7.6% | 2.7% | 7.6% |
+| baseline | 21.7% | 7.4% | 2.5% | 7.4% |
+| comprehensive | 30.6% | 13.8% | 5.0% | 13.8% |
+| multiturn | 28.5% | 10.1% | 3.7% | 10.1% |
+| visual | 27.3% | 10.5% | 4.0% | 10.5% |
+| web_search | 28.6% | 11.8% | 4.1% | 11.8% |
 
 ## Files Generated
 

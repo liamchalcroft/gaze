@@ -62,7 +62,7 @@ def aggregate_task_metrics(task: str, metrics_list: List[Dict[str, float]]) -> D
             "binary_f1": np.mean([m.get("caption_binary_f1", 0.0) for m in metrics_list]),
         }
     elif task == "diagnosis":
-        # For diagnosis, we use diagnosis-prefixed metrics
+        # For diagnosis, we use official NOVA protocol with GPT-4o semantic matching
         return {
             "accuracy": np.mean([m.get("diagnosis_top1", 0.0) for m in metrics_list]),
             "top1": np.mean([m.get("diagnosis_top1", 0.0) for m in metrics_list]),

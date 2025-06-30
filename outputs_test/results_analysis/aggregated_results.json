@@ -2,15 +2,49 @@
   "results": [
     {
       "approach": "web_search",
+      "task": "caption",
+      "model": "google_gemini-2.5-flash-preview-05-20",
+      "metrics": {
+        "bleu": 1.5249663207837363,
+        "bleu4": 1.5249663207837363,
+        "bert_f1": 0.041951134180029236,
+        "meteor": 20.209702590629597,
+        "radgraph_f1": 0.03994548496776805,
+        "modality_f1": 0.6291005291005289,
+        "clinical_f1": 0.3677248677248677,
+        "binary_f1": 0.8412698412698413
+      },
+      "sample_count": 63,
+      "failed_samples": 0
+    },
+    {
+      "approach": "web_search",
       "task": "localization",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "iou": 0.07575757575757576,
-        "map30": 0.29305430569432,
-        "map50": 0.07575757575757576,
-        "map50_95": 0.027272727792010162
+        "iou": 0.11784360286864368,
+        "map30": 0.28627294594468167,
+        "map50": 0.11784360286864368,
+        "map50_95": 0.04104205942135458
       },
-      "sample_count": 66,
+      "sample_count": 484,
+      "failed_samples": 0
+    },
+    {
+      "approach": "multiturn",
+      "task": "caption",
+      "model": "google_gemini-2.5-flash-preview-05-20",
+      "metrics": {
+        "bleu": 1.331328807559467,
+        "bleu4": 1.331328807559467,
+        "bert_f1": -0.08002710549919527,
+        "meteor": 18.02567364510146,
+        "radgraph_f1": 0.04021684507133162,
+        "modality_f1": 0.6775373323209315,
+        "clinical_f1": 0.3049354593773728,
+        "binary_f1": 0.8519362186788155
+      },
+      "sample_count": 439,
       "failed_samples": 0
     },
     {
@@ -18,12 +52,12 @@
       "task": "localization",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "iou": 0.07291666666666667,
-        "map30": 0.2604166666666667,
-        "map50": 0.07291666666666667,
-        "map50_95": 0.03125000046566129
+        "iou": 0.10101579043441666,
+        "map30": 0.2853500922758898,
+        "map50": 0.10101579043441666,
+        "map50_95": 0.03677792975050723
       },
-      "sample_count": 96,
+      "sample_count": 501,
       "failed_samples": 0
     },
     {
@@ -31,12 +65,12 @@
       "task": "localization",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "iou": 0.12686567164179105,
-        "map30": 0.31587113907088094,
-        "map50": 0.12686567164179105,
-        "map50_95": 0.040298508285586516
+        "iou": 0.13846873305131246,
+        "map30": 0.3061486120284186,
+        "map50": 0.13846873305131246,
+        "map50_95": 0.04977182630777165
       },
-      "sample_count": 67,
+      "sample_count": 614,
       "failed_samples": 0
     },
     {
@@ -44,16 +78,16 @@
       "task": "caption",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "bleu": 1.3648289088115488,
-        "bleu4": 1.3648289088115488,
-        "bert_f1": 0.028057298892618793,
-        "meteor": 17.615580794878454,
-        "radgraph_f1": 0.03945545549083919,
-        "modality_f1": 0.5801169590643276,
-        "clinical_f1": 0.4175438596491228,
-        "binary_f1": 0.6842105263157895
+        "bleu": 1.652301541976034,
+        "bleu4": 1.652301541976034,
+        "bert_f1": 0.05105691796556608,
+        "meteor": 19.03672108386592,
+        "radgraph_f1": 0.04620360506905289,
+        "modality_f1": 0.6199271172781107,
+        "clinical_f1": 0.2832597498160412,
+        "binary_f1": 0.7428256070640177
       },
-      "sample_count": 57,
+      "sample_count": 906,
       "failed_samples": 0
     },
     {
@@ -61,12 +95,43 @@
       "task": "localization",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "iou": 0.06565656565656566,
-        "map30": 0.2114044741950051,
-        "map50": 0.06565656565656566,
-        "map50_95": 0.021043771495321384
+        "iou": 0.07350380714796972,
+        "map30": 0.21731503906212454,
+        "map50": 0.07350380714796972,
+        "map50_95": 0.024545880303451707
       },
-      "sample_count": 297,
+      "sample_count": 381,
+      "failed_samples": 0
+    },
+    {
+      "approach": "baseline",
+      "task": "diagnosis",
+      "model": "google_gemini-2.5-flash-preview-05-20",
+      "metrics": {
+        "accuracy": 0.0,
+        "top1": 0.0,
+        "top5": 0.0,
+        "coverage": 1.0,
+        "entropy": -1.4428232973175175e-12
+      },
+      "sample_count": 906,
+      "failed_samples": 0
+    },
+    {
+      "approach": "visual",
+      "task": "caption",
+      "model": "google_gemini-2.5-flash-preview-05-20",
+      "metrics": {
+        "bleu": 1.3113771486864925,
+        "bleu4": 1.3113771486864925,
+        "bert_f1": -0.11363007459670418,
+        "meteor": 17.745183531025837,
+        "radgraph_f1": 0.04565858280304053,
+        "modality_f1": 0.6770602930871644,
+        "clinical_f1": 0.2790147152911069,
+        "binary_f1": 0.8330134357005758
+      },
+      "sample_count": 521,
       "failed_samples": 0
     },
     {
@@ -74,27 +139,28 @@
       "task": "localization",
       "model": "google_gemini-2.5-flash-preview-05-20",
       "metrics": {
-        "iou": 0.08333333333333333,
-        "map30": 0.25412541308573317,
-        "map50": 0.08333333333333333,
-        "map50_95": 0.02976190573757603
+        "iou": 0.10466760971221417,
+        "map30": 0.2731160165067527,
+        "map50": 0.10466760971221417,
+        "map50_95": 0.040205914663317986
       },
-      "sample_count": 84,
+      "sample_count": 301,
       "failed_samples": 0
     }
   ],
   "metadata": {
-    "total_results": 6,
+    "total_results": 10,
     "approaches": [
-      "multiturn",
+      "baseline",
       "comprehensive",
       "web_search",
-      "baseline",
-      "visual"
+      "visual",
+      "multiturn"
     ],
     "tasks": [
+      "localization",
       "caption",
-      "localization"
+      "diagnosis"
     ],
     "models": [
       "google_gemini-2.5-flash-preview-05-20"

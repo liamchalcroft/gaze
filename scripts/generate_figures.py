@@ -89,7 +89,9 @@ def create_performance_comparison_bar_chart(df: pd.DataFrame, output_file: Path)
         ax = axes[i]
         bars = ax.bar(approach_labels, values, color=colors[i], alpha=0.8, edgecolor='black', linewidth=0.5)
         
-        ax.set_title(metric, fontweight='bold')
+        # Add directional arrow to indicate higher is better
+        title_with_arrow = f"{metric} ↑"
+        ax.set_title(title_with_arrow, fontweight='bold')
         ax.set_ylabel('Score' if 'BLEU' in metric else 'Percentage (%)')
         ax.tick_params(axis='x', rotation=45)
         
@@ -153,9 +155,10 @@ def create_radar_plot(df: pd.DataFrame, output_file: Path) -> None:
         ax.plot(angles, values, 'o-', linewidth=2, label=label, color=color)
         ax.fill(angles, values, alpha=0.1, color=color)
     
-    # Customize the plot
+    # Customize the plot with directional arrows (all these metrics: higher is better)
+    metrics_with_arrows = [f"{metric} ↑" for metric in metrics]
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(metrics, fontsize=10)
+    ax.set_xticklabels(metrics_with_arrows, fontsize=10)
     ax.set_ylim(0, 100)
     ax.set_yticks([20, 40, 60, 80, 100])
     ax.set_yticklabels(['20%', '40%', '60%', '80%', '100%'])
@@ -185,19 +188,19 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
         # Prepare data based on task
         if task == 'localization':
             metrics = ['map30', 'map50', 'map50_95']
-            metric_labels = ['mAP@30', 'mAP@50', 'mAP@50:95']
+            metric_labels = ['mAP@30 ↑', 'mAP@50 ↑', 'mAP@50:95 ↑']
             ylabel = 'Mean Average Precision (%)'
             title = 'Localization Performance (Object Detection Metrics)'
         elif task == 'caption':
             metrics = ['bleu', 'meteor', 'bert_f1', 'radgraph_f1']
-            metric_labels = ['BLEU', 'METEOR', 'BERT-F1', 'RadGraph-F1']
+            metric_labels = ['BLEU ↑', 'METEOR ↑', 'BERT-F1 ↑', 'RadGraph-F1 ↑']
             ylabel = 'Score'
             title = 'Caption Generation Performance'
         else:  # diagnosis
             metrics = ['top1', 'top5', 'coverage', 'entropy']
-            metric_labels = ['Top-1', 'Top-5', 'Coverage', 'Entropy']
+            metric_labels = ['Top-1 ↑', 'Top-5 ↑', 'Coverage ↑', 'Entropy ↓']
             ylabel = 'Score'
-            title = 'Diagnosis Classification Performance'
+            title = 'Diagnosis Classification Performance (GPT-4o Semantic Matching)'
         
         # Create grouped bar chart - use consistent ordering
         all_approaches = ["baseline", "multiturn", "web_search", "visual", "comprehensive"]

@@ -114,13 +114,15 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
         })
     
     elif task == 'diagnosis':
-        from nova_retrieval_vlm.evaluation import evaluate_diagnosis  # type: ignore
+        from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official  # type: ignore
         pred_diags = [p.get('diagnosis', '') for p in preds]
         ref_diags = [r.get('diagnosis', '') for r in refs]
-        diag_scores = evaluate_diagnosis(pred_diags, ref_diags)
+        
+        # Use official NOVA evaluation protocol with GPT-4o semantic matching
+        diag_scores = evaluate_diagnosis_nova_official(pred_diags, ref_diags, use_gpt4o_matching=True)
         result_metrics.update({
             'diagnosis_top1': diag_scores['top1'],
-            'diagnosis_top5': diag_scores['top5'],
+            'diagnosis_top5': diag_scores['top5'], 
             'diagnosis_coverage': diag_scores['coverage'],
             'diagnosis_entropy': diag_scores['entropy'],
         })
