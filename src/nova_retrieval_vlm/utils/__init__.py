@@ -1,1 +1,1 @@
-"""Utility sub-package (shared helpers for IO, visualisation, etc.).""" 
+"""Utility sub-package (shared helpers for IO, visualisation, etc.)."""

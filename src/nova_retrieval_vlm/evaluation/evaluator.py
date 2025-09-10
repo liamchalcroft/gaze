@@ -13,7 +13,7 @@ supplied.
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Dict, Any
+from typing import Any
 
 import numpy as np
 
@@ -25,11 +25,11 @@ class EvaluationResult:
     """Container for basic evaluation outputs."""
 
     score: float
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 class Evaluator:  # pylint: disable=too-few-public-methods
-    """Extremely simple baseline evaluator.
+    r"""Extremely simple baseline evaluator.
 
     The implementation relies on *difflib.SequenceMatcher* to compute a token
     level similarity ratio between *prediction* and *reference* strings.  The
@@ -40,7 +40,9 @@ class Evaluator:  # pylint: disable=too-few-public-methods
     pipeline functional.
     """
 
-    def evaluate_prediction(self, prediction: str, reference: str, task: str = "general") -> Dict[str, float]:
+    def evaluate_prediction(
+        self, prediction: str, reference: str, task: str = "general"
+    ) -> dict[str, float]:
         """Return a single float score for *prediction* against *reference*.
 
         Parameters
@@ -67,4 +69,4 @@ class Evaluator:  # pylint: disable=too-few-public-methods
         # Guard against possible NaN (should not happen but keep defensive).
         ratio = float(ratio) if not np.isnan(ratio) else 0.0
 
-        return {"score": ratio} 
+        return {"score": ratio}

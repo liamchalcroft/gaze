@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,7 +10,10 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "src"))
 
-from nova_retrieval_vlm.config import Config, ModelConfig, PathsConfig, RetrievalConfig
+from nova_retrieval_vlm.config import Config
+from nova_retrieval_vlm.config import ModelConfig
+from nova_retrieval_vlm.config import PathsConfig
+from nova_retrieval_vlm.config import RetrievalConfig
 
 
 @pytest.fixture

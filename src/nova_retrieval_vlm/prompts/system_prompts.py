@@ -397,26 +397,27 @@ Remember: Your comprehensive analysis may directly impact patient care decisions
 # PROMPT SELECTION FUNCTION
 # =============================================================================
 
+
 def get_system_prompt(mode: str) -> str:
     """
     Get the appropriate system prompt for the specified mode.
-    
+
     Args:
         mode: The analysis mode ('baseline', 'multiturn', 'visual', 'retrieval', 'web_search', 'comprehensive')
-        
+
     Returns:
         The system prompt string for the specified mode
     """
     prompts = {
-        'baseline': BASELINE_SYSTEM_PROMPT,
-        'multiturn': MULTITURN_SYSTEM_PROMPT,
-        'visual': VISUAL_MULTITURN_SYSTEM_PROMPT,
-        'retrieval': RETRIEVAL_SYSTEM_PROMPT,
-        'web_search': WEB_SEARCH_SYSTEM_PROMPT,
-        'comprehensive': COMPREHENSIVE_SYSTEM_PROMPT,
+        "baseline": BASELINE_SYSTEM_PROMPT,
+        "multiturn": MULTITURN_SYSTEM_PROMPT,
+        "visual": VISUAL_MULTITURN_SYSTEM_PROMPT,
+        "retrieval": RETRIEVAL_SYSTEM_PROMPT,
+        "web_search": WEB_SEARCH_SYSTEM_PROMPT,
+        "comprehensive": COMPREHENSIVE_SYSTEM_PROMPT,
     }
-    
+
     if mode not in prompts:
         raise ValueError(f"Unknown mode: {mode}. Available modes: {list(prompts.keys())}")
-    
-    return prompts[mode] 
+
+    return prompts[mode]

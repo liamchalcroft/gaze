@@ -1,8 +1,10 @@
-from pathlib import Path
-import random
 import json
+import random
+from pathlib import Path
+
 from datasets import load_dataset
-from PIL import Image, ImageDraw
+from PIL import Image
+from PIL import ImageDraw
 
 
 def visualize_samples(
@@ -51,16 +53,20 @@ def visualize_samples(
             # Gold standard boxes
             bg = rec.get("bbox_gold", {})
             for x, y, w, h in zip(
-                bg.get("x", []), bg.get("y", []), bg.get("width", []), bg.get("height", [])
+                bg.get("x", []), bg.get("y", []), bg.get("width", []), bg.get("height", []), strict=False
             ):
                 draw.rectangle([x, y, x + w, y + h], outline="gold", width=2)
             # Rater boxes
             br = rec.get("bbox_raters", {})
             colors = ["#40E0D0", "#FA8072"]
             xs, ys, ws, hs, raters = (
-                br.get("x", []), br.get("y", []), br.get("width", []), br.get("height", []), br.get("rater", [])
+                br.get("x", []),
+                br.get("y", []),
+                br.get("width", []),
+                br.get("height", []),
+                br.get("rater", []),
             )
-            for j, (x, y, w, h) in enumerate(zip(xs, ys, ws, hs)):
+            for j, (x, y, w, h) in enumerate(zip(xs, ys, ws, hs, strict=False)):
                 color = colors[j % len(colors)]
                 draw.rectangle([x, y, x + w, y + h], outline=color, width=1)
                 label = raters[j] if j < len(raters) else ""
@@ -85,4 +91,4 @@ def visualize_samples(
             json.dump(meta, f, indent=2)
         print(f"Saved sample {idx} to {out_img}")
 
-    print("Visualization complete.") 
+    print("Visualization complete.")

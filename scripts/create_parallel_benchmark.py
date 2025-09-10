@@ -16,9 +16,9 @@ def read_existing_script(script_path: Path) -> str:
 
 def create_parallel_version(script_content: str, approach_name: str) -> str:
     """Transform a sequential script to a parallel version."""
-    
+
     # Template for parallel script
-    parallel_template = f'''#!/usr/bin/env bash
+    parallel_template = f"""#!/usr/bin/env bash
 set -euo pipefail
 
 # shellcheck source=_common_env.sh
@@ -62,17 +62,17 @@ echo "============================================"
 run_model_task() {{
     local MODEL="$1"
     local TASK="$2"
-    
+
     RUN_DIR="${{OUTPUT_DIR}}/${{TASK}}/$(echo "${{MODEL}}" | tr '/:' '_')"
     echo "▶ {approach_name} (parallel) | ${{TASK}} | ${{MODEL}} → ${{RUN_DIR}}"
-    
+
     # Create run directory and log configuration
     mkdir -p "${{RUN_DIR}}"
     echo "Configuration: approach={approach_name}, task=${{TASK}}, model=${{MODEL}}" > "${{RUN_DIR}}/config.txt"
     echo "Parallel execution enabled" >> "${{RUN_DIR}}/config.txt"
-    
+
     local log_file="${{RUN_DIR}}/execution.log"
-    
+
     if python -m nova_retrieval_vlm.cli \\
       task=${{TASK}} \\
       approach={approach_name} \\
@@ -107,62 +107,62 @@ run_parallel_jobs() {{
     local max_parallel="$1"
     shift
     local jobs=("$@")
-    
+
     local running_jobs=0
     local job_index=0
     declare -a pids=()
-    
+
     while [[ $job_index -lt ${{#jobs[@]}} ]]; do
         # Start new jobs up to the limit
         while [[ $running_jobs -lt $max_parallel && $job_index -lt ${{#jobs[@]}} ]]; do
             local job="${{jobs[$job_index]}}"
             IFS=':' read -r model task <<< "$job"
-            
+
             echo "Starting job $((job_index + 1))/${{#jobs[@]}}: ${{model}} | ${{task}}"
             run_model_task "$model" "$task" &
             local pid=$!
             pids+=("$pid:$job")
-            
+
             ((running_jobs++))
             ((job_index++))
             sleep 1  # Small delay to stagger startup
         done
-        
+
         # Wait for at least one job to finish
         local finished=false
         while [[ $finished == false ]]; do
             for i in "${{!pids[@]}}"; do
                 local pid_job="${{pids[$i]}}"
                 IFS=':' read -r pid job <<< "$pid_job"
-                
+
                 if ! kill -0 "$pid" 2>/dev/null; then
                     # Job finished
                     wait "$pid"
                     local exit_code=$?
-                    
+
                     IFS=':' read -r model task <<< "$job"
                     if [[ $exit_code -eq 0 ]]; then
                         echo "✅ Completed: ${{model}} | ${{task}}"
                     else
                         echo "❌ Failed: ${{model}} | ${{task}}"
                     fi
-                    
+
                     # Remove from array
                     unset 'pids[$i]'
                     pids=("${{pids[@]}}")  # Reindex array
-                    
+
                     ((running_jobs--))
                     finished=true
                     break
                 fi
             done
-            
+
             if [[ $finished == false ]]; then
                 sleep 2  # Check again in 2 seconds
             fi
         done
     done
-    
+
     # Wait for remaining jobs
     for pid_job in "${{pids[@]}}"; do
         IFS=':' read -r pid job <<< "$pid_job"
@@ -178,8 +178,8 @@ run_parallel_jobs "$MAX_PARALLEL_MODELS" "${{JOBS[@]}}"
 echo ""
 echo "✅ Parallel {approach_name} benchmark finished → ${{OUTPUT_DIR}}"
 echo "📊 Check individual logs in each run directory for details"
-'''
-    
+"""
+
     return parallel_template
 
 
@@ -187,17 +187,19 @@ def main():
     parser = argparse.ArgumentParser(description="Generate parallel versions of benchmark scripts")
     parser.add_argument("approach", help="Approach name (e.g., baseline, visual, multiturn)")
     parser.add_argument("--input-script", help="Input script to convert (optional)")
-    parser.add_argument("--output-dir", default="scripts", help="Output directory for generated script")
-    
+    parser.add_argument(
+        "--output-dir", default="scripts", help="Output directory for generated script"
+    )
+
     args = parser.parse_args()
-    
+
     approach_name = args.approach
     script_dir = Path(args.output_dir)
-    
+
     # Generate output filename
     output_filename = f"run_{approach_name}_benchmark_parallel.sh"
     output_path = script_dir / output_filename
-    
+
     if args.input_script:
         # Convert existing script
         input_path = Path(args.input_script)
@@ -207,24 +209,28 @@ def main():
         # Generate from template
         script_content = ""
         print(f"Generating new parallel script for approach: {approach_name}")
-    
+
     # Create parallel version
     parallel_content = create_parallel_version(script_content, approach_name)
-    
+
     # Extract specific CLI parameters if available from input script
     if script_content:
         # Look for approach-specific parameters in the original script
-        cli_matches = re.findall(r'python -m nova_retrieval_vlm\.cli.*?(?=;|$)', script_content, re.DOTALL)
+        cli_matches = re.findall(
+            r"python -m nova_retrieval_vlm\.cli.*?(?=;|$)", script_content, re.DOTALL
+        )
         if cli_matches:
             # Extract parameters from the last CLI call
-            last_cli = cli_matches[-1]
+            cli_matches[-1]
             # This is a simplified extraction - could be enhanced
-            print("Found CLI parameters in original script - you may want to customize these manually")
-    
+            print(
+                "Found CLI parameters in original script - you may want to customize these manually"
+            )
+
     # Write parallel script
     output_path.write_text(parallel_content)
     output_path.chmod(0o755)  # Make executable
-    
+
     print(f"✅ Generated parallel script: {output_path}")
     print(f"📝 Usage: ./{output_path} --help")
     print()
@@ -235,10 +241,10 @@ def main():
     print("4. Adjust --max-parallel-models based on system capacity")
     print()
     print("🔧 Example customization:")
-    print(f"   Edit the CLI parameters in the run_model_task() function")
-    print(f"   Add approach-specific configuration options")
-    print(f"   Modify the parallel job management logic if needed")
+    print("   Edit the CLI parameters in the run_model_task() function")
+    print("   Add approach-specific configuration options")
+    print("   Modify the parallel job management logic if needed")
 
 
 if __name__ == "__main__":
-    main() 
+    main()

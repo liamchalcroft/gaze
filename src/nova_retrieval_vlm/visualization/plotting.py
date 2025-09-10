@@ -1,15 +1,17 @@
 from __future__ import annotations
-from pathlib import Path
-from typing import List
+
 import json
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+from PIL import ImageDraw
 
 
 def overlay_boxes(
     image_path: Path,
-    boxes: List[List[float]],
-    labels: List[str] | None = None,
+    boxes: list[list[float]],
+    labels: list[str] | None = None,
     color: str = "red",
     width: int = 2,
 ) -> Image.Image:
@@ -75,23 +77,35 @@ def plot_overlays(
     """
     preds_file = run_dir / "preds.jsonl"
     refs_file = run_dir / "refs.jsonl"
-    preds = [json.loads(l) for l in open(preds_file)]
-    refs = [json.loads(l) for l in open(refs_file)]
+    with open(preds_file) as f:
+        preds = [json.loads(line) for line in f]
+    with open(refs_file) as f:
+        refs = [json.loads(line) for line in f]
     if sample_idx >= len(preds) or sample_idx >= len(refs):
         raise IndexError(f"sample_idx {sample_idx} out of range")
     pred = preds[sample_idx]
     ref = refs[sample_idx]
-    image_path = Path(pred.get('image_path', ''))
+    image_path = Path(pred.get("image_path", ""))
     if not image_path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
     # Draw ground truth and prediction
-    gt_img = overlay_boxes(image_path, ref.get('boxes', []), labels=[str(l) for l in ref.get('labels', [])], color="green")
-    pred_img = overlay_boxes(image_path, pred.get('boxes', []), labels=[str(l) for l in pred.get('labels', [])], color="red")
+    gt_img = overlay_boxes(
+        image_path,
+        ref.get("boxes", []),
+        labels=[str(l) for l in ref.get("labels", [])],
+        color="green",
+    )
+    pred_img = overlay_boxes(
+        image_path,
+        pred.get("boxes", []),
+        labels=[str(l) for l in pred.get("labels", [])],
+        color="red",
+    )
 
     # Combine side by side
     w, h = gt_img.size
-    canvas = Image.new('RGB', (w * 2 + 10, h))
+    canvas = Image.new("RGB", (w * 2 + 10, h))
     canvas.paste(gt_img, (0, 0))
     canvas.paste(pred_img, (w + 10, 0))
     draw = ImageDraw.Draw(canvas)
@@ -100,4 +114,4 @@ def plot_overlays(
 
     out_file = out_dir / f"overlay_{sample_idx}.png"
     out_dir.mkdir(parents=True, exist_ok=True)
-    canvas.save(out_file) 
+    canvas.save(out_file)

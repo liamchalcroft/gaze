@@ -1,82 +1,13 @@
-[tool.poetry]
-name = "nova-retrieval-vlm"
-version = "0.1.0"
-description = "Advanced retrieval-augmented medical VLM for NOVA dataset analysis with state-of-the-art reasoning capabilities"
-authors = ["Research Team <research@example.com>"]
-license = "MIT"
-readme = "README.md"
-packages = [{ include = "nova_retrieval_vlm", from = "src" }]
+# Legacy Poetry config - REMOVED in favor of uv/PEP 621
+# Modern dependency management should use uv and [project] section below
 
-[tool.poetry.dependencies]
-python = "^3.9"
-torch = "^2.0.0"
-torchvision = "^0.15.0"
-timm = "^0.9.7"
-haystack-ai = ">=2.12.0"
-transformers = "^4.30.0"
-datasets = "^2.12.0"
-hydra-core = "^1.3.0"
-omegaconf = "^2.3.0"
-loguru = "^0.7.0"
-pillow = "^10.0.0"
-requests = "^2.31.0"
-tqdm = "^4.65.0"
-numpy = "^1.24.0"
-pandas = "^2.0.0"
-scikit-learn = "^1.3.0"
-matplotlib = "^3.7.0"
-seaborn = "^0.12.0"
-wandb = "^0.15.0"
-tensorboard = "^2.13.0"
-jupyter = "^1.0.0"
-ipykernel = "^6.23.0"
-# Advanced retrieval dependencies
-sentence-transformers = "^2.2.2"
-pypdf = "^4.2.0"
-faiss-cpu = "^1.7.4"
-langchain = "^0.3.25"
-# Cross-encoder for re-ranking
-# Visual analysis dependencies
-opencv-python = "^4.8.0"
-scikit-image = "^0.21.0"
-scipy = "^1.11.0"
-# Medical image processing
-nibabel = "^5.1.0"
-pydicom = "^2.4.0"
-# API integrations
-openai = "^1.0.0"
-anthropic = "^0.25.0"
-# Evaluation metrics
-rouge-score = "^0.1.2"
-sacrebleu = "^2.3.1"
-bert-score = "^0.3.13"
-streamlit = "^1.28.0"
-readability-lxml = "^0.8.1"
-langdetect = "^1.0.9"
-simhash = "^2.1.2"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-pytest-cov = "^4.1.0"
-black = "^23.7.0"
-isort = "^5.12.0"
-ruff = "^0.0.280"
-mypy = "^1.5.0"
-pre-commit = "^3.3.0"
-
-[tool.poetry.scripts]
-nova-vlm = "nova_retrieval_vlm.cli:main"
-
-
-[tool.pdm.build]
-includes = ["src/nova_retrieval_vlm"]
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py310']
 
 [tool.isort]
 profile = "black"
@@ -84,84 +15,166 @@ line_length = 100
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "S",   # bandit (security)
+    "T20", # flake8-print
+    "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate (commented code)
+    "PL",  # pylint
+    "PERF", # perflint
+]
+ignore = [
+    "S101",  # assert usage (common in tests)
+    "PLR0913", # too many arguments
+    "PLR0912", # too many branches
+    "PLR0915", # too many statements
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001"]
+"scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510"]
+"run_tests.py" = ["T201", "S603", "PLW1510"]
+"src/nova_retrieval_vlm/visualization/**/*.py" = ["T201", "PTH123"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nova_retrieval_vlm"]
+force-single-line = true
+
+# Replace mypy with pyright for better performance and VS Code integration
+# mypy config kept for backwards compatibility during transition
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+strict = true
+
+# Modern pyright configuration
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.10"
+executionEnvironments = [
+    { root = "src" },
+    { root = "tests", extraPaths = ["src"] },
+    { root = "scripts", extraPaths = ["src"] }
+]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = true
+reportUnusedClass = true
+reportUnusedFunction = true
+reportDuplicateImport = true
+reportUnnecessaryTypeIgnoreComment = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --strict-markers"
+addopts = "-ra -q --strict-markers --tb=short"
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
 
-[tool.poetry.extras]
-vis = ["wandb", "neptune-client"]
+[tool.coverage.run]
+source = ["nova_retrieval_vlm"]
+omit = [
+    "*/tests/*",
+    "*/scripts/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
 
 [project]
 authors = [
     {name = "Research Team", email = "research@example.com"},
 ]
 license = {text = "MIT"}
-requires-python = "<4.0,>=3.9"
+requires-python = ">=3.10,<4.0"
 dependencies = [
-    "torch>=2.0.0,<3.0.0",
-    "torchvision>=0.15.0,<1.0.0",
-    "timm>=0.9.7",
-    "transformers<5.0.0,>=4.30.0",
-    "datasets<3.0.0,>=2.12.0",
-    "hydra-core<2.0.0,>=1.3.0",
-    "omegaconf<3.0.0,>=2.3.0",
-    "loguru<1.0.0,>=0.7.0",
-    "pillow<11.0.0,>=10.0.0",
-    "requests<3.0.0,>=2.31.0",
-    "tqdm<5.0.0,>=4.65.0",
-    "numpy<2.0.0,>=1.24.0",
-    "pandas<3.0.0,>=2.0.0",
-    "scikit-learn<2.0.0,>=1.3.0",
-    "matplotlib<4.0.0,>=3.7.0",
-    "seaborn<1.0.0,>=0.12.0",
-    "wandb<1.0.0,>=0.15.0",
-    "tensorboard<3.0.0,>=2.13.0",
-    "jupyter<2.0.0,>=1.0.0",
-    "ipykernel<7.0.0,>=6.23.0",
-    "sentence-transformers<3.0.0,>=2.2.2",
-    "pypdf<5.0.0,>=4.2.0",
-    "faiss-cpu<2.0.0,>=1.7.4",
-    "opencv-python<5.0.0,>=4.8.0",
-    "scikit-image<1.0.0,>=0.21.0",
-    "scipy<2.0.0,>=1.11.0",
-    "nibabel<6.0.0,>=5.1.0",
-    "pydicom<3.0.0,>=2.4.0",
-    "openai<2.0.0,>=1.0.0",
-    "anthropic<1.0.0,>=0.25.0",
-    "rouge-score<1.0.0,>=0.1.2",
-    "sacrebleu<3.0.0,>=2.3.1",
-    "bert-score<1.0.0,>=0.3.13",
-    "torchmetrics[detection]>=1.7.3",
-    "haystack-ai>=2.12.0",
-    "langchain>=0.3.25",
-    "streamlit>=1.28.0",
-    "langdetect>=1.0.9",
-    "simhash>=2.1.2",
-    "readability-lxml>=0.8.4.1",
-    "cryptography>=45.0.4",
-    "python-dotenv>=1.1.1",
-    "radgraph>=0.1.18",
-    "plotly>=6.2.0",
-    "bokeh>=3.4.3",
-    "fastapi>=0.115.14",
-    "uvicorn>=0.34.3",
-    "httpx>=0.28.1",
-    "more-itertools>=10.7.0",
-    "toolz>=1.0.0",
-    "cytoolz>=1.0.1",
-    "pydantic-settings>=2.10.1",
-    "python-multipart>=0.0.20",
-    "asyncio-mqtt>=0.16.2",
-    "aiofiles>=24.1.0",
+    "timm",
+    "datasets",
+    "torchmetrics[detection]",
+    # Configuration & Logging
+    "hydra-core",
+    "omegaconf",
+    "loguru",
+    "python-dotenv",
+    # Data & Scientific Computing
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "scikit-image",
+    # Image Processing & Medical
+    "pillow",
+    "opencv-python",
+    "nibabel",
+    "pydicom",
+    # Retrieval & Search
+    "haystack-ai",
+    "faiss-cpu",
+    "pypdf",
+    "langchain",
+    "readability-lxml",
+    "simhash",
+    "langdetect",
+    # API Clients
+    "openai",
+    "anthropic",
+    "httpx",
+    "requests",
+    # Evaluation Metrics
+    "rouge-score",
+    "sacrebleu",
+    "bert-score",
+    "radgraph",
+    # Visualization
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "streamlit",
+    # Utilities
+    "tqdm",
+    "more-itertools",
+    "toolz",
+    "pydantic-settings",
+    # Type Safety & Runtime Checking
+    "jaxtyping",
+    "beartype",
+    "jax[cpu]",
+    "torch>=2.7.1",
+    "torchvision>=0.22.1",
+    "transformers>=4.52.4",
+    "sentence-transformers>=5.1.0",
 ]
 name = "nova-retrieval-vlm"
 version = "0.1.0"
@@ -173,15 +186,15 @@ nova-vlm = "nova_retrieval_vlm.cli:main"
 
 [dependency-groups]
 dev = [
-    "pytest<8.0.0,>=7.4.0",
-    "pytest-cov<5.0.0,>=4.1.0",
-    "black<24.0.0,>=23.7.0",
-    "isort<6.0.0,>=5.12.0",
-    "ruff<1.0.0,>=0.0.280",
-    "mypy<2.0.0,>=1.5.0",
-    "pre-commit>=3.3.0,<4.0.0",
-    "jupyterlab>=4.4.3",
-    "ipywidgets>=8.1.7",
-    "pytest-asyncio>=0.23.8",
-    "pytest-mock>=3.14.1",
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "pytest-mock",
+    "pytest-benchmark",
+    "ruff",
+    "pyright",
+    "pre-commit",
+    "jupyterlab",
+    "ipywidgets",
+    "typeguard",
 ]

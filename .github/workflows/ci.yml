@@ -1,0 +1,221 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run tests daily at 6 AM UTC
+    - cron: '0 6 * * *'
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11']
+        exclude:
+          # Skip some combinations to reduce CI cost
+          - os: windows-latest
+            python-version: '3.9'
+          - os: macos-latest
+            python-version: '3.11'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+      with:
+        version: "latest"
+        
+    - name: Set up cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          uv-${{ runner.os }}-${{ matrix.python-version }}-
+          
+    - name: Install dependencies
+      run: |
+        uv pip install -e ".[dev,test]" --system
+        
+    - name: Run tests
+      env:
+        # Set dummy API keys for testing
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'dummy-key-for-testing' }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-testing' }}
+      run: |
+        pytest --cov=nova_retrieval_vlm --cov-report=xml --cov-report=term-missing
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+      
+    - name: Install dependencies
+      run: |
+        uv pip install -e ".[dev]" --system
+        
+    - name: Run linting
+      run: |
+        # Import sorting
+        isort --check-only --diff src/ tests/ scripts/
+        
+        # Code formatting
+        black --check --diff src/ tests/ scripts/
+        
+        # Linting
+        ruff check src/ tests/ scripts/
+        
+        # Type checking (allow some failures for now)
+        mypy src/ --ignore-missing-imports || true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install security tools
+      run: |
+        pip install safety bandit
+        
+    - name: Run safety check
+      run: |
+        safety check --json || true
+        
+    - name: Run bandit security check
+      run: |
+        bandit -r src/ -f json || true
+        
+    - name: Run secret scanning with truffleHog
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  docs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        pip install -e ".[docs]" || pip install -e .
+        
+    - name: Check documentation
+      run: |
+        # Verify all markdown files are valid
+        find docs/ -name "*.md" -exec markdown-link-check {} \; || true
+        
+        # Check if README is up to date
+        python -c "
+        import os
+        readme_path = 'README.md'
+        if os.path.exists(readme_path):
+            with open(readme_path) as f:
+                content = f.read()
+                if 'TODO' in content or 'FIXME' in content:
+                    print('Warning: README contains TODO or FIXME items')
+        "
+
+  performance:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        pip install -e .
+        
+    - name: Run performance benchmarks
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'dummy-key-for-testing' }}
+      run: |
+        # Run a small performance test
+        python -c "
+        from nova_retrieval_vlm.cli import robust_json_loads
+        import time
+        
+        # Benchmark JSON processing
+        test_json = '{\"boxes\": [[10, 20, 30, 40]], \"labels\": [\"anomaly\"]}'
+        start = time.time()
+        for _ in range(1000):
+            result = robust_json_loads(test_json)
+        end = time.time()
+        print(f'JSON processing: {(end-start)*1000:.2f}ms for 1000 iterations')
+        "
+
+  integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        pip install -e .
+        
+    - name: Run integration tests
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'dummy-key-for-testing' }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-testing' }}
+      run: |
+        pytest tests/test_cli_integration.py -v -m "not slow"

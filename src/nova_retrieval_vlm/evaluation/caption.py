@@ -1,17 +1,32 @@
 from __future__ import annotations
 
-from typing import Dict, Sequence
 import functools
+from collections.abc import Sequence
 
 import nltk
 import sacrebleu
-from bert_score import score as bert_score
 from loguru import logger
 from nltk.tokenize import word_tokenize
 from nltk.translate.meteor_score import meteor_score
 
+# Lazy import bert_score to avoid torch import issues during collection
+bert_score = None
+
 # Cache for NLTK downloads to avoid repeated downloads
 _nltk_downloaded = False
+
+
+def _get_bert_score():
+    """Lazy import bert_score to avoid torch import issues during collection."""
+    global bert_score
+    if bert_score is None:
+        try:
+            from bert_score import score as bert_score_module
+            bert_score = bert_score_module
+        except ImportError as e:
+            logger.warning(f"BERTScore not available: {e}")
+            bert_score = False
+    return bert_score
 
 
 def _ensure_nltk_downloads():
@@ -33,7 +48,7 @@ def _cached_word_tokenize(text: str) -> list:
 def evaluate_caption(
     preds: Sequence[str],
     refs: Sequence[str],
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Evaluate generated captions using SacreBLEU, BERTScore, and RadGraph F1.
 
@@ -46,42 +61,45 @@ def evaluate_caption(
     """
     # Ensure NLTK data is available
     _ensure_nltk_downloads()
-    
+
     # SacreBLEU
     bleu = sacrebleu.corpus_bleu(preds, [refs])
-    
+
     # BERTScore
-    P, R, F1 = bert_score(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
-    
+    bert_score_fn = _get_bert_score()
+    if bert_score_fn is False:
+        # BERTScore not available, return 0.0
+        bert_f1 = 0.0
+    else:
+        P, R, F1 = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
+        bert_f1 = float(F1.mean()) * 100
+
     # METEOR - Fixed calculation with caching
     # Prepare references for METEOR (list of lists format)
     ref_tokens = [[_cached_word_tokenize(ref)] for ref in refs]
     pred_tokens = [_cached_word_tokenize(pred) for pred in preds]
-    
+
     # Calculate METEOR scores
     meteor_scores = []
     for i, pred_token in enumerate(pred_tokens):
         try:
             score = meteor_score(ref_tokens[i], pred_token)
             meteor_scores.append(score)
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.warning(f"METEOR calculation failed for sample {i}: {e}")
             meteor_scores.append(0.0)
-    
+
     meteor = float(sum(meteor_scores) / len(meteor_scores) * 100) if meteor_scores else 0.0
 
     # RadGraph F1 (optional heavy dependency)
     radgraph_f1 = 0.0
-    try:
-        from radgraph.radgraph import F1RadGraph
+    # RadGraph F1 - fail fast if not available
+    from radgraph.radgraph import F1RadGraph
 
-        rg = F1RadGraph(reward_level="partial")
-        radgraph_f1, *_ = rg.forward(refs, preds)
-        radgraph_f1 = float(radgraph_f1)
-    except Exception as exc:  # pragma: no cover - optional
-        logger.warning("RadGraph evaluation unavailable: %s", exc)
-        radgraph_f1 = 0.0
-    
+    rg = F1RadGraph(reward_level="partial")
+    radgraph_f1, *_ = rg.forward(refs, preds)
+    radgraph_f1 = float(radgraph_f1)
+
     # Keyword-based F1
     modality_terms = {"flair", "t1", "t2", "t1w", "t2w", "axial", "sagittal", "coronal", "weighted"}
     clinical_terms = {
@@ -97,9 +115,9 @@ def evaluate_caption(
     mod_f1s = []
     clin_f1s = []
     abnormal_preds = 0
-    for p, r in zip(preds, refs):
-        p_words = set(w.lower().strip(".,") for w in p.split())
-        r_words = set(w.lower().strip(".,") for w in r.split())
+    for p, r in zip(preds, refs, strict=False):
+        p_words = {w.lower().strip(".,") for w in p.split()}
+        r_words = {w.lower().strip(".,") for w in r.split()}
         # modality
         p_mod = p_words & modality_terms
         r_mod = r_words & modality_terms

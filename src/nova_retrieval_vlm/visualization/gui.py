@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import streamlit as st
 from datasets import load_dataset
@@ -18,7 +18,7 @@ def load_nova_dataset() -> Any:
     return load_dataset("Ano-2090/Nova", split="test", trust_remote_code=False)
 
 
-def dummy_predict(model_name: str, image: Image.Image, task: str) -> Dict[str, Any]:
+def dummy_predict(model_name: str, image: Image.Image, task: str) -> dict[str, Any]:  # noqa: ARG001 - Placeholder function
     """Placeholder prediction function.
 
     This stub returns deterministic fake outputs so that the GUI remains
@@ -58,7 +58,7 @@ def dummy_predict(model_name: str, image: Image.Image, task: str) -> Dict[str, A
     return {}
 
 
-def render_prediction(result: Dict[str, Any], image_path: Path, task: str) -> None:
+def render_prediction(result: dict[str, Any], image_path: Path, task: str) -> None:
     """Render prediction outputs based on task."""
     if task == "localization":
         img = overlay_boxes(image_path, result.get("boxes", []), result.get("labels"))
@@ -115,9 +115,9 @@ def main() -> None:
     st.image(image, caption=record.get("filename", f"Sample {sample_idx}"))
 
     st.sidebar.header("Models")
-    model_names: List[str] = []
+    model_names: list[str] = []
     for i in range(3):
-        name = st.sidebar.text_input(f"Model {i+1}", value="model-name" if i == 0 else "")
+        name = st.sidebar.text_input(f"Model {i + 1}", value="model-name" if i == 0 else "")
         if name:
             model_names.append(name)
     tasks = st.sidebar.multiselect(

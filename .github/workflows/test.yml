@@ -1,0 +1,171 @@
+name: Comprehensive Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run nightly tests at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.9', '3.10', '3.11']
+        exclude:
+          # Reduce matrix size for faster CI
+          - os: macos-latest
+            python-version: '3.9'
+          - os: macos-latest 
+            python-version: '3.11'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+      with:
+        version: "latest"
+    
+    - name: Set up project
+      run: uv sync --all-extras --dev
+    
+    - name: Lint with ruff
+      run: |
+        uv run ruff check . --output-format=github
+        uv run ruff format --check .
+    
+    - name: Type check with pyright
+      run: uv run pyright
+      continue-on-error: true  # Don't fail CI on type errors initially
+    
+    - name: Run unit tests
+      run: |
+        uv run pytest tests/test_types.py tests/test_batch_processing_utils.py \
+          --cov=nova_retrieval_vlm \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --tb=short \
+          -v
+    
+    - name: Run processor tests
+      run: |
+        uv run pytest tests/test_processors.py \
+          --tb=short \
+          -v
+    
+    - name: Run integration tests
+      run: |
+        uv run pytest tests/test_integration.py \
+          --tb=short \
+          -v \
+          -m "not slow"
+    
+    - name: Run edge case tests (non-stress)
+      run: |
+        uv run pytest tests/test_edge_cases_and_stress.py \
+          --tb=short \
+          -v \
+          -m "not slow and not stress"
+    
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  stress-tests:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'schedule' || github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+    
+    - name: Set up project
+      run: uv sync --all-extras --dev
+    
+    - name: Run stress tests
+      run: |
+        uv run pytest tests/test_edge_cases_and_stress.py \
+          --tb=short \
+          -v \
+          -m "stress or slow" \
+          --maxfail=3
+      timeout-minutes: 30
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+    
+    - name: Set up project
+      run: uv sync --all-extras --dev
+    
+    - name: Run security checks with bandit
+      run: |
+        uv add bandit
+        uv run bandit -r src/ -f json -o bandit-report.json || true
+        uv run bandit -r src/ # Show results in terminal
+      continue-on-error: true
+    
+    - name: Upload security report
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-report
+        path: bandit-report.json
+
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v1
+    
+    - name: Set up project
+      run: uv sync --all-extras --dev
+    
+    - name: Check code complexity
+      run: |
+        uv add radon
+        uv run radon cc src/ -a -nc
+        uv run radon mi src/ -nc
+    
+    - name: Check documentation coverage
+      run: |
+        uv add interrogate
+        uv run interrogate src/ -v --fail-under=70
+      continue-on-error: true

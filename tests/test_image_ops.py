@@ -1,19 +1,20 @@
 import numpy as np
 from PIL import Image
 
-from nova_retrieval_vlm.visual_reasoning.image_ops import (
-    adjust_contrast,
-    apply_intensity_threshold,
-    crop_image,
-    zoom_image,
-)
+from nova_retrieval_vlm.visual_reasoning.image_ops import adjust_contrast
+from nova_retrieval_vlm.visual_reasoning.image_ops import apply_intensity_threshold
+from nova_retrieval_vlm.visual_reasoning.image_ops import crop_image
+from nova_retrieval_vlm.visual_reasoning.image_ops import zoom_image
 
 
 def test_zoom_and_crop(mock_image):
     img = Image.open(mock_image)
     zoomed = zoom_image(img, 2.0)
     assert zoomed.size[0] == img.size[0] * 2
-    cropped = crop_image(img, (10, 10, 50, 50))
+
+    # crop_image expects normalized coordinates (0-1)
+    # For a 100x100 image, (0.1, 0.1, 0.5, 0.5) = pixel coords (10, 10, 50, 50)
+    cropped = crop_image(img, (0.1, 0.1, 0.5, 0.5))
     assert cropped.size == (40, 40)
 
 

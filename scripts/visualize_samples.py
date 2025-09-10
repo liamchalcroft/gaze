@@ -6,17 +6,21 @@ Usage:
     python scripts/visualize_samples.py \
         [--num-samples 5] [--out-dir viz_samples] [--data-dir CACHE_DIR] [--trust-remote-code] [--overlay]
 """
+
 import argparse
-import random
 import json
+import random
 from pathlib import Path
-import PIL.Image
+
 import PIL.ExifTags
+import PIL.Image
+
 # Monkey-patch missing EXIF Base.Orientation tag for decoding
-PIL.ExifTags.Base = type('Base', (), {'Orientation': 274})
+PIL.ExifTags.Base = type("Base", (), {"Orientation": 274})
 PIL.Image.ExifTags = PIL.ExifTags
 from datasets import load_dataset
-from PIL import Image, ImageDraw
+from PIL import Image
+from PIL import ImageDraw
 
 
 def main():
@@ -24,24 +28,29 @@ def main():
         description="Save a few NOVA samples (images + metadata) via Hugging Face"
     )
     parser.add_argument(
-        "--num-samples", type=int, default=5,
-        help="Number of random samples to save"
+        "--num-samples", type=int, default=5, help="Number of random samples to save"
     )
     parser.add_argument(
-        "--out-dir", type=str, default=None,
-        help="Directory to save outputs (default: ./viz_samples)"
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Directory to save outputs (default: ./viz_samples)",
     )
     parser.add_argument(
-        "--data-dir", type=str, default=None,
-        help="Cache directory for Hugging Face dataset (optional)"
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Cache directory for Hugging Face dataset (optional)",
     )
     parser.add_argument(
-        "--trust-remote-code", action="store_true",
-        help="Pass trust_remote_code=True to load_dataset"
+        "--trust-remote-code",
+        action="store_true",
+        help="Pass trust_remote_code=True to load_dataset",
     )
     parser.add_argument(
-        "--overlay", action="store_true",
-        help="Overlay gold and rater bounding boxes on saved images"
+        "--overlay",
+        action="store_true",
+        help="Overlay gold and rater bounding boxes on saved images",
     )
     args = parser.parse_args()
 
@@ -50,7 +59,7 @@ def main():
         "Ano-2090/Nova",
         split="test",
         cache_dir=args.data_dir,
-        trust_remote_code=args.trust_remote_code
+        trust_remote_code=args.trust_remote_code,
     )
 
     total = len(ds)
@@ -75,16 +84,20 @@ def main():
             # Gold standard boxes
             bg = rec.get("bbox_gold", {})
             for x, y, w, h in zip(
-                bg.get("x", []), bg.get("y", []), bg.get("width", []), bg.get("height", [])
+                bg.get("x", []), bg.get("y", []), bg.get("width", []), bg.get("height", []), strict=False
             ):
                 draw.rectangle([x, y, x + w, y + h], outline="gold", width=2)
             # Rater boxes
             br = rec.get("bbox_raters", {})
             colors = ["#40E0D0", "#FA8072"]
             xs, ys, ws, hs, raters = (
-                br.get("x", []), br.get("y", []), br.get("width", []), br.get("height", []), br.get("rater", [])
+                br.get("x", []),
+                br.get("y", []),
+                br.get("width", []),
+                br.get("height", []),
+                br.get("rater", []),
             )
-            for j, (x, y, w, h) in enumerate(zip(xs, ys, ws, hs)):
+            for j, (x, y, w, h) in enumerate(zip(xs, ys, ws, hs, strict=False)):
                 color = colors[j % len(colors)]
                 draw.rectangle([x, y, x + w, y + h], outline=color, width=1)
                 label = raters[j] if j < len(raters) else ""
@@ -110,5 +123,6 @@ def main():
 
     print("Done.")
 
+
 if __name__ == "__main__":
-    main() 
+    main()

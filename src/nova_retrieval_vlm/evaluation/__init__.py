@@ -1,37 +1,25 @@
-# NOTE:
-# -----
-# Importing *bert_score*, *transformers*, or *sentence_transformers* at module
-# import time can drag in heavyweight dependencies such as **PyTorch** which
-# might not be present in all environments (e.g. during lightweight CI runs).
-# To make the library more robust we *lazy-load* the task-specific evaluator
-# only when it is actually required.
+"""Evaluation module for NOVA retrieval VLM tasks.
 
-from importlib import import_module
-from types import ModuleType
-from typing import Dict
+All dependencies are required - if they're missing, proper errors will be raised.
+No lazy loading or fallback mechanisms.
+"""
 
+from __future__ import annotations
 
-_TASK_TO_MODULE = {
-    "localization": "nova_retrieval_vlm.evaluation.detection",
-    "caption": "nova_retrieval_vlm.evaluation.caption",
-    "diagnosis": "nova_retrieval_vlm.evaluation.diagnosis",
-}
+import json
+from pathlib import Path
+
+from beartype import beartype
+
+# Lazy imports to avoid torch import issues during collection
+from nova_retrieval_vlm.evaluation.detection import evaluate_detection
+from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
 
 
-def _lazy_import(module_path: str, symbol: str):
-    """Import *symbol* from *module_path* on demand.
-
-    Returns *None* if the import fails so that the caller can decide how to
-    proceed (e.g. raise a clear error or return an empty metric dict).
-    """
-    try:
-        module: ModuleType = import_module(module_path)
-        return getattr(module, symbol)
-    except (ImportError, AttributeError):
-        return None
-
-
-def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> Dict[str, float]:
+@beartype
+def evaluate(
+    preds_jsonl: str | Path, refs_jsonl: str | Path, task: str = "localization"
+) -> dict[str, float]:
     """
     Run detection, caption, and diagnosis evaluation based on the specified task and return relevant scores.
 
@@ -43,119 +31,74 @@ def evaluate(preds_jsonl: str, refs_jsonl: str, task: str = 'localization') -> D
     Returns:
         Dictionary of metric names to scores relevant to the specified task.
     """
-    import json
-    preds = [json.loads(line) for line in open(preds_jsonl)]
-    refs = [json.loads(line) for line in open(refs_jsonl)]
+    preds_path = Path(preds_jsonl)
+    refs_path = Path(refs_jsonl)
+
+    if not preds_path.exists():
+        raise FileNotFoundError(f"Predictions file not found: {preds_path}")
+    if not refs_path.exists():
+        raise FileNotFoundError(f"References file not found: {refs_path}")
+
+    with preds_path.open() as f:
+        preds = [json.loads(line) for line in f]
+    with refs_path.open() as f:
+        refs = [json.loads(line) for line in f]
     result_metrics = {}
-    
-    if task == 'localization':
-        # Use the public helper so that unit tests can monkey-patch it easily.
-        from nova_retrieval_vlm.evaluation import evaluate_detection  # type: ignore
 
-        def _maybe_xywh_to_xyxy(boxes: list[list[float]]) -> list[list[float]]:
-            """Convert boxes from [x,y,w,h] to [x1,y1,x2,y2] **in place** if needed.
+    if task == "localization":
+        pred_boxes = [p.get("boxes", []) for p in preds]
+        ref_boxes = [r.get("boxes", []) for r in refs]
 
-            Heuristic: if any box has *x2 ≤ x1* or *y2 ≤ y1* we assume the
-            format is xywh.  We then transform all boxes accordingly.
-            """
-            if not boxes:
-                return boxes
-            flag_xywh = False
-            for b in boxes:
-                if len(b) == 4 and (b[2] <= b[0] or b[3] <= b[1]):
-                    flag_xywh = True
-                    break
-            if flag_xywh:
-                converted = [[x, y, x + w, y + h] for x, y, w, h in boxes]
-                return converted
-            return boxes
-
-        # Ensure consistent box format
-        for rec in preds:
-            rec['boxes'] = _maybe_xywh_to_xyxy(rec['boxes'])
-        for rec in refs:
-            rec['boxes'] = _maybe_xywh_to_xyxy(rec['boxes'])
-
-        import torch  # pylint: disable=import-error
-        pred_det = [
+        det_metrics = evaluate_detection(pred_boxes, ref_boxes)
+        result_metrics.update(
             {
-                'boxes': torch.tensor(p['boxes'], dtype=torch.float),
-                'labels': torch.tensor([0] * len(p.get('labels', [])), dtype=torch.long),
-                'scores': torch.tensor(p.get('scores', [1.0] * len(p['boxes'])), dtype=torch.float),
-            } for p in preds
-        ]
-        ref_det = [
-            {
-                'boxes': torch.tensor(r['boxes'], dtype=torch.float),
-                'labels': torch.tensor([0] * len(r.get('labels', [])), dtype=torch.long),
-                'scores': torch.tensor(r.get('scores', [1.0] * len(r['boxes'])), dtype=torch.float),
-            } for r in refs
-        ]
-        det_metrics = evaluate_detection(pred_det, ref_det)
-        result_metrics.update({
-            'detection_mAP30': det_metrics['map30'],
-            'detection_mAP50': det_metrics['map50'],
-            'detection_mAP50_95': det_metrics['map50_95'],
-        })
-    
-    elif task == 'caption':
-        from nova_retrieval_vlm.evaluation import evaluate_caption  # type: ignore
-        pred_caps = [p.get('caption', '') for p in preds]
-        ref_caps = [r.get('caption', '') for r in refs]
+                "detection_mAP30": det_metrics.get("mAP@0.3", 0.0),
+                "detection_mAP50": det_metrics.get("mAP@0.5", 0.0),
+                "detection_mAP75": det_metrics.get("mAP@0.75", 0.0),
+            }
+        )
+
+    elif task == "caption":
+        # Lazy import to avoid torch import issues
+        from nova_retrieval_vlm.evaluation.caption import evaluate_caption
+
+        pred_caps = [p.get("caption", "") for p in preds]
+        ref_caps = [r.get("caption", "") for r in refs]
+
         cap_scores = evaluate_caption(pred_caps, ref_caps)
-        result_metrics.update({
-            'caption_bleu': cap_scores['bleu'],
-            'caption_bert_f1': cap_scores['bert_f1'],
-            'caption_radgraph_f1': cap_scores['radgraph_f1'],
-            'caption_meteor': cap_scores['meteor'],
-            'caption_modality_f1': cap_scores['modality_f1'],
-            'caption_clinical_f1': cap_scores['clinical_f1'],
-            'caption_binary_f1': cap_scores['binary_f1'],
-        })
-    
-    elif task == 'diagnosis':
-        from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official  # type: ignore
-        pred_diags = [p.get('diagnosis', '') for p in preds]
-        ref_diags = [r.get('diagnosis', '') for r in refs]
-        
-        # Use official NOVA evaluation protocol with GPT-4o semantic matching
-        diag_scores = evaluate_diagnosis_nova_official(pred_diags, ref_diags, use_gpt4o_matching=True)
-        result_metrics.update({
-            'diagnosis_top1': diag_scores['top1'],
-            'diagnosis_top5': diag_scores['top5'], 
-            'diagnosis_coverage': diag_scores['coverage'],
-            'diagnosis_entropy': diag_scores['entropy'],
-        })
-    
+        result_metrics.update(
+            {
+                "caption_bleu": cap_scores.get("bleu", 0.0),
+                "caption_bert_f1": cap_scores.get("bert_f1", 0.0),
+                "caption_radgraph_f1": cap_scores.get("radgraph_f1", 0.0),
+                "caption_meteor": cap_scores.get("meteor", 0.0),
+                "caption_rouge_l": cap_scores.get("rouge_l", 0.0),
+            }
+        )
+
+    elif task == "diagnosis":
+        pred_diags = [p.get("diagnosis", "") for p in preds]
+        ref_diags = [r.get("diagnosis", "") for r in refs]
+
+        diag_scores = evaluate_diagnosis_nova_official(pred_diags, ref_diags)
+        result_metrics.update(
+            {
+                "diagnosis_accuracy": diag_scores.get("accuracy", 0.0),
+                "diagnosis_f1": diag_scores.get("f1", 0.0),
+                "diagnosis_precision": diag_scores.get("precision", 0.0),
+                "diagnosis_recall": diag_scores.get("recall", 0.0),
+            }
+        )
+
     else:
         raise ValueError(f"Unknown task: {task}")
-    
+
     return result_metrics
 
 
-# No fallback stubs - missing optional dependencies will raise the original
-# ImportError so that issues surface immediately during testing/runs.
-
-# ---------------------------------------------------------------------------
-# Public wrapper utilities – provide stable symbols for `pytest.patch`
-# ---------------------------------------------------------------------------
-
-def evaluate_detection(preds, refs):  # noqa: D401, E501 – thin passthrough
-    """Delegate to `evaluation.detection.evaluate_detection` lazily."""
-    from nova_retrieval_vlm.evaluation.detection import evaluate_detection as _ed
-
-    return _ed(preds, refs)
-
-
-def evaluate_caption(pred_captions, ref_captions):  # noqa: D401,E501
-    """Delegate to `evaluation.caption.evaluate_caption` lazily."""
-    from nova_retrieval_vlm.evaluation.caption import evaluate_caption as _ec
-
-    return _ec(pred_captions, ref_captions)
-
-
-def evaluate_diagnosis(pred_diags, ref_diags):  # noqa: D401,E501
-    """Delegate to `evaluation.diagnosis.evaluate_diagnosis` lazily."""
-    from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis as _edx
-
-    return _edx(pred_diags, ref_diags) 
+# Public API
+__all__ = [
+    "evaluate",
+    "evaluate_detection",
+    "evaluate_diagnosis_nova_official",
+]

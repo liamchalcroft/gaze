@@ -6,12 +6,12 @@ for system prompts, following best practices for prompt management in GenAI appl
 Based on the approach described in the Jinja2 prompting guide.
 """
 
-import os
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from jinja2 import Environment, FileSystemLoader, Template
-from loguru import logger
+from typing import Any
+
+from jinja2 import Environment
+from jinja2 import FileSystemLoader
 
 from .prompt_loader import load_jinja_template
 
@@ -19,23 +19,23 @@ from .prompt_loader import load_jinja_template
 def sanitize_input(value: Any) -> Any:
     """
     Sanitize input values to prevent injection attacks.
-    
+
     Args:
         value: Input value to sanitize
-        
+
     Returns:
         Sanitized value
     """
     if isinstance(value, str):
         # Remove potentially dangerous characters and patterns
         # Keep alphanumeric, spaces, basic punctuation, and medical terms
-        sanitized = re.sub(r'[{}"\\\n\r\t]', ' ', value)
-        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
-        
+        sanitized = re.sub(r'[{}"\\\n\r\t]', " ", value)
+        sanitized = re.sub(r"\s+", " ", sanitized).strip()
+
         # Limit length to prevent extremely long inputs
         if len(sanitized) > 10000:
             sanitized = sanitized[:10000] + "... [truncated]"
-        
+
         return sanitized
     elif isinstance(value, dict):
         return {k: sanitize_input(v) for k, v in value.items()}
@@ -45,77 +45,70 @@ def sanitize_input(value: Any) -> Any:
         return value
 
 
-class EnhancedPromptLoader:
+class JinjaTemplatePromptLoader:
     """
-    Enhanced prompt loader that combines system prompts (Jinja templates) 
+    Jinja template-based prompt loader that combines system prompts
     with task-specific prompts for comprehensive medical image analysis.
     """
-    
-    def __init__(self, prompts_dir: Optional[Path] = None):
+
+    def __init__(self, prompts_dir: Path | None = None):
         """
         Initialize the enhanced prompt loader.
-        
+
         Args:
             prompts_dir: Directory containing prompt templates. Defaults to module directory.
         """
         if prompts_dir is None:
             prompts_dir = Path(__file__).parent
-        
+
         self.prompts_dir = prompts_dir
         self.env = Environment(loader=FileSystemLoader(str(prompts_dir)))
-        
+
         # Available system prompt modes
         self.system_modes = {
-            'baseline': 'system/baseline.jinja',
-            'multiturn': 'system/multiturn.jinja', 
-            'visual': 'system/visual.jinja',
-            'retrieval': 'system/retrieval.jinja',
-            'web_search': 'system/web_search.jinja',
-            'comprehensive': 'system/comprehensive.jinja',
+            "baseline": "system/baseline.jinja",
+            "multiturn": "system/multiturn.jinja",
+            "visual": "system/visual.jinja",
+            "retrieval": "system/retrieval.jinja",
+            "web_search": "system/web_search.jinja",
+            "comprehensive": "system/comprehensive.jinja",
         }
-    
-    def get_system_prompt(
-        self, 
-        mode: str, 
-        context: Optional[Dict[str, Any]] = None
-    ) -> str:
+
+    def get_system_prompt(self, mode: str, context: dict[str, Any] | None = None) -> str:
         """
         Load and render a system prompt template for the specified mode.
-        
+
         Args:
             mode: The analysis mode ('baseline', 'multiturn', 'visual', etc.)
             context: Additional context variables for the template
-            
+
         Returns:
             Rendered system prompt string
         """
         if mode not in self.system_modes:
-            raise ValueError(f"Unknown mode: {mode}. Available modes: {list(self.system_modes.keys())}")
-        
+            raise ValueError(
+                f"Unknown mode: {mode}. Available modes: {list(self.system_modes.keys())}"
+            )
+
         template_name = self.system_modes[mode]
         context = context or {}
-        
-        try:
-            template = self.env.get_template(template_name)
-            return template.render(**context)
-        except Exception as e:
-            logger.error(f"Failed to load system prompt template {template_name}: {e}")
-            # Fallback to basic system prompt
-            return self._get_fallback_system_prompt(mode)
-    
+
+        template = self.env.get_template(template_name)
+        return template.render(**context)
+
     def create_enhanced_prompt(
         self,
         template_name: str,
         image_path: Path,
-        passages: List[str],
-        metadata: Dict[str, Any],
-        mode: Optional[str] = None,
-        system_context: Optional[Dict[str, Any]] = None,
-        system_prompt_override: Optional[str] = None,
+        passages: list[str],
+        metadata: dict[str, Any],
+        mode: str | None = None,
+        system_context: dict[str, Any] | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         """
         Create an enhanced prompt combining system prompt with task-specific prompt.
-        
+
         Args:
             template_name: Name of the task-specific Jinja template
             image_path: Path to the image file
@@ -124,7 +117,7 @@ class EnhancedPromptLoader:
             mode: Analysis mode (auto-detected if None)
             system_context: Additional context for system prompt
             system_prompt_override: Custom system prompt to override default
-            
+
         Returns:
             Combined enhanced prompt string
         """
@@ -132,11 +125,11 @@ class EnhancedPromptLoader:
         sanitized_passages = sanitize_input(passages)
         sanitized_metadata = sanitize_input(metadata)
         sanitized_system_context = sanitize_input(system_context) if system_context else None
-        
+
         # Auto-detect mode if not provided
         if mode is None:
             mode = self._detect_mode_from_template(template_name)
-        
+
         # Get system prompt
         if system_prompt_override:
             system_prompt = system_prompt_override
@@ -144,22 +137,24 @@ class EnhancedPromptLoader:
             system_context_safe = sanitized_system_context or {}
             # Add retrieval context if passages are provided
             if sanitized_passages:
-                system_context_safe['use_retrieval'] = True
+                system_context_safe["use_retrieval"] = True
             system_prompt = self.get_system_prompt(mode, system_context_safe)
-        
+
         # Load task-specific prompt with sanitized inputs
-        task_prompt = load_jinja_template(template_name, image_path, sanitized_passages, sanitized_metadata)
-        
+        task_prompt = load_jinja_template(
+            template_name, image_path, sanitized_passages, sanitized_metadata
+        )
+
         # Combine prompts based on mode
         return self._combine_prompts(system_prompt, task_prompt, mode)
-    
+
     def _detect_mode_from_template(self, template_name: str) -> str:
         """
         Detect the appropriate mode from template name.
-        
+
         Args:
             template_name: Name of the Jinja template
-            
+
         Returns:
             Detected mode string
         """
@@ -173,47 +168,47 @@ class EnhancedPromptLoader:
             return "baseline"
         else:
             return "baseline"
-    
+
     def _combine_prompts(self, system_prompt: str, task_prompt: str, mode: str) -> str:
         """
         Combine system prompt with task-specific prompt based on mode.
-        
+
         Args:
             system_prompt: The system prompt
             task_prompt: The task-specific prompt
             mode: Analysis mode
-            
+
         Returns:
             Combined prompt string
         """
         if mode == "baseline":
             return f"{system_prompt}\n\n{task_prompt}"
-        
+
         elif mode == "multiturn":
             return f"{system_prompt}\n\n<task_instructions>\n{task_prompt}\n</task_instructions>\n\nBegin your multi-turn analysis process."
-        
+
         elif mode == "visual":
             return f"{system_prompt}\n\n<visual_analysis_instructions>\n{task_prompt}\n</visual_analysis_instructions>\n\nBegin your visual analysis with appropriate operations."
-        
+
         elif mode == "retrieval":
             return f"{system_prompt}\n\n<retrieval_analysis_instructions>\n{task_prompt}\n</retrieval_analysis_instructions>\n\nBegin your retrieval-augmented analysis."
-        
+
         elif mode == "web_search":
             return f"{system_prompt}\n\n<web_search_instructions>\n{task_prompt}\n</web_search_instructions>\n\nBegin your web search-augmented analysis."
-        
+
         elif mode == "comprehensive":
             return f"{system_prompt}\n\n<comprehensive_analysis_instructions>\n{task_prompt}\n</comprehensive_analysis_instructions>\n\nBegin your comprehensive analysis using all available capabilities."
-        
+
         else:
             return f"{system_prompt}\n\n{task_prompt}"
-    
+
     def _get_fallback_system_prompt(self, mode: str) -> str:
         """
         Get a fallback system prompt if template loading fails.
-        
+
         Args:
             mode: Analysis mode
-            
+
         Returns:
             Fallback system prompt string
         """
@@ -258,34 +253,49 @@ When analyzing medical images, follow these critical guidelines:
 Remember: Your analysis may directly impact patient care decisions. Always prioritize accuracy, thoroughness, and clinical relevance in your assessments."""
 
         if mode == "multiturn":
-            return base_prompt + "\n\nThis is a multi-turn analysis mode. Engage in iterative, step-by-step reasoning."
+            return (
+                base_prompt
+                + "\n\nThis is a multi-turn analysis mode. Engage in iterative, step-by-step reasoning."
+            )
         elif mode == "visual":
-            return base_prompt + "\n\nThis is a visual analysis mode. You can request visual operations and web searches."
+            return (
+                base_prompt
+                + "\n\nThis is a visual analysis mode. You can request visual operations and web searches."
+            )
         elif mode == "retrieval":
-            return base_prompt + "\n\nThis is a retrieval-augmented analysis mode. Use retrieved medical information."
+            return (
+                base_prompt
+                + "\n\nThis is a retrieval-augmented analysis mode. Use retrieved medical information."
+            )
         elif mode == "web_search":
-            return base_prompt + "\n\nThis is a web search-augmented analysis mode. Access current medical information."
+            return (
+                base_prompt
+                + "\n\nThis is a web search-augmented analysis mode. Access current medical information."
+            )
         elif mode == "comprehensive":
-            return base_prompt + "\n\nThis is a comprehensive analysis mode. Use all available capabilities."
+            return (
+                base_prompt
+                + "\n\nThis is a comprehensive analysis mode. Use all available capabilities."
+            )
         else:
             return base_prompt
-    
-    def list_available_modes(self) -> List[str]:
+
+    def list_available_modes(self) -> list[str]:
         """
         List all available system prompt modes.
-        
+
         Returns:
             List of available mode names
         """
         return list(self.system_modes.keys())
-    
+
     def validate_mode(self, mode: str) -> bool:
         """
         Validate if a mode is supported.
-        
+
         Args:
             mode: Mode to validate
-            
+
         Returns:
             True if mode is supported, False otherwise
         """
@@ -295,32 +305,33 @@ Remember: Your analysis may directly impact patient care decisions. Always prior
 # Global instance for easy access
 _enhanced_loader = None
 
-def get_enhanced_loader() -> EnhancedPromptLoader:
+
+def get_jinja_template_loader() -> JinjaTemplatePromptLoader:
     """
     Get the global enhanced prompt loader instance.
-    
+
     Returns:
-        EnhancedPromptLoader instance
+        JinjaTemplatePromptLoader instance
     """
     global _enhanced_loader
     if _enhanced_loader is None:
-        _enhanced_loader = EnhancedPromptLoader()
+        _enhanced_loader = JinjaTemplatePromptLoader()
     return _enhanced_loader
 
 
 # Convenience functions for backward compatibility
-def load_enhanced_prompt(
+def load_jinja_template_prompt(
     template_name: str,
     image_path: Path,
-    passages: List[str],
-    metadata: Dict[str, Any],
-    mode: Optional[str] = None,
-    system_context: Optional[Dict[str, Any]] = None,
-    system_prompt_override: Optional[str] = None,
+    passages: list[str],
+    metadata: dict[str, Any],
+    mode: str | None = None,
+    system_context: dict[str, Any] | None = None,
+    system_prompt_override: str | None = None,
 ) -> str:
     """
     Load an enhanced prompt with system prompt integration.
-    
+
     Args:
         template_name: Name of the task-specific Jinja template
         image_path: Path to the image file
@@ -329,11 +340,11 @@ def load_enhanced_prompt(
         mode: Analysis mode (auto-detected if None)
         system_context: Additional context for system prompt
         system_prompt_override: Custom system prompt to override default
-        
+
     Returns:
         Enhanced prompt string
     """
-    loader = get_enhanced_loader()
+    loader = get_jinja_template_loader()
     return loader.create_enhanced_prompt(
         template_name=template_name,
         image_path=image_path,
@@ -345,16 +356,16 @@ def load_enhanced_prompt(
     )
 
 
-def get_system_prompt(mode: str, context: Optional[Dict[str, Any]] = None) -> str:
+def get_system_prompt(mode: str, context: dict[str, Any] | None = None) -> str:
     """
     Get a system prompt for the specified mode.
-    
+
     Args:
         mode: Analysis mode
         context: Additional context variables
-        
+
     Returns:
         System prompt string
     """
-    loader = get_enhanced_loader()
-    return loader.get_system_prompt(mode, context) 
+    loader = get_jinja_template_loader()
+    return loader.get_system_prompt(mode, context)

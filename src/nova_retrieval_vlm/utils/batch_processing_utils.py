@@ -15,10 +15,9 @@ modes and reduces maintenance overhead.
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
 from loguru import logger
 
@@ -26,7 +25,7 @@ from loguru import logger
 
 
 @dataclass
-class BatchCtx:  # noqa: D101 – simple data container
+class BatchContext:  # noqa: D101 – simple data container
     idx: int
     folder: Path
     img_path: Path  # Path to the persisted PNG
@@ -38,6 +37,7 @@ class BatchCtx:  # noqa: D101 – simple data container
 # Core helpers (moved from cli.py verbatim where relevant)
 # ---------------------------------------------------------------------------
 
+
 def convert_localization_schema(result: dict) -> None:
     """Convert new localization schema to legacy format for backward compatibility."""
     if "localizations" in result and "boxes" not in result:
@@ -45,29 +45,30 @@ def convert_localization_schema(result: dict) -> None:
         boxes = []
         labels = []
         scores = []
-        
+
         for loc in localizations:
             if "bounding_box" in loc:
                 boxes.append(loc["bounding_box"])
                 labels.append("anomaly")  # Standard label for compatibility
                 scores.append(loc.get("confidence", 1.0))
-        
+
         result["boxes"] = boxes
         result["labels"] = labels
         result["scores"] = scores
 
-def ensure_evaluation_keys(result: dict) -> None:  # noqa: D401
+
+def normalize_localization_result(result: dict) -> None:  # noqa: D401
     """Add *boxes* / *labels* / *scores* keys if missing (in-place)."""
-    
+
     # First convert new schema to legacy if needed
     convert_localization_schema(result)
 
-    if "boxes" not in result:
+    if "boxes" not in result or result["boxes"] is None:
         result["boxes"] = []
-    if "labels" not in result:
+    if "labels" not in result or result["labels"] is None:
         result["labels"] = []
-    if "scores" not in result:
-        result["scores"] = [1.0] * len(result["boxes"])
+    if "scores" not in result or result["scores"] is None:
+        result["scores"] = []
 
     # Standardise labels & scores length if caller only provided boxes
     boxes_len = len(result["boxes"])
@@ -93,7 +94,7 @@ def save_reference(img_folder: Path, batch_idx: int, hf_ds) -> None:  # noqa: D4
             bg.get("x", []),
             bg.get("y", []),
             bg.get("width", []),
-            bg.get("height", []),
+            bg.get("height", []), strict=False,
         )
     ]
     labels = ["anomaly"] * len(boxes)
@@ -112,11 +113,11 @@ def save_reference(img_folder: Path, batch_idx: int, hf_ds) -> None:  # noqa: D4
         fr.write(json.dumps(ref_data) + "\n")
 
 
-def _iter_boxes_generic(raw_boxes: List[Any]):
+def _iter_boxes_generic(raw_boxes: list[Any]):
     """Yield boxes in [x1,y1,x2,y2] regardless of input encoding."""
 
     for b in raw_boxes:
-        if isinstance(b, (list, tuple)) and len(b) == 4:
+        if isinstance(b, list | tuple) and len(b) == 4:
             yield b
         elif isinstance(b, dict):
             if all(k in b for k in ("x1", "y1", "x2", "y2")):
@@ -125,10 +126,10 @@ def _iter_boxes_generic(raw_boxes: List[Any]):
                 yield [b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]]
 
 
-def draw_gt_vs_pred_boxes(
+def draw_ground_truth_vs_predicted_boxes(
     img_path: Path,
-    gt_boxes: List[Any],
-    pred_boxes: List[Any],
+    gt_boxes: list[Any],
+    pred_boxes: list[Any],
     out_path: Path,
 ) -> None:
     """Create *out_path* PNG with GT (green) and pred (red) boxes."""
@@ -137,9 +138,9 @@ def draw_gt_vs_pred_boxes(
 
     matplotlib.use("Agg")  # headless backend
     import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    from matplotlib.lines import Line2D
+    from matplotlib import patches
     from matplotlib import patheffects as pe
+    from matplotlib.lines import Line2D
     from PIL import Image
 
     img = Image.open(img_path).convert("L")
@@ -171,13 +172,11 @@ def draw_gt_vs_pred_boxes(
             )
         )
 
-    legend_elems: List[Line2D] = []
+    legend_elems: list[Line2D] = []
     if gt_boxes:
         legend_elems.append(Line2D([0], [0], color="lime", lw=2, label="Ground Truth"))
     if pred_boxes:
-        legend_elems.append(
-            Line2D([0], [0], color="red", lw=2, linestyle="--", label="Prediction")
-        )
+        legend_elems.append(Line2D([0], [0], color="red", lw=2, linestyle="--", label="Prediction"))
     if legend_elems:
         leg = ax.legend(handles=legend_elems, loc="upper right", fontsize="x-small", frameon=False)
         for txt in leg.get_texts():
@@ -191,7 +190,7 @@ def draw_gt_vs_pred_boxes(
     plt.close(fig)
 
 
-def evaluate_prediction(img_folder: Path, task: str) -> None:  # noqa: D401
+def compute_evaluation_metrics(img_folder: Path, task: str) -> None:  # noqa: D401
     """Run evaluation for this image and write metrics.json."""
 
     from nova_retrieval_vlm.evaluation import evaluate  # local import
@@ -213,8 +212,9 @@ def evaluate_prediction(img_folder: Path, task: str) -> None:  # noqa: D401
 # Convenience wrapper
 # ---------------------------------------------------------------------------
 
-def common_postprocess(
-    ctx: BatchCtx,
+
+def postprocess_batch_result(
+    ctx: BatchContext,
     result: dict,
     task: str,
     hf_ds,
@@ -222,7 +222,7 @@ def common_postprocess(
 ):
     """One-liner to perform all common tail-steps for a batch."""
 
-    ensure_evaluation_keys(result)
+    normalize_localization_result(result)
     save_prediction(ctx.folder, result)
     save_reference(ctx.folder, ctx.idx, hf_ds)
 
@@ -235,9 +235,12 @@ def common_postprocess(
             gt_bg.get("y", []),
             gt_bg.get("width", []),
             gt_bg.get("height", []),
+            strict=False,
         )
     ]
-    draw_gt_vs_pred_boxes(ctx.img_path, gt_boxes, result.get("boxes", []), ctx.folder / "bboxes.png")
-    evaluate_prediction(ctx.folder, task)
+    draw_ground_truth_vs_predicted_boxes(
+        ctx.img_path, gt_boxes, result.get("boxes", []), ctx.folder / "bboxes.png"
+    )
+    compute_evaluation_metrics(ctx.folder, task)
 
-    preds.append(result) 
+    preds.append(result)

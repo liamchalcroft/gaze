@@ -4,26 +4,29 @@ Plot evaluation metrics and overlay bounding boxes for a run.
 Usage:
     python scripts/plot_results.py --run-dir outputs/<timestamp>/<cfg_hash> [--sample-idx 0]
 """
+
 import argparse
 import json
 from pathlib import Path
 
-from nova_retrieval_vlm.visualization.plotting import plot_metrics, plot_overlays
+from nova_retrieval_vlm.visualization.plotting import plot_metrics
+from nova_retrieval_vlm.visualization.plotting import plot_overlays
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot metrics and overlays for a given run directory.")
-    parser.add_argument(
-        "--run-dir", type=str, required=True,
-        help="Path to run directory containing run.json, preds.jsonl, refs.jsonl"
+    parser = argparse.ArgumentParser(
+        description="Plot metrics and overlays for a given run directory."
     )
     parser.add_argument(
-        "--out-dir", type=str, default=None,
-        help="Directory to save plots (default: <run-dir>/viz)"
+        "--run-dir",
+        type=str,
+        required=True,
+        help="Path to run directory containing run.json, preds.jsonl, refs.jsonl",
     )
     parser.add_argument(
-        "--sample-idx", type=int, default=0,
-        help="Index of sample to overlay"
+        "--out-dir", type=str, default=None, help="Directory to save plots (default: <run-dir>/viz)"
     )
+    parser.add_argument("--sample-idx", type=int, default=0, help="Index of sample to overlay")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -38,7 +41,7 @@ def main():
     if metrics_file.exists():
         metrics = json.load(open(metrics_file))
         plot_metrics(metrics, out_dir / "metrics.png", title=f"Metrics: {run_dir.name}")
-        print(f"Saved metrics plot to {out_dir/'metrics.png'}")
+        print(f"Saved metrics plot to {out_dir / 'metrics.png'}")
     else:
         print(f"No metrics file at {metrics_file}")
 
@@ -48,6 +51,7 @@ def main():
         print(f"Saved overlay image for sample {args.sample_idx} to {out_dir}")
     except Exception as e:
         print(f"Could not generate overlays: {e}")
+
 
 if __name__ == "__main__":
     main()

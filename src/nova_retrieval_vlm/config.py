@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+from dataclasses import field
 
 
 @dataclass
@@ -30,7 +30,7 @@ class PathsConfig:
 @dataclass
 class VisualizationConfig:
     num_samples: int = 5
-    out_dir: Optional[str] = None
+    out_dir: str | None = None
     trust_remote_code: bool = False
     overlay: bool = False
 
@@ -48,10 +48,12 @@ class Config:
     max_iterations: int = 5  # Set to ≤0 for processing entire dataset
     request_delay: float = 3.0  # Delay in seconds between API requests to avoid rate limiting
     strict_mode: bool = True  # Whether to fail on non-critical errors
-    
+
     # Enhanced approach options with all optimized modes
-    approach: str = "baseline"  # Options: baseline, multiturn, visual, retrieval, web_search, comprehensive
-    
+    approach: str = (
+        "baseline"  # Options: baseline, multiturn, visual, retrieval, web_search, comprehensive
+    )
+
     # Mode-specific configuration
     visual_rounds: int = 2  # Number of visual adjustment loops for visual mode
     use_web_search: bool = False  # Whether to enable web search capabilities
@@ -62,7 +64,7 @@ class Config:
     # Path to an existing run directory created by a previous interrupted
     # execution.  When provided, nova_retrieval_vlm.cli will *resume* in that
     # directory instead of creating a fresh timestamped one.
-    resume_dir: Optional[str] = None
+    resume_dir: str | None = None
 
     # Skip processing samples that already contain a saved prediction.  Works
     # in tandem with *resume_dir* (or automatic directory detection) to
