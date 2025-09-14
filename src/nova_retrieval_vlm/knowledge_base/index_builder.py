@@ -31,7 +31,7 @@ def build_bm25(
     index_path = Path(index_dir)
     index_path.mkdir(parents=True, exist_ok=True)
     # Write docs to JSONL
-    with open(index_path / "bm25_docs.jsonl", "w") as fw:
+    with (index_path / "bm25_docs.jsonl").open("w") as fw:
         for doc in docs:
             fw.write(json.dumps(doc) + "\n")
     # Load into Haystack InMemoryDocumentStore
@@ -111,7 +111,7 @@ def build_faiss(
     # Persist index
     faiss.write_index(index, str(index_path / "faiss.index"))
     # Persist docs metadata
-    with open(index_path / "faiss_docs.jsonl", "w") as fw:
+    with (index_path / "faiss_docs.jsonl").open("w") as fw:
         for doc in docs:
             fw.write(json.dumps(doc) + "\n")
 

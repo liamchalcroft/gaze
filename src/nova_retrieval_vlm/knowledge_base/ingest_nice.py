@@ -5,7 +5,19 @@ import hashlib
 import html
 import re
 import time
-import xml.etree.ElementTree as ET
+
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    # Fallback to standard library with warning
+    import warnings
+    import xml.etree.ElementTree as ET
+
+    warnings.warn(
+        "defusedxml not available, using potentially unsafe XML parsing",
+        SecurityWarning,
+        stacklevel=2,
+    )
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
@@ -365,7 +377,7 @@ def _download_url(
         return url, "", False
 
     urlparse(url)
-    doc_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+    doc_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]  # Truncate for filename
     ext = ".pdf" if url.lower().endswith(".pdf") else ".html"
     out_file = Path(raw_dir) / f"{doc_hash}{ext}"
 
@@ -680,7 +692,7 @@ def _process_file(
     }
 
     # Process chunks with enhanced metadata
-    doc_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+    doc_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]  # Truncate for filename
     for idx, chunk in enumerate(chunks):
         cleaned_chunk = clean_text(chunk)
 
@@ -929,7 +941,7 @@ def ingest_nice(
 
                     # Deduplicate chunks
                     for doc in docs:
-                        chunk_hash = hashlib.md5(doc["text"].encode("utf-8")).hexdigest()
+                        chunk_hash = hashlib.sha256(doc["text"].encode("utf-8")).hexdigest()[:16]
                         if chunk_hash not in _seen_chunk_hashes:
                             _seen_chunk_hashes.add(chunk_hash)
                             all_docs.append(doc)
@@ -948,7 +960,7 @@ def ingest_nice(
 
                 # Deduplicate chunks
                 for doc in docs:
-                    chunk_hash = hashlib.md5(doc["text"].encode("utf-8")).hexdigest()
+                    chunk_hash = hashlib.sha256(doc["text"].encode("utf-8")).hexdigest()[:16]
                     if chunk_hash not in _seen_chunk_hashes:
                         _seen_chunk_hashes.add(chunk_hash)
                         all_docs.append(doc)

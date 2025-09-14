@@ -26,9 +26,7 @@ class CaptionProcessor(BaseProcessor):
         responses = []
 
         # Initialize model adapter
-        model_adapter = OpenAIAdapter(
-            model_name=self.config.model_name, max_tokens=256, temperature=0.1
-        )
+        model_adapter = OpenAIAdapter(model_name=self.config.model_name)
 
         for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
@@ -41,7 +39,11 @@ class CaptionProcessor(BaseProcessor):
 
             # Get model response using existing OpenAI adapter interface
             response_text, generation_log = await model_adapter.generate(
-                image_path=Path(image_path), passages=[], system_prompt=prompt
+                image_path=Path(image_path),
+                passages=[],
+                system_prompt=prompt,
+                max_tokens=256,
+                temperature=0.1,
             )
 
             model_result = {

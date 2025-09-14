@@ -13,12 +13,14 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+from typing import cast
 
 import pandas as pd
 from loguru import logger
 
 
-def run_command(command: list, description: str) -> bool:
+def run_command(command: list[str], description: str) -> bool:
     """Run a command and return success status."""
     logger.info(f"Running: {description}")
     logger.debug(f"Command: {' '.join(command)}")
@@ -42,71 +44,86 @@ def generate_summary_report(results_file: Path, output_dir: Path) -> None:
         logger.error(f"Results file not found: {results_file}")
         return
 
-    df = pd.read_csv(results_file)
+    df: pd.DataFrame = pd.read_csv(results_file)  # type: ignore[assignment]
 
-    # Generate summary statistics
-    summary = {
+    # Generate summary statistics with explicit type handling
+    summary: dict[str, int | float | list[str]] = {
         "total_combinations": len(df),
-        "approaches": sorted(df["approach"].unique().tolist()),
-        "tasks": sorted(df["task"].unique().tolist()),
-        "models": sorted(df["model"].unique().tolist()),
-        "total_samples": df["sample_count"].sum(),
-        "failed_samples": df["failed_samples"].sum(),
-        "success_rate": (df["sample_count"].sum() - df["failed_samples"].sum())
-        / df["sample_count"].sum()
-        * 100,
+        "approaches": sorted([str(x) for x in df["approach"].astype(str).unique()]),  # type: ignore[union-attr]
+        "tasks": sorted([str(x) for x in df["task"].astype(str).unique()]),  # type: ignore[union-attr]
+        "models": sorted([str(x) for x in df["model"].astype(str).unique()]),  # type: ignore[union-attr]
+        "total_samples": int(df["sample_count"].astype(float).sum()),  # type: ignore[union-attr]
+        "failed_samples": int(df["failed_samples"].astype(float).sum()),  # type: ignore[union-attr]
+        "success_rate": float(
+            (df["sample_count"].astype(float).sum() - df["failed_samples"].astype(float).sum())
+            / df["sample_count"].astype(float).sum()
+            * 100  # type: ignore[union-attr]
+        ),
     }
 
     # Best performing approach for each task
-    best_performers = {}
-    for task in summary["tasks"]:
-        task_data = df[df["task"] == task]
+    best_performers: dict[str, dict[str, Any]] = {}
+    tasks_list = summary["tasks"]
+    if isinstance(tasks_list, list):
+        for task in tasks_list:
+            # task is already a string from the summary tasks list
+            task_data = df[df["task"] == task]  # type: ignore[assignment]  # type: ignore[assignment]
 
-        if task == "localization":
-            best_idx = task_data["iou"].idxmax()
-            best_approach = task_data.loc[best_idx, "approach"]
-            best_score = task_data.loc[best_idx, "iou"] * 100
-            metric_name = "IoU"
-        elif task == "caption":
-            best_idx = task_data["bleu"].idxmax()
-            best_approach = task_data.loc[best_idx, "approach"]
-            best_score = task_data.loc[best_idx, "bleu"]
-            metric_name = "BLEU"
-        elif task == "diagnosis":
-            best_idx = task_data["accuracy"].idxmax()
-            best_approach = task_data.loc[best_idx, "approach"]
-            best_score = task_data.loc[best_idx, "accuracy"] * 100
-            metric_name = "Accuracy"
-        else:
-            continue
+            if task == "localization":
+                best_idx = task_data["iou"].astype(float).idxmax()  # type: ignore[union-attr]
+                best_approach = str(task_data.loc[best_idx, "approach"])  # type: ignore[union-attr]
+                best_score = float(task_data.loc[best_idx, "iou"]) * 100  # type: ignore[union-attr]
+                metric_name = "IoU"
+            elif task == "caption":
+                best_idx = task_data["bleu"].astype(float).idxmax()  # type: ignore[union-attr]
+                best_approach = str(task_data.loc[best_idx, "approach"])  # type: ignore[union-attr]
+                best_score = float(task_data.loc[best_idx, "bleu"])  # type: ignore[union-attr]
+                metric_name = "BLEU"
+            elif task == "diagnosis":
+                best_idx = task_data["accuracy"].astype(float).idxmax()  # type: ignore[union-attr]
+                best_approach = str(task_data.loc[best_idx, "approach"])  # type: ignore[union-attr]
+                best_score = float(task_data.loc[best_idx, "accuracy"]) * 100  # type: ignore[union-attr]
+                metric_name = "Accuracy"
+            else:
+                continue
 
-        best_performers[task] = {
-            "approach": best_approach,
-            "score": best_score,
-            "metric": metric_name,
-        }
+            best_performers[task] = {
+                "approach": best_approach,
+                "score": best_score,
+                "metric": metric_name,
+            }
 
     # Calculate approach rankings
-    approach_scores = {}
-    for approach in summary["approaches"]:
-        approach_data = df[df["approach"] == approach]
+    approach_scores: dict[str, float] = {}
+    approaches_list = summary["approaches"]
+    if isinstance(approaches_list, list):
+        for approach in approaches_list:
+            # approach is already a string from the summary approaches list
+            approach_data = df[df["approach"] == approach]  # type: ignore[assignment]
 
-        # Calculate average normalized scores across tasks
-        scores = []
-        for task in summary["tasks"]:
-            task_data = approach_data[approach_data["task"] == task]
-            if not task_data.empty:
-                if task == "localization":
-                    scores.append(task_data["iou"].mean())
-                elif task == "caption":
-                    scores.append(task_data["bleu"].mean() / 100)  # Normalize BLEU to [0,1]
-                elif task == "diagnosis":
-                    scores.append(task_data["accuracy"].mean())
+            # Calculate average normalized scores across tasks
+            scores: list[float] = []
+            tasks_list = summary["tasks"]
+            if isinstance(tasks_list, list):
+                for task in tasks_list:
+                    # task is already a string from the summary tasks list
+                    task_data = approach_data[approach_data["task"] == task]  # type: ignore[index]
+                    if not task_data.empty:  # type: ignore[union-attr]
+                        if task == "localization":
+                            scores.append(float(task_data["iou"].astype(float).mean()))  # type: ignore[union-attr]
+                        elif task == "caption":
+                            scores.append(
+                                float(task_data["bleu"].astype(float).mean()) / 100  # type: ignore[union-attr]
+                            )  # Normalize BLEU to [0,1]
+                        elif task == "diagnosis":
+                            scores.append(float(task_data["accuracy"].astype(float).mean()))  # type: ignore[union-attr]
 
-        approach_scores[approach] = sum(scores) / len(scores) if scores else 0
+            approach_scores[approach] = sum(scores) / len(scores) if scores else 0.0
 
     # Rank approaches
-    ranked_approaches = sorted(approach_scores.items(), key=lambda x: x[1], reverse=True)
+    ranked_approaches = sorted(
+        [(str(k), float(v)) for k, v in approach_scores.items()], key=lambda x: x[1], reverse=True
+    )
 
     # Generate Markdown report
     report_lines = [
@@ -117,9 +134,12 @@ def generate_summary_report(results_file: Path, output_dir: Path) -> None:
         "## Executive Summary",
         "",
         f"- **Total benchmark combinations:** {summary['total_combinations']}",
-        f"- **Approaches evaluated:** {len(summary['approaches'])} ({', '.join(summary['approaches'])})",
-        f"- **Tasks:** {len(summary['tasks'])} ({', '.join(summary['tasks'])})",
-        f"- **Models:** {len(summary['models'])} ({', '.join(summary['models'])})",
+        f"- **Approaches evaluated:** {len(cast(list, summary['approaches']))} "
+        f"({', '.join([str(x) for x in cast(list, summary['approaches']) if isinstance(x, str)])})",  # type: ignore[arg-type]
+        f"- **Tasks:** {len(cast(list, summary['tasks']))} "
+        f"({', '.join([str(x) for x in cast(list, summary['tasks']) if isinstance(x, str)])})",  # type: ignore[arg-type]
+        f"- **Models:** {len(cast(list, summary['models']))} "
+        f"({', '.join([str(x) for x in cast(list, summary['models']) if isinstance(x, str)])})",  # type: ignore[arg-type]
         f"- **Total samples processed:** {summary['total_samples']:,}",
         f"- **Overall success rate:** {summary['success_rate']:.1f}%",
         "",
@@ -130,9 +150,11 @@ def generate_summary_report(results_file: Path, output_dir: Path) -> None:
     for task, best in best_performers.items():
         report_lines.append(f"### {task.title()}")
         report_lines.append(f"- **Winner:** {best['approach']}")
-        report_lines.append(
-            f"- **Score:** {best['score']:.1f}{'%' if best['metric'] != 'BLEU' else ''} ({best['metric']})"
+        score_text = (
+            f"- **Score:** {best['score']:.1f}"
+            f"{'%' if best['metric'] != 'BLEU' else ''} ({best['metric']})"
         )
+        report_lines.append(score_text)
         report_lines.append("")
 
     report_lines.extend(
@@ -145,105 +167,116 @@ def generate_summary_report(results_file: Path, output_dir: Path) -> None:
     )
 
     for i, (approach, score) in enumerate(ranked_approaches, 1):
-        report_lines.append(f"{i}. **{approach.title()}** - {score:.3f}")
+        report_lines.append(f"{i}. **{str(approach).title()}** - {float(score):.3f}")
 
     report_lines.extend(["", "## Task-Specific Performance Summary", ""])
 
     # Add task-specific summaries
-    for task in summary["tasks"]:
-        task_data = df[df["task"] == task]
+    for task in cast(list, summary["tasks"]):  # type: ignore[arg-type]
+        if not isinstance(task, str):
+            continue
+        task_data = df[df["task"] == task]  # type: ignore[assignment]
         report_lines.append(f"### {task.title()}")
         report_lines.append("")
 
         if task == "localization":
             report_lines.append("| Approach | mAP@30 | mAP@50 | mAP@50:95 | IoU |")
             report_lines.append("|----------|--------|--------|-----------|-----|")
-            for approach in summary["approaches"]:
-                approach_task_data = task_data[task_data["approach"] == approach]
-                if not approach_task_data.empty:
+            for approach in cast(list, summary["approaches"]):  # type: ignore[arg-type]
+                # approach is already a string from the summary approaches list
+                approach_task_data = task_data[task_data["approach"] == approach]  # type: ignore[index]
+                if not approach_task_data.empty:  # type: ignore[union-attr]
                     map30 = (
-                        approach_task_data["map30"].mean() * 100
+                        approach_task_data["map30"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "map30" in approach_task_data.columns
                         else 0
                     )
                     map50 = (
-                        approach_task_data["map50"].mean() * 100
+                        approach_task_data["map50"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "map50" in approach_task_data.columns
                         else 0
                     )
                     map50_95 = (
-                        approach_task_data["map50_95"].mean() * 100
+                        approach_task_data["map50_95"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "map50_95" in approach_task_data.columns
                         else 0
                     )
                     iou = (
-                        approach_task_data["iou"].mean() * 100
+                        approach_task_data["iou"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "iou" in approach_task_data.columns
                         else 0
                     )
-                    report_lines.append(
-                        f"| {approach} | {map30:.1f}% | {map50:.1f}% | {map50_95:.1f}% | {iou:.1f}% |"
+                    row_text = (
+                        f"| {approach} | {map30:.1f}% | {map50:.1f}% | "
+                        f"{map50_95:.1f}% | {iou:.1f}% |"
                     )
+                    report_lines.append(row_text)
 
         elif task == "caption":
             report_lines.append("| Approach | BLEU | METEOR | BERT-F1 | RadGraph-F1 |")
             report_lines.append("|----------|------|--------|---------|-------------|")
-            for approach in summary["approaches"]:
-                approach_task_data = task_data[task_data["approach"] == approach]
-                if not approach_task_data.empty:
+            for approach in cast(list, summary["approaches"]):  # type: ignore[arg-type]
+                # approach is already a string from the summary approaches list
+                approach_task_data = task_data[task_data["approach"] == approach]  # type: ignore[index]
+                if not approach_task_data.empty:  # type: ignore[union-attr]
                     bleu = (
-                        approach_task_data["bleu"].mean()
+                        approach_task_data["bleu"].astype(float).mean()  # type: ignore[union-attr]
                         if "bleu" in approach_task_data.columns
                         else 0
                     )
                     meteor = (
-                        approach_task_data["meteor"].mean()
+                        approach_task_data["meteor"].astype(float).mean()  # type: ignore[union-attr]
                         if "meteor" in approach_task_data.columns
                         else 0
                     )
                     bert_f1 = (
-                        approach_task_data["bert_f1"].mean()
+                        approach_task_data["bert_f1"].astype(float).mean()  # type: ignore[union-attr]
                         if "bert_f1" in approach_task_data.columns
                         else 0
                     )
                     radgraph_f1 = (
-                        approach_task_data["radgraph_f1"].mean()
+                        approach_task_data["radgraph_f1"].astype(float).mean()  # type: ignore[union-attr]
                         if "radgraph_f1" in approach_task_data.columns
                         else 0
                     )
-                    report_lines.append(
-                        f"| {approach} | {bleu:.3f} | {meteor:.3f} | {bert_f1:.3f} | {radgraph_f1:.3f} |"
+                    row_text = (
+                        f"| {approach} | {bleu:.3f} | {meteor:.3f} | "
+                        f"{bert_f1:.3f} | {radgraph_f1:.3f} |"
                     )
+                    report_lines.append(row_text)
 
         elif task == "diagnosis":
             report_lines.append("| Approach | Top-1 | Top-5 | Coverage | Entropy |")
             report_lines.append("|----------|-------|-------|----------|---------|")
-            for approach in summary["approaches"]:
-                approach_task_data = task_data[task_data["approach"] == approach]
-                if not approach_task_data.empty:
+            for approach in cast(list, summary["approaches"]):  # type: ignore[arg-type]
+                # approach is already a string from the summary approaches list
+                approach_task_data = task_data[task_data["approach"] == approach]  # type: ignore[index]
+                if not approach_task_data.empty:  # type: ignore[union-attr]
                     top1 = (
-                        approach_task_data["top1"].mean() * 100
+                        approach_task_data["top1"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "top1" in approach_task_data.columns
                         else 0
                     )
                     top5 = (
-                        approach_task_data["top5"].mean() * 100
+                        approach_task_data["top5"].astype(float).mean() * 100  # type: ignore[union-attr]
                         if "top5" in approach_task_data.columns
                         else 0
                     )
                     coverage = (
-                        approach_task_data["coverage"].mean()
+                        approach_task_data["coverage"].astype(float).mean()  # type: ignore[union-attr]
                         if "coverage" in approach_task_data.columns
                         else 0
                     )
                     entropy = (
-                        approach_task_data["entropy"].mean()
+                        approach_task_data["entropy"].astype(float).mean()  # type: ignore[union-attr]
                         if "entropy" in approach_task_data.columns
                         else 0
                     )
-                    report_lines.append(
-                        f"| {approach} | {top1:.1f}% | {top5:.1f}% | {coverage:.3f} | {entropy:.3f} |"
+                    row_text = (
+                        f"| {approach} | {top1:.1f}% | {top5:.1f}% | "
+                        f"{coverage:.3f} | {entropy:.3f} |"
                     )
+                    report_lines.append(row_text)
 
         report_lines.append("")
 
@@ -279,7 +312,7 @@ def generate_summary_report(results_file: Path, output_dir: Path) -> None:
 
     # Write report
     report_file = output_dir / "benchmark_analysis_report.md"
-    with open(report_file, "w") as f:
+    with report_file.open("w") as f:
         f.write("\n".join(report_lines))
 
     logger.info(f"Summary report saved to {report_file}")

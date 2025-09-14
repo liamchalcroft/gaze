@@ -14,6 +14,7 @@ from nova_retrieval_vlm.config import Config
 from nova_retrieval_vlm.config import ModelConfig
 from nova_retrieval_vlm.config import PathsConfig
 from nova_retrieval_vlm.config import RetrievalConfig
+from nova_retrieval_vlm.types import BatchData
 
 
 @pytest.fixture
@@ -106,3 +107,15 @@ def mock_retriever():
         "Relevant passage 3",
     ]
     return retriever
+
+
+@pytest.fixture
+def mock_batch_data(mock_image: Path) -> BatchData:
+    """Create mock batch data."""
+    return BatchData(
+        images=[mock_image, mock_image],
+        metadata=[
+            {"modality": "CT", "patient_info": "Test patient 1"},
+            {"modality": "MRI", "patient_info": "Test patient 2"},
+        ],
+    )

@@ -9,34 +9,51 @@ from loguru import logger
 from nltk.tokenize import word_tokenize
 from nltk.translate.meteor_score import meteor_score
 
-# Lazy import bert_score to avoid torch import issues during collection
-bert_score = None
 
-# Cache for NLTK downloads to avoid repeated downloads
-_nltk_downloaded = False
+# Module-level lazy imports to avoid torch import issues during collection
+class _LazyImports:
+    """Lazy loading container for optional dependencies."""
+
+    def __init__(self):
+        self.bert_score = None
+        self.nltk_downloaded = False
+
+    def get_bert_score(self):
+        """Lazy import bert_score to avoid torch import issues during collection."""
+        if self.bert_score is None:
+            try:
+                from bert_score import score as bert_score_module
+
+                self.bert_score = bert_score_module
+            except ImportError as e:
+                logger.warning(f"BERTScore not available: {e}")
+                self.bert_score = False
+        return self.bert_score
+
+    def ensure_nltk_downloads(self):
+        """Ensure NLTK data is downloaded (cached)."""
+        if not self.nltk_downloaded:
+            nltk.download("punkt", quiet=True)
+            nltk.download("wordnet", quiet=True)
+            nltk.download("omw-1.4", quiet=True)
+            self.nltk_downloaded = True
 
 
-def _get_bert_score():
-    """Lazy import bert_score to avoid torch import issues during collection."""
-    global bert_score
-    if bert_score is None:
-        try:
-            from bert_score import score as bert_score_module
-            bert_score = bert_score_module
-        except ImportError as e:
-            logger.warning(f"BERTScore not available: {e}")
-            bert_score = False
-    return bert_score
+_lazy = _LazyImports()
 
 
-def _ensure_nltk_downloads():
-    """Ensure NLTK data is downloaded (cached)."""
-    global _nltk_downloaded
-    if not _nltk_downloaded:
-        nltk.download("punkt", quiet=True)
-        nltk.download("wordnet", quiet=True)
-        nltk.download("omw-1.4", quiet=True)
-        _nltk_downloaded = True
+def _calculate_radgraph_f1(refs: Sequence[str], preds: Sequence[str]) -> float:
+    """Calculate RadGraph F1 score if available, otherwise return 0.0."""
+    try:
+        # Import at function level to avoid top-level import issues
+        from radgraph.radgraph import F1RadGraph
+
+        rg = F1RadGraph(reward_level="partial")
+        radgraph_f1_result, *_ = rg.forward(refs, preds)
+        return float(radgraph_f1_result)
+    except ImportError:
+        # RadGraph not available, use default 0.0
+        return 0.0
 
 
 @functools.lru_cache(maxsize=128)
@@ -57,48 +74,50 @@ def evaluate_caption(
         refs: List of reference captions.
 
     Returns:
-        Dictionary with keys 'bleu', 'bert_f1', 'radgraph_f1', 'meteor', 'modality_f1', 'clinical_f1', 'binary_f1'.
+        Dictionary with keys 'bleu', 'bert_f1', 'radgraph_f1', 'meteor',
+        'modality_f1', 'clinical_f1', 'binary_f1'.
     """
     # Ensure NLTK data is available
-    _ensure_nltk_downloads()
+    _lazy.ensure_nltk_downloads()
 
     # SacreBLEU
     bleu = sacrebleu.corpus_bleu(preds, [refs])
 
     # BERTScore
-    bert_score_fn = _get_bert_score()
-    if bert_score_fn is False:
-        # BERTScore not available, return 0.0
-        bert_f1 = 0.0
-    else:
-        P, R, F1 = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
-        bert_f1 = float(F1.mean()) * 100
+    bert_score_fn = _lazy.get_bert_score()
+    bert_f1_score = 0.0
+    if bert_score_fn is not False and bert_score_fn is not None:
+        precision, recall, f1_scores = bert_score_fn(
+            cands=preds, refs=refs, lang="en", rescale_with_baseline=True
+        )
+        bert_f1_score = float(f1_scores.mean()) * 100
 
     # METEOR - Fixed calculation with caching
     # Prepare references for METEOR (list of lists format)
     ref_tokens = [[_cached_word_tokenize(ref)] for ref in refs]
     pred_tokens = [_cached_word_tokenize(pred) for pred in preds]
 
-    # Calculate METEOR scores
-    meteor_scores = []
+    # Pre-calculate METEOR scores to avoid try-except in loop
+    valid_meteor_scores = []
+    failed_indices = []
+
     for i, pred_token in enumerate(pred_tokens):
         try:
             score = meteor_score(ref_tokens[i], pred_token)
-            meteor_scores.append(score)
+            valid_meteor_scores.append(score)
         except (ValueError, RuntimeError) as e:
+            failed_indices.append(i)
             logger.warning(f"METEOR calculation failed for sample {i}: {e}")
-            meteor_scores.append(0.0)
 
-    meteor = float(sum(meteor_scores) / len(meteor_scores) * 100) if meteor_scores else 0.0
+    # Handle failed calculations
+    total_samples = len(pred_tokens)
+    if failed_indices:
+        logger.info(f"METEOR failed for {len(failed_indices)}/{total_samples} samples")
+
+    meteor = float(sum(valid_meteor_scores) / total_samples * 100) if valid_meteor_scores else 0.0
 
     # RadGraph F1 (optional heavy dependency)
-    radgraph_f1 = 0.0
-    # RadGraph F1 - fail fast if not available
-    from radgraph.radgraph import F1RadGraph
-
-    rg = F1RadGraph(reward_level="partial")
-    radgraph_f1, *_ = rg.forward(refs, preds)
-    radgraph_f1 = float(radgraph_f1)
+    radgraph_f1 = _calculate_radgraph_f1(refs, preds)
 
     # Keyword-based F1
     modality_terms = {"flair", "t1", "t2", "t1w", "t2w", "axial", "sagittal", "coronal", "weighted"}
@@ -150,7 +169,7 @@ def evaluate_caption(
     )
     return {
         "bleu": float(bleu.score),
-        "bert_f1": float(F1.mean()),
+        "bert_f1": bert_f1_score,
         "radgraph_f1": radgraph_f1,
         "meteor": meteor,
         "modality_f1": modality_f1,

@@ -21,7 +21,7 @@ def evaluate(
     preds_jsonl: str | Path, refs_jsonl: str | Path, task: str = "localization"
 ) -> dict[str, float]:
     """
-    Run detection, caption, and diagnosis evaluation based on the specified task and return relevant scores.
+    Run evaluation based on the specified task and return relevant scores.
 
     Args:
         preds_jsonl: Path to predictions JSONL.

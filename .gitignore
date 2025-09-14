@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
 *.egg-info/
 
 # Virtual environments
@@ -30,6 +33,9 @@ logs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
 *$py.class
 
 # C extensions
@@ -429,6 +435,14 @@ runs/
 # Misc
 *.bak
 *.tmp
+
+# Exceptions for src/nova_retrieval_vlm/ subdirectories
+!src/nova_retrieval_vlm/data/
+!src/nova_retrieval_vlm/data/**
+!src/nova_retrieval_vlm/models/
+!src/nova_retrieval_vlm/models/**
+!src/nova_retrieval_vlm/checkpoints/
+!src/nova_retrieval_vlm/checkpoints/**
 
 # Docker
 *.pid

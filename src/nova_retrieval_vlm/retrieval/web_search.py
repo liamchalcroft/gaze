@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 import urllib3
@@ -38,8 +39,8 @@ class WebSearcher:
 
     def __init__(
         self,
-        search_engines: list[str] = None,
-        medical_sites: list[str] = None,
+        search_engines: list[str] | None = None,
+        medical_sites: list[str] | None = None,
         max_results: int = 5,
         timeout: int = 15,
     ):
@@ -645,12 +646,8 @@ class WebSearcher:
             "reconstruction",
         ]
 
-        found_concepts = []
         text_lower = text.lower()
-
-        for term in medical_terms:
-            if term in text_lower:
-                found_concepts.append(term)
+        found_concepts = [term for term in medical_terms if term in text_lower]
 
         # Remove duplicates while preserving order
         seen = set()
@@ -726,7 +723,7 @@ class WebSearcher:
 class MedicalWebSearcher(WebSearcher):
     """Specialized web searcher for medical information."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         # Use medical-optimized search engines - prioritize PubMed
         kwargs.setdefault("search_engines", ["pubmed"])  # Start with just PubMed for reliability
         kwargs.setdefault("timeout", 20)  # Longer timeout for medical searches
@@ -742,7 +739,7 @@ class MedicalWebSearcher(WebSearcher):
         }
 
     def search_medical(
-        self, query: str, search_type: str = "general", condition: str = None
+        self, query: str, search_type: str = "general", condition: str | None = None
     ) -> list[WebSearchResult]:
         """
         Perform medical-specific web search.

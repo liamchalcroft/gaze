@@ -83,7 +83,11 @@ def aggregate_task_metrics(task: str, metrics_list: list[dict[str, float]]) -> d
         for m in metrics_list:
             all_keys.update(m.keys())
 
-        return {key: np.mean([m.get(key, 0.0) for m in metrics_list]) for key in all_keys}
+        return {
+            str(key): float(np.mean([m.get(key, 0.0) for m in metrics_list]))
+            for key in all_keys
+            if isinstance(key, str)
+        }
 
 
 def gather_results_from_directory(results_dir: Path) -> list[BenchmarkResults]:
@@ -144,7 +148,7 @@ def gather_results_from_directory(results_dir: Path) -> list[BenchmarkResults]:
                 else:
                     logger.warning(f"      No valid metrics found for {approach}/{task}/{model}")
 
-    return results
+    return list(results)
 
 
 def save_results(results: list[BenchmarkResults], output_dir: Path) -> None:
@@ -197,7 +201,7 @@ def save_results(results: list[BenchmarkResults], output_dir: Path) -> None:
     logger.info(f"Saved JSON results to {output_dir / 'aggregated_results.json'}")
 
     # Create summary by approach and task (averaged across models)
-    summary_data = defaultdict(lambda: defaultdict(list))
+    summary_data: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
     for result in results:
         for metric_name, metric_value in result.metrics.items():
@@ -206,10 +210,12 @@ def save_results(results: list[BenchmarkResults], output_dir: Path) -> None:
     # Average across models for each approach/task/metric combination
     summary_rows = []
     for approach, task_metrics in summary_data.items():
-        row = {"approach": approach}
-        for task_metric, values in task_metrics.items():
-            row[task_metric] = np.mean(values) if values else 0.0
-        summary_rows.append(row)
+        if isinstance(approach, str):
+            row = {"approach": approach}
+            for task_metric, values in task_metrics.items():
+                if isinstance(task_metric, str):
+                    row[task_metric] = float(np.mean(values)) if values else 0.0
+            summary_rows.append(row)
 
     summary_df = pd.DataFrame(summary_rows)
     summary_df.to_csv(output_dir / "summary_by_approach.csv", index=False)

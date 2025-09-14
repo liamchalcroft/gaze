@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 
 from loguru import logger
 
-# Lazy imports inside helper functions to avoid heavy deps at import-time
+if TYPE_CHECKING:
+    from matplotlib.lines import Line2D
 
 
 @dataclass
@@ -80,7 +82,7 @@ def normalize_localization_result(result: dict) -> None:  # noqa: D401
 
 def save_prediction(img_folder: Path, result: dict) -> None:  # noqa: D401
     pred_file = img_folder / "pred.jsonl"
-    with open(pred_file, "w") as fw:
+    with pred_file.open("w") as fw:
         fw.write(json.dumps(result) + "\n")
 
 
@@ -94,7 +96,8 @@ def save_reference(img_folder: Path, batch_idx: int, hf_ds) -> None:  # noqa: D4
             bg.get("x", []),
             bg.get("y", []),
             bg.get("width", []),
-            bg.get("height", []), strict=False,
+            bg.get("height", []),
+            strict=False,
         )
     ]
     labels = ["anomaly"] * len(boxes)
@@ -109,7 +112,7 @@ def save_reference(img_folder: Path, batch_idx: int, hf_ds) -> None:  # noqa: D4
         "diagnosis": diagnosis,
         "ground_truth_image_idx": batch_idx,
     }
-    with open(ref_file, "w") as fr:
+    with ref_file.open("w") as fr:
         fr.write(json.dumps(ref_data) + "\n")
 
 
@@ -135,13 +138,13 @@ def draw_ground_truth_vs_predicted_boxes(
     """Create *out_path* PNG with GT (green) and pred (red) boxes."""
 
     import matplotlib
-
-    matplotlib.use("Agg")  # headless backend
     import matplotlib.pyplot as plt
     from matplotlib import patches
     from matplotlib import patheffects as pe
     from matplotlib.lines import Line2D
     from PIL import Image
+
+    matplotlib.use("Agg")  # headless backend
 
     img = Image.open(img_path).convert("L")
     fig, ax = plt.subplots(1, figsize=(6, 6))
@@ -204,7 +207,7 @@ def compute_evaluation_metrics(img_folder: Path, task: str) -> None:  # noqa: D4
     single_metrics = evaluate(str(pred_file), str(ref_file), task=task)
     logger.info("Evaluation metrics for %s: %s", img_folder.name, single_metrics)
 
-    with open(img_folder / "metrics.json", "w") as f:
+    with (img_folder / "metrics.json").open("w") as f:
         json.dump(single_metrics, f, indent=2)
 
 

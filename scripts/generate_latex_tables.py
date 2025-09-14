@@ -31,7 +31,7 @@ def load_aggregated_results(results_file: Path) -> pd.DataFrame:
     if not results_file.exists():
         raise FileNotFoundError(f"Results file not found: {results_file}")
 
-    return pd.read_csv(results_file)
+    return pd.read_csv(results_file)  # type: ignore[return-value]
 
 
 def load_statistical_results(stats_dir: Path) -> pd.DataFrame | None:
@@ -41,7 +41,7 @@ def load_statistical_results(stats_dir: Path) -> pd.DataFrame | None:
         logger.warning(f"Statistical results file not found: {stats_file}")
         return None
 
-    return pd.read_csv(stats_file)
+    return pd.read_csv(stats_file)  # type: ignore[return-value]
 
 
 def is_significantly_better(
@@ -125,7 +125,7 @@ def generate_performance_table(
             logger.warning(f"Approach '{approach}' not found in results")
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
 
         # Get metrics for each task (handle missing tasks)
         loc_data = approach_data[approach_data["task"] == "localization"]
@@ -133,17 +133,17 @@ def generate_performance_table(
         diag_data = approach_data[approach_data["task"] == "diagnosis"]
 
         localization_map50 = (
-            loc_data["map50"].mean()
+            loc_data["map50"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map50" in loc_data.columns
             else float("nan")
         )
         caption_bleu = (
-            cap_data["bleu"].mean()
+            cap_data["bleu"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "bleu" in cap_data.columns
             else float("nan")
         )
         diagnosis_top1 = (
-            diag_data["top1"].mean()
+            diag_data["top1"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top1" in diag_data.columns
             else float("nan")
         )
@@ -261,7 +261,7 @@ def generate_detailed_table(df: pd.DataFrame, output_file: Path) -> None:
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
         display_name = APPROACH_DISPLAY_NAMES.get(approach, approach.title())
 
         # Calculate metrics
@@ -270,31 +270,31 @@ def generate_detailed_table(df: pd.DataFrame, output_file: Path) -> None:
         diag_data = approach_data[approach_data["task"] == "diagnosis"]
 
         loc_map50 = (
-            loc_data["map50"].mean()
+            loc_data["map50"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map50" in loc_data.columns
             else float("nan")
         )
         cap_bleu = (
-            cap_data["bleu"].mean()
+            cap_data["bleu"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "bleu" in cap_data.columns
             else float("nan")
         )
         cap_meteor = (
-            cap_data["meteor"].mean()
+            cap_data["meteor"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "meteor" in cap_data.columns
             else float("nan")
         )
         diag_top1 = (
-            diag_data["top1"].mean()
+            diag_data["top1"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top1" in diag_data.columns
             else float("nan")
         )
         diag_top5 = (
-            diag_data["top5"].mean()
+            diag_data["top5"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top5" in diag_data.columns
             else float("nan")
         )
-        total_samples = approach_data["sample_count"].sum()
+        total_samples = approach_data["sample_count"].sum()  # type: ignore[union-attr]
 
         # Format values
         loc_str = format_metric_value(loc_map50, "percentage")
@@ -335,7 +335,7 @@ def generate_task_breakdown_table(df: pd.DataFrame, output_file: Path) -> None:
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
         display_name = APPROACH_DISPLAY_NAMES.get(approach, approach.title())
 
         # Get task-specific data
@@ -345,19 +345,19 @@ def generate_task_breakdown_table(df: pd.DataFrame, output_file: Path) -> None:
 
         # Localization metrics
         map30 = format_metric_value(
-            loc_data["map30"].mean()
+            loc_data["map30"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map30" in loc_data.columns
             else float("nan"),
             "percentage",
         )
         map50 = format_metric_value(
-            loc_data["map50"].mean()
+            loc_data["map50"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map50" in loc_data.columns
             else float("nan"),
             "percentage",
         )
         map50_95 = format_metric_value(
-            loc_data["map50_95"].mean()
+            loc_data["map50_95"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map50_95" in loc_data.columns
             else float("nan"),
             "percentage",
@@ -365,25 +365,25 @@ def generate_task_breakdown_table(df: pd.DataFrame, output_file: Path) -> None:
 
         # Caption metrics
         bleu = format_metric_value(
-            cap_data["bleu"].mean()
+            cap_data["bleu"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "bleu" in cap_data.columns
             else float("nan"),
             "score",
         )
         meteor = format_metric_value(
-            cap_data["meteor"].mean()
+            cap_data["meteor"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "meteor" in cap_data.columns
             else float("nan"),
             "score",
         )
         bert_f1 = format_metric_value(
-            cap_data["bert_f1"].mean()
+            cap_data["bert_f1"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "bert_f1" in cap_data.columns
             else float("nan"),
             "score",
         )
         radgraph = format_metric_value(
-            cap_data["radgraph_f1"].mean()
+            cap_data["radgraph_f1"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "radgraph_f1" in cap_data.columns
             else float("nan"),
             "score",
@@ -391,19 +391,19 @@ def generate_task_breakdown_table(df: pd.DataFrame, output_file: Path) -> None:
 
         # Diagnosis metrics
         top1 = format_metric_value(
-            diag_data["top1"].mean()
+            diag_data["top1"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top1" in diag_data.columns
             else float("nan"),
             "percentage",
         )
         top5 = format_metric_value(
-            diag_data["top5"].mean()
+            diag_data["top5"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top5" in diag_data.columns
             else float("nan"),
             "percentage",
         )
         coverage = format_metric_value(
-            diag_data["coverage"].mean()
+            diag_data["coverage"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "coverage" in diag_data.columns
             else float("nan"),
             "score",
@@ -440,11 +440,11 @@ def generate_summary_statistics(df: pd.DataFrame, output_file: Path) -> None:
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
         display_name = APPROACH_DISPLAY_NAMES.get(approach, approach.title())
 
-        total_samples = approach_data["sample_count"].sum()
-        failed_samples = approach_data["failed_samples"].sum()
+        total_samples = approach_data["sample_count"].sum()  # type: ignore[union-attr]
+        failed_samples = approach_data["failed_samples"].sum()  # type: ignore[union-attr]
         success_rate = (
             (total_samples - failed_samples) / total_samples if total_samples > 0 else 0.0
         )

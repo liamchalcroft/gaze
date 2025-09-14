@@ -16,7 +16,12 @@ from typing import Any
 
 import cv2
 import numpy as np
+import numpy.typing as npt
 from loguru import logger
+
+# Import tensor validation types
+from nova_retrieval_vlm.types import ImageArray
+from nova_retrieval_vlm.types import tensor_validated
 
 # Analysis constants
 MINIMUM_VENTRICLE_AREA = 100
@@ -26,7 +31,16 @@ ASYMMETRY_THRESHOLD = 0.15
 REGION_ANALYSIS_SIZE = 64
 SYMMETRY_CONCERN_THRESHOLD = 0.85
 MIDLINE_SHIFT_CONCERN_PIXELS = 5.0
+
+# Visual processing constants
+RGB_CHANNELS = 3
+MIN_REGION_WIDTH = 10
+MIN_ASPECT_RATIO = 0.3
+MAX_ASPECT_RATIO = 3.0
+MIN_SOLIDITY = 0.3
 CONFIDENCE_THRESHOLD = 0.6
+DEFAULT_CONFIDENCE = 0.5
+HIGH_CONFIDENCE = 0.8
 LESION_CONCERN_SIZE = 1000
 
 
@@ -104,15 +118,24 @@ class BrainStructureDetector:
             },
         }
 
-    def detect_structures(self, image: np.ndarray) -> list[VisualFeature]:
-        """Detect anatomical structures in brain MRI."""
+    @tensor_validated
+    def detect_structures(self, image: ImageArray) -> list[VisualFeature]:
+        """Detect anatomical structures in brain MRI with tensor validation."""
         features = []
 
-        # Convert to grayscale if needed
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
+        # Convert to grayscale if needed with proper tensor validation
+        if len(image.shape) == RGB_CHANNELS:
+            gray = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image.squeeze() if len(image.shape) > 2 else image
+
+        # Ensure proper uint8 format for OpenCV operations
+        if gray.dtype != np.uint8:
+            gray = (gray * 255).astype(np.uint8) if gray.max() <= 1.0 else gray.astype(np.uint8)
 
         # Normalize image
-        gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        gray = cv2.normalize(gray, np.zeros_like(gray), 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        gray = npt.NDArray[np.uint8](gray)
 
         # Detect ventricles (dark regions in central area)
         ventricle_features = self._detect_ventricles(gray)
@@ -129,7 +152,7 @@ class BrainStructureDetector:
 
         return features
 
-    def _detect_ventricles(self, image: np.ndarray) -> list[VisualFeature]:
+    def _detect_ventricles(self, image: npt.NDArray[np.uint8]) -> list[VisualFeature]:
         """Detect ventricular system."""
         features = []
         h, w = image.shape
@@ -157,9 +180,9 @@ class BrainStructureDetector:
                 solidity = area / (width * height) if width * height > 0 else 0
 
                 # Assess if this looks like ventricles
-                confidence = 0.5
-                if 0.3 < aspect_ratio < 3.0 and solidity > 0.3:
-                    confidence = 0.8
+                confidence = DEFAULT_CONFIDENCE
+                if MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO and solidity > MIN_SOLIDITY:
+                    confidence = HIGH_CONFIDENCE
 
                 feature = VisualFeature(
                     name="ventricles",
@@ -167,13 +190,13 @@ class BrainStructureDetector:
                     confidence=confidence,
                     description=f"Dark CSF-filled region, aspect ratio: {aspect_ratio:.2f}",
                     anatomical_region="central",
-                    feature_type="normal" if confidence > 0.6 else "uncertain",
+                    feature_type="normal" if confidence > CONFIDENCE_THRESHOLD else "uncertain",
                 )
                 features.append(feature)
 
         return features
 
-    def _detect_brain_boundary(self, image: np.ndarray) -> VisualFeature | None:
+    def _detect_brain_boundary(self, image: npt.NDArray[np.uint8]) -> VisualFeature | None:
         """Detect overall brain boundary."""
         # Apply Gaussian blur
         blurred = cv2.GaussianBlur(image, (5, 5), 0)
@@ -199,7 +222,7 @@ class BrainStructureDetector:
 
         return None
 
-    def _detect_potential_lesions(self, image: np.ndarray) -> list[VisualFeature]:
+    def _detect_potential_lesions(self, image: npt.NDArray[np.uint8]) -> list[VisualFeature]:
         """Detect potential abnormal regions using intensity analysis."""
         features = []
 
@@ -239,11 +262,19 @@ class BilateralSymmetryAnalyzer:
     def __init__(self):
         self.symmetry_threshold = SYMMETRY_CONCERN_THRESHOLD
 
-    def analyze_symmetry(self, image: np.ndarray) -> SymmetryAnalysis:
-        """Perform comprehensive symmetry analysis."""
+    @tensor_validated
+    def analyze_symmetry(self, image: ImageArray) -> SymmetryAnalysis:
+        """Perform comprehensive symmetry analysis with tensor validation."""
 
-        # Convert to grayscale if needed
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
+        # Convert to grayscale with proper tensor handling
+        if len(image.shape) == RGB_CHANNELS:
+            gray = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image.squeeze() if len(image.shape) > 2 else image
+
+        # Ensure proper data type for OpenCV operations
+        if gray.dtype != np.uint8:
+            gray = (gray * 255).astype(np.uint8) if gray.max() <= 1.0 else gray.astype(np.uint8)
 
         # Find anatomical midline
         midline_x = self._detect_midline(gray)
@@ -266,7 +297,7 @@ class BilateralSymmetryAnalyzer:
             laterality_findings=laterality_findings,
         )
 
-    def _detect_midline(self, image: np.ndarray) -> int:
+    def _detect_midline(self, image: npt.NDArray[np.uint8]) -> int:
         """Detect anatomical midline using various methods."""
         h, w = image.shape
 
@@ -291,7 +322,7 @@ class BilateralSymmetryAnalyzer:
             right_flipped = np.fliplr(right_side)
             min_width = min(left_side.shape[1], right_flipped.shape[1])
 
-            if min_width > 10:  # Ensure sufficient width for comparison
+            if min_width > MIN_REGION_WIDTH:  # Ensure sufficient width for comparison
                 left_crop = left_side[:, -min_width:]
                 right_crop = right_flipped[:, :min_width]
 
@@ -304,7 +335,7 @@ class BilateralSymmetryAnalyzer:
 
         return optimal_midline
 
-    def _calculate_symmetry_score(self, image: np.ndarray, midline_x: int) -> float:
+    def _calculate_symmetry_score(self, image: npt.NDArray[np.uint8], midline_x: int) -> float:
         """Calculate overall symmetry score (0-1, higher = more symmetric)."""
         h, w = image.shape
 
@@ -332,7 +363,9 @@ class BilateralSymmetryAnalyzer:
 
         return symmetry_score
 
-    def _find_asymmetric_regions(self, image: np.ndarray, midline_x: int) -> list[dict[str, Any]]:
+    def _find_asymmetric_regions(
+        self, image: npt.NDArray[np.uint8], midline_x: int
+    ) -> list[dict[str, Any]]:
         """Identify specific regions showing asymmetry."""
         asymmetric_regions = []
         h, w = image.shape
@@ -361,14 +394,16 @@ class BilateralSymmetryAnalyzer:
                                 "location": (x, y, region_size, region_size),
                                 "asymmetry_score": normalized_diff,
                                 "side": "left",
-                                "description": f"Asymmetric region with score {normalized_diff:.3f}",
+                                "description": (
+                                    f"Asymmetric region with score {normalized_diff:.3f}"
+                                ),
                             }
                         )
 
         return asymmetric_regions
 
     def _analyze_laterality(
-        self, image: np.ndarray, midline_x: int, asymmetry_regions: list[dict]
+        self, image: npt.NDArray[np.uint8], midline_x: int, asymmetry_regions: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Analyze lateralized findings."""
         h, w = image.shape
@@ -445,7 +480,10 @@ class MedicalReasoningChain:
             ReasoningStep(
                 step_number=step_number,
                 observation="Brain MRI image acquired in axial plane",
-                reasoning="Standard radiological assessment begins with image quality and orientation verification",
+                reasoning=(
+                    "Standard radiological assessment begins with image quality "
+                    "and orientation verification"
+                ),
                 confidence=0.95,
                 anatomical_focus="whole_brain",
                 supporting_evidence=["Image orientation markers", "Anatomical landmarks visible"],
@@ -454,12 +492,18 @@ class MedicalReasoningChain:
         step_number += 1
 
         # Step 2: Symmetry assessment
-        if symmetry_analysis.symmetry_score < 0.85:
+        if symmetry_analysis.symmetry_score < SYMMETRY_CONCERN_THRESHOLD:
             reasoning_steps.append(
                 ReasoningStep(
                     step_number=step_number,
-                    observation=f"Bilateral asymmetry detected (symmetry score: {symmetry_analysis.symmetry_score:.2f})",
-                    reasoning="Asymmetry may indicate pathological process affecting one hemisphere more than the other",
+                    observation=(
+                        f"Bilateral asymmetry detected "
+                        f"(symmetry score: {symmetry_analysis.symmetry_score:.2f})"
+                    ),
+                    reasoning=(
+                        "Asymmetry may indicate pathological process "
+                        "affecting one hemisphere more than the other"
+                    ),
                     confidence=0.8,
                     anatomical_focus="bilateral_hemispheres",
                     supporting_evidence=[
@@ -476,8 +520,13 @@ class MedicalReasoningChain:
             reasoning_steps.append(
                 ReasoningStep(
                     step_number=step_number,
-                    observation=f"Ventricular system identified with {len(ventricle_features)} components",
-                    reasoning="Ventricular size and symmetry are key indicators of intracranial pressure and structural abnormalities",
+                    observation=(
+                        f"Ventricular system identified with {len(ventricle_features)} components"
+                    ),
+                    reasoning=(
+                        "Ventricular size and symmetry are key indicators of "
+                        "intracranial pressure and structural abnormalities"
+                    ),
                     confidence=0.85,
                     anatomical_focus="ventricular_system",
                     supporting_evidence=[
@@ -495,7 +544,9 @@ class MedicalReasoningChain:
                     ReasoningStep(
                         step_number=step_number,
                         observation=f"Abnormal finding detected: {feature.name}",
-                        reasoning=f"Located in {feature.anatomical_region}, requires further evaluation",
+                        reasoning=(
+                            f"Located in {feature.anatomical_region}, requires further evaluation"
+                        ),
                         confidence=feature.confidence,
                         anatomical_focus=feature.anatomical_region,
                         supporting_evidence=[feature.description, f"Location: {feature.location}"],

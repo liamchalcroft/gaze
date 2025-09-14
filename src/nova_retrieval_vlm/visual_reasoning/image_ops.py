@@ -5,6 +5,11 @@ from beartype import beartype
 from PIL import Image
 from PIL import ImageEnhance
 
+# Image processing constants
+MIN_CROP_SIZE = 10
+CROP_PADDING = 5
+MAX_INTENSITY = 255
+
 
 @beartype
 def zoom_image(image: Image.Image, factor: float) -> Image.Image:
@@ -42,13 +47,13 @@ def crop_image(image: Image.Image, box: tuple[float, float, float, float]) -> Im
     y2 = max(y1 + 1, min(y2, height))
 
     # Ensure minimum crop size
-    if x2 - x1 < 10:
+    if x2 - x1 < MIN_CROP_SIZE:
         center_x = (x1 + x2) // 2
-        x1 = max(0, center_x - 5)
-        x2 = min(width, center_x + 5)
-    if y2 - y1 < 10:
+        x1 = max(0, center_x - CROP_PADDING)
+        x2 = min(width, center_x + CROP_PADDING)
+    if y2 - y1 < MIN_CROP_SIZE:
         center_y = (y1 + y2) // 2
-        y1 = max(0, center_y - 5)
+        y1 = max(0, center_y - CROP_PADDING)
         y2 = min(height, center_y + 5)
 
     return image.crop((x1, y1, x2, y2))
@@ -70,7 +75,7 @@ def adjust_contrast(image: Image.Image, factor: float) -> Image.Image:
 @beartype
 def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Image.Image:
     """Apply intensity threshold to grayscale image and rescale to 0-255."""
-    if lower < 0 or upper > 255 or lower > upper:
+    if lower < 0 or upper > MAX_INTENSITY or lower > upper:
         raise ValueError("invalid intensity range")
 
     # Ensure reasonable bounds

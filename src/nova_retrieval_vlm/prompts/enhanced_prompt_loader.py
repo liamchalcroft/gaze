@@ -62,7 +62,7 @@ class JinjaTemplatePromptLoader:
             prompts_dir = Path(__file__).parent
 
         self.prompts_dir = prompts_dir
-        self.env = Environment(loader=FileSystemLoader(str(prompts_dir)))
+        self.env = Environment(loader=FileSystemLoader(str(prompts_dir)), autoescape=True)
 
         # Available system prompt modes
         self.system_modes = {

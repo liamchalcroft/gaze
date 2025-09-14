@@ -8,12 +8,14 @@ Jinja templates, creating comprehensive prompts for different analysis modes.
 from pathlib import Path
 from typing import Any
 
+from beartype import beartype
 from jinja2 import Environment
 from jinja2 import FileSystemLoader
 
 from .system_prompts import get_system_prompt
 
 
+@beartype
 def load_prompt(
     template_name: str,
     image_path: Path,
@@ -51,6 +53,7 @@ def load_prompt(
     return combined_prompt
 
 
+@beartype
 def load_jinja_template(
     template_name: str,
     image_path: Path,
@@ -71,7 +74,7 @@ def load_jinja_template(
     """
     # Get the prompts directory
     prompts_dir = Path(__file__).parent
-    env = Environment(loader=FileSystemLoader(str(prompts_dir)))
+    env = Environment(loader=FileSystemLoader(str(prompts_dir)), autoescape=True)
 
     template = env.get_template(template_name)
     context = {
@@ -82,6 +85,7 @@ def load_jinja_template(
     return template.render(**context)
 
 
+@beartype
 def combine_prompts(system_prompt: str, task_prompt: str, mode: str) -> str:
     """
     Combine system prompt with task-specific prompt based on mode.
@@ -123,6 +127,7 @@ def combine_prompts(system_prompt: str, task_prompt: str, mode: str) -> str:
         return f"{system_prompt}\n\n{task_prompt}"
 
 
+@beartype
 def get_mode_from_template(template_name: str) -> str:
     """
     Infer the analysis mode from the template name.
@@ -145,6 +150,7 @@ def get_mode_from_template(template_name: str) -> str:
         return "baseline"
 
 
+@beartype
 def create_enhanced_prompt(
     template_name: str,
     image_path: Path,
@@ -183,6 +189,7 @@ def create_enhanced_prompt(
 
 
 # Backward compatibility - keep the original function signature
+@beartype
 def load_prompt_legacy(
     template_name: str,
     image_path: Path,

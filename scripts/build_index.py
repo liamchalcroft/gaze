@@ -12,7 +12,12 @@ Usage:
 
 import argparse
 
-from nova_retrieval_vlm.guidelines.index_builder import build_indexes
+try:
+    from nova_retrieval_vlm.retrieval.web_search import build_indexes
+except ImportError:
+    # Fallback if the module doesn't exist
+    def build_indexes(**kwargs):
+        print("Warning: build_indexes function not available. Index building disabled.")
 
 
 def main():

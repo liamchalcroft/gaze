@@ -93,13 +93,13 @@ def plot_overlays(
     gt_img = overlay_boxes(
         image_path,
         ref.get("boxes", []),
-        labels=[str(l) for l in ref.get("labels", [])],
+        labels=[str(label) for label in ref.get("labels", [])],
         color="green",
     )
     pred_img = overlay_boxes(
         image_path,
         pred.get("boxes", []),
-        labels=[str(l) for l in pred.get("labels", [])],
+        labels=[str(label) for label in pred.get("labels", [])],
         color="red",
     )
 

@@ -121,7 +121,9 @@ class RetrievalAugmentedEvaluator:
         start_time = time.time()
 
         # Get evaluation configuration
-        evaluation_config = self.evaluation_modes.get(mode, self.evaluation_modes["retrieval_augmented"])
+        evaluation_config = self.evaluation_modes.get(
+            mode, self.evaluation_modes["retrieval_augmented"]
+        )
 
         # Process all samples
         augmented_predictions = []
@@ -192,9 +194,10 @@ class RetrievalAugmentedEvaluator:
                 )
 
                 # Build context from retrieval results
-                context_parts = []
-                for retrieval_result in retrieval_results:
-                    context_parts.append(f"[{retrieval_result.reasoning_type}] {retrieval_result.text}")
+                context_parts = [
+                    f"[{retrieval_result.reasoning_type}] {retrieval_result.text}"
+                    for retrieval_result in retrieval_results
+                ]
                 retrieval_context = "\n".join(context_parts)
 
                 logger.debug(f"Retrieved {len(retrieval_results)} relevant documents")
@@ -204,10 +207,10 @@ class RetrievalAugmentedEvaluator:
         # Step 3: Generate reasoning chain
         reasoning_chain = []
         if visual_analysis:
-            for step in visual_analysis.reasoning_chain:
-                reasoning_chain.append(
-                    f"Step {step.step_number}: {step.observation} - {step.reasoning}"
-                )
+            reasoning_chain.extend(
+                f"Step {step.step_number}: {step.observation} - {step.reasoning}"
+                for step in visual_analysis.reasoning_chain
+            )
 
         # Step 4: Prepare augmented prompt
         augmented_prompt = self._build_augmented_prompt(
@@ -275,9 +278,10 @@ class RetrievalAugmentedEvaluator:
 
             # Add detected features
             if visual_analysis.visual_features:
-                features_desc = []
-                for feature in visual_analysis.visual_features:
-                    features_desc.append(f"{feature.name} ({feature.feature_type})")
+                features_desc = [
+                    f"{feature.name} ({feature.feature_type})"
+                    for feature in visual_analysis.visual_features
+                ]
                 prompt_parts.append(f"Detected Features: {', '.join(features_desc)}")
 
         # Add reasoning chain if available
@@ -346,11 +350,15 @@ class RetrievalAugmentedEvaluator:
         """Evaluate quality of retrieval results."""
 
         # Calculate retrieval metrics
-        avg_confidence = np.mean([retrieval_result.confidence for retrieval_result in retrieval_results])
+        avg_confidence = np.mean(
+            [retrieval_result.confidence for retrieval_result in retrieval_results]
+        )
         avg_score = np.mean([retrieval_result.score for retrieval_result in retrieval_results])
 
         # Evaluate reasoning type diversity
-        reasoning_types = {retrieval_result.reasoning_type for retrieval_result in retrieval_results}
+        reasoning_types = {
+            retrieval_result.reasoning_type for retrieval_result in retrieval_results
+        }
         type_diversity = len(reasoning_types) / max(len(retrieval_results), 1)
 
         # Evaluate medical concept coverage
@@ -447,7 +455,10 @@ class RetrievalAugmentedEvaluator:
         }
 
     def _aggregate_results(
-        self, predictions: list[RetrievalAugmentedPrediction], sample_results: list[dict[str, Any]], mode: str
+        self,
+        predictions: list[RetrievalAugmentedPrediction],
+        sample_results: list[dict[str, Any]],
+        mode: str,
     ) -> RetrievalAugmentedEvaluationResult:
         """Aggregate individual sample results into overall metrics."""
 
@@ -573,11 +584,11 @@ class RetrievalAugmentedEvaluator:
             "error_analysis": result.error_analysis,
         }
 
-        with open(output_dir / f"evaluation_results_{mode}.json", "w") as f:
+        with (output_dir / f"evaluation_results_{mode}.json").open("w") as f:
             json.dump(main_results, f, indent=2)
 
         # Save detailed per-sample results
-        with open(output_dir / f"per_sample_results_{mode}.json", "w") as f:
+        with (output_dir / f"per_sample_results_{mode}.json").open("w") as f:
             json.dump(result.per_sample_results, f, indent=2)
 
         logger.info(f"Evaluation results saved to {output_dir}")

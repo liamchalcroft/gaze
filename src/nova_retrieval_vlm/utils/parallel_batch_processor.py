@@ -11,12 +11,14 @@ from concurrent.futures import as_completed
 from functools import partial
 from typing import Any
 
+from beartype import beartype
 from loguru import logger
 
 
 class ParallelBatchProcessor:
     """Process batches in parallel to significantly speed up evaluation."""
 
+    @beartype
     def __init__(
         self,
         max_workers: int | None = None,
@@ -41,6 +43,7 @@ class ParallelBatchProcessor:
             f"{'threads' if use_threads else 'processes'}"
         )
 
+    @beartype
     def process_batches_parallel(
         self, batch_processor_func: Callable, batches: list[Any], **kwargs
     ) -> list[Any]:
@@ -81,7 +84,9 @@ class ParallelBatchProcessor:
             }
 
             # Collect results as they complete
-            for completed, future in enumerate(as_completed(future_to_idx, timeout=self.timeout), 1):
+            for completed, future in enumerate(
+                as_completed(future_to_idx, timeout=self.timeout), 1
+            ):
                 batch_idx = future_to_idx[future]
 
                 # Get result - let exceptions propagate to caller
@@ -103,11 +108,13 @@ class ParallelBatchProcessor:
         return results
 
     @staticmethod
+    @beartype
     def _process_single_batch(batch_processor_func, batch_idx: int, batch: Any, **kwargs):
         """Process a single batch - wrapper for multiprocessing."""
         return batch_processor_func(batch_idx, batch, **kwargs)
 
 
+@beartype
 def parallel_batch_wrapper(
     original_process_func: Callable, parallel_config: dict[str, Any] | None = None
 ) -> Callable:
@@ -123,6 +130,7 @@ def parallel_batch_wrapper(
     """
     parallel_config = parallel_config or {}
 
+    @beartype
     def wrapped_processor(batches: list[Any], enable_parallel: bool = True, **kwargs):
         if not enable_parallel or len(batches) <= 1:
             # Fall back to sequential processing
@@ -139,6 +147,7 @@ def parallel_batch_wrapper(
     return wrapped_processor
 
 
+@beartype
 def get_optimal_workers(task_type: str = "mixed") -> int:
     """
     Get optimal number of workers based on task type and system resources.
@@ -162,6 +171,7 @@ def get_optimal_workers(task_type: str = "mixed") -> int:
         return min(cpu_count, 8)
 
 
+@beartype
 def estimate_speedup(
     num_batches: int, batch_time_seconds: float, num_workers: int | None = None
 ) -> dict[str, float]:

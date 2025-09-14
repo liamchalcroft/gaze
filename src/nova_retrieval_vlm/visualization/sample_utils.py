@@ -53,7 +53,11 @@ def visualize_samples(
             # Gold standard boxes
             bg = rec.get("bbox_gold", {})
             for x, y, w, h in zip(
-                bg.get("x", []), bg.get("y", []), bg.get("width", []), bg.get("height", []), strict=False
+                bg.get("x", []),
+                bg.get("y", []),
+                bg.get("width", []),
+                bg.get("height", []),
+                strict=False,
             ):
                 draw.rectangle([x, y, x + w, y + h], outline="gold", width=2)
             # Rater boxes

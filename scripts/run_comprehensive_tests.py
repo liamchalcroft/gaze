@@ -3,7 +3,7 @@
 
 This script provides different test execution modes:
 - Unit tests only
-- Integration tests only  
+- Integration tests only
 - Full test suite
 - Performance/stress tests
 - Coverage reporting
@@ -18,13 +18,13 @@ from pathlib import Path
 
 def run_command(cmd: list[str], description: str) -> bool:
     """Run a command and return success status."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"🧪 {description}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Running: {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(cmd, check=True, capture_output=False)
+        subprocess.run(cmd, check=True, capture_output=False)
         print(f"✅ {description} - PASSED")
         return True
     except subprocess.CalledProcessError as e:
@@ -41,38 +41,20 @@ def main():
         "--mode",
         choices=["unit", "integration", "full", "stress", "quick", "ci"],
         default="full",
-        help="Test execution mode (default: full)"
+        help="Test execution mode (default: full)",
     )
 
-    parser.add_argument(
-        "--coverage",
-        action="store_true",
-        help="Run with coverage reporting"
-    )
+    parser.add_argument("--coverage", action="store_true", help="Run with coverage reporting")
 
     parser.add_argument(
-        "--parallel",
-        action="store_true",
-        help="Run tests in parallel (where possible)"
+        "--parallel", action="store_true", help="Run tests in parallel (where possible)"
     )
 
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Verbose output"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Verbose output")
 
-    parser.add_argument(
-        "--fail-fast",
-        action="store_true",
-        help="Stop on first failure"
-    )
+    parser.add_argument("--fail-fast", action="store_true", help="Stop on first failure")
 
-    parser.add_argument(
-        "--html-report",
-        action="store_true",
-        help="Generate HTML coverage report"
-    )
+    parser.add_argument("--html-report", action="store_true", help="Generate HTML coverage report")
 
     args = parser.parse_args()
 
@@ -129,8 +111,9 @@ def main():
         cmd = base_cmd + [
             "--tb=short",
             "--strict-markers",
-            "-m", "not slow and not stress",
-            "tests/"
+            "-m",
+            "not slow and not stress",
+            "tests/",
         ]
         success = run_command(cmd, "CI Test Suite")
 
@@ -140,28 +123,29 @@ def main():
             {
                 "name": "Unit Tests",
                 "cmd": base_cmd + ["tests/test_types.py", "tests/test_batch_processing_utils.py"],
-                "required": True
+                "required": True,
             },
             {
                 "name": "Processor Tests",
                 "cmd": base_cmd + ["tests/test_processors.py"],
-                "required": True
+                "required": True,
             },
             {
                 "name": "Integration Tests",
                 "cmd": base_cmd + ["tests/test_integration.py"],
-                "required": True
+                "required": True,
             },
             {
                 "name": "Edge Case Tests",
-                "cmd": base_cmd + ["-m", "not slow and not stress", "tests/test_edge_cases_and_stress.py"],
-                "required": False
+                "cmd": base_cmd
+                + ["-m", "not slow and not stress", "tests/test_edge_cases_and_stress.py"],
+                "required": False,
             },
             {
                 "name": "Legacy Tests (Fixed Imports)",
                 "cmd": base_cmd + ["tests/test_retrievers.py", "tests/test_adapters.py"],
-                "required": False
-            }
+                "required": False,
+            },
         ]
 
         for stage in test_stages:
@@ -176,14 +160,14 @@ def main():
                     print(f"⚠️  Optional test stage '{stage['name']}' failed, continuing...")
 
     # Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if success:
         print("🎉 ALL TESTS PASSED!")
         print("✅ Test suite completed successfully")
     else:
         print("💥 SOME TESTS FAILED!")
         print("❌ Check the output above for details")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Coverage report location
     if args.coverage and args.html_report:

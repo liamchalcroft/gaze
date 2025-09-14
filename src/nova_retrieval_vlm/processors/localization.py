@@ -29,9 +29,7 @@ class LocalizationProcessor(BaseProcessor):
         responses = []
 
         # Initialize model adapter
-        model_adapter = OpenAIAdapter(
-            model_name=self.config.model_name, max_tokens=512, temperature=0.0
-        )
+        model_adapter = OpenAIAdapter(model_name=self.config.model_name)
 
         for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
@@ -51,6 +49,8 @@ class LocalizationProcessor(BaseProcessor):
                 image_path=Path(image_path),
                 passages=[],  # No passages for basic localization
                 system_prompt=prompt,
+                max_tokens=512,
+                temperature=0.0,
             )
 
             model_result = {
@@ -94,8 +94,12 @@ class LocalizationProcessor(BaseProcessor):
         # Extract predicted boxes from responses
         predicted_boxes = []
         for response in responses:
-            parsed = json.loads(response.text)
-            predicted_boxes.append(parsed.get("boxes", []))
+            try:
+                parsed = json.loads(response.text)
+                predicted_boxes.append(parsed.get("boxes", []))
+            except json.JSONDecodeError:
+                # Handle invalid JSON by using empty boxes list
+                predicted_boxes.append([])
 
         # Parse ground truth boxes
         ground_truth_boxes = []

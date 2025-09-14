@@ -290,7 +290,7 @@ def aggregate_individual_metrics(result_dir: ResultDirectory) -> dict | None:
     for key in all_metrics[0]:
         values = [m.get(key, 0) for m in all_metrics if key in m]
         if values:
-            if isinstance(values[0], (int, float)):
+            if isinstance(values[0], int | float):
                 aggregated[key] = sum(values) / len(values)
             else:
                 # For non-numeric values, take the most common

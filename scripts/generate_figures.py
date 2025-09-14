@@ -42,7 +42,7 @@ def load_aggregated_results(results_file: Path) -> pd.DataFrame:
     if not results_file.exists():
         raise FileNotFoundError(f"Results file not found: {results_file}")
 
-    return pd.read_csv(results_file)
+    return pd.read_csv(results_file)  # type: ignore[return-value]
 
 
 def create_performance_comparison_bar_chart(df: pd.DataFrame, output_file: Path) -> None:
@@ -58,26 +58,26 @@ def create_performance_comparison_bar_chart(df: pd.DataFrame, output_file: Path)
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
         approach_labels.append(APPROACH_DISPLAY_NAMES.get(approach, approach))
 
         # Get metrics for each task (handle missing tasks)
-        loc_data = approach_data[approach_data["task"] == "localization"]
-        cap_data = approach_data[approach_data["task"] == "caption"]
-        diag_data = approach_data[approach_data["task"] == "diagnosis"]
+        loc_data = approach_data[approach_data["task"] == "localization"]  # type: ignore[index]
+        cap_data = approach_data[approach_data["task"] == "caption"]  # type: ignore[index]
+        diag_data = approach_data[approach_data["task"] == "diagnosis"]  # type: ignore[index]
 
         loc_map50 = (
-            loc_data["map50"].mean()
+            loc_data["map50"].mean()  # type: ignore[union-attr]
             if not loc_data.empty and "map50" in loc_data.columns
             else float("nan")
         )
         cap_bleu = (
-            cap_data["bleu"].mean()
+            cap_data["bleu"].mean()  # type: ignore[union-attr]
             if not cap_data.empty and "bleu" in cap_data.columns
             else float("nan")
         )
         diag_top1 = (
-            diag_data["top1"].mean()
+            diag_data["top1"].mean()  # type: ignore[union-attr]
             if not diag_data.empty and "top1" in diag_data.columns
             else float("nan")
         )
@@ -112,7 +112,7 @@ def create_performance_comparison_bar_chart(df: pd.DataFrame, output_file: Path)
             ax.text(
                 bar.get_x() + bar.get_width() / 2.0,
                 height + 0.5,
-                f"{value:.1f}" if "BLEU" in metric else f"{value:.1f}%",
+                f"{float(value):.1f}" if "BLEU" in metric else f"{float(value):.1f}%",
                 ha="center",
                 va="bottom",
                 fontweight="bold",
@@ -147,18 +147,18 @@ def create_radar_plot(df: pd.DataFrame, output_file: Path) -> None:
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
 
-        loc_data = approach_data[approach_data["task"] == "localization"]
-        cap_data = approach_data[approach_data["task"] == "caption"]
-        diag_data = approach_data[approach_data["task"] == "diagnosis"]
+        loc_data = approach_data[approach_data["task"] == "localization"]  # type: ignore[index]
+        cap_data = approach_data[approach_data["task"] == "caption"]  # type: ignore[index]
+        diag_data = approach_data[approach_data["task"] == "diagnosis"]  # type: ignore[index]
 
         values = [
-            loc_data["map50"].mean() * 100 if not loc_data.empty else 0,
-            cap_data["bleu"].mean() * 100 if not cap_data.empty else 0,
-            cap_data["meteor"].mean() * 100 if not cap_data.empty else 0,
-            diag_data["top1"].mean() * 100 if not diag_data.empty else 0,
-            diag_data["top5"].mean() * 100 if not diag_data.empty else 0,
+            loc_data["map50"].mean() * 100 if not loc_data.empty else 0,  # type: ignore[union-attr]
+            cap_data["bleu"].mean() * 100 if not cap_data.empty else 0,  # type: ignore[union-attr]
+            cap_data["meteor"].mean() * 100 if not cap_data.empty else 0,  # type: ignore[union-attr]
+            diag_data["top1"].mean() * 100 if not diag_data.empty else 0,  # type: ignore[union-attr]
+            diag_data["top5"].mean() * 100 if not diag_data.empty else 0,  # type: ignore[union-attr]
         ]
 
         radar_data[approach] = values
@@ -171,12 +171,13 @@ def create_radar_plot(df: pd.DataFrame, output_file: Path) -> None:
 
     # Plot each approach
     for approach, values in radar_data.items():
-        values += values[:1]  # Complete the circle
-        color = APPROACH_COLORS.get(approach, "#000000")
-        label = APPROACH_DISPLAY_NAMES.get(approach, approach)
+        if isinstance(approach, str):
+            values_list = list(values) + list(values[:1])  # Complete the circle
+            color = APPROACH_COLORS.get(approach, "#000000")
+            label = APPROACH_DISPLAY_NAMES.get(approach, approach)
 
-        ax.plot(angles, values, "o-", linewidth=2, label=label, color=color)
-        ax.fill(angles, values, alpha=0.1, color=color)
+            ax.plot(angles, values_list, "o-", linewidth=2, label=label, color=color)
+            ax.fill(angles, values_list, alpha=0.1, color=color)
 
     # Customize the plot with directional arrows (all these metrics: higher is better)
     metrics_with_arrows = [f"{metric} ↑" for metric in metrics]
@@ -203,7 +204,7 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
     tasks = ["localization", "caption", "diagnosis"]
 
     for task in tasks:
-        task_data = df[df["task"] == task]
+        task_data = df[df["task"] == task]  # type: ignore[index]
         if task_data.empty:
             continue
 
@@ -239,12 +240,12 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
             if approach not in APPROACH_COLORS:
                 continue
 
-            approach_task_data = task_data[task_data["approach"] == approach]
+            approach_task_data = task_data[task_data["approach"] == approach]  # type: ignore[index]
             values = []
 
             for metric in metrics:
                 if metric in approach_task_data.columns:
-                    val = approach_task_data[metric].mean()
+                    val = approach_task_data[metric].mean()  # type: ignore[union-attr]
                     if task == "caption" and metric == "bleu":
                         values.append(val if not pd.isna(val) else 0)
                     else:
@@ -272,7 +273,7 @@ def create_task_specific_comparison(df: pd.DataFrame, output_dir: Path) -> None:
                 ax.text(
                     bar.get_x() + bar.get_width() / 2.0,
                     height + 0.5,
-                    f"{value:.1f}",
+                    f"{float(value):.1f}",
                     ha="center",
                     va="bottom",
                     fontsize=8,
@@ -403,27 +404,27 @@ def create_heatmap(df: pd.DataFrame, output_file: Path) -> None:
         if approach not in df["approach"].values:
             continue
 
-        approach_data = df[df["approach"] == approach]
+        approach_data = df[df["approach"] == approach]  # type: ignore[index]
         row = []
 
         for task in tasks:
-            task_data = approach_data[approach_data["task"] == task]
+            task_data = approach_data[approach_data["task"] == task]  # type: ignore[index]
 
             if task == "localization":
                 value = (
-                    task_data["map50"].mean() * 100
+                    task_data["map50"].mean()  # type: ignore[union-attr] * 100
                     if not task_data.empty and "map50" in task_data.columns
                     else 0
                 )
             elif task == "caption":
                 value = (
-                    task_data["bleu"].mean() * 100
+                    task_data["bleu"].mean()  # type: ignore[union-attr] * 100
                     if not task_data.empty and "bleu" in task_data.columns
                     else 0
                 )
             else:  # diagnosis
                 value = (
-                    task_data["top1"].mean() * 100
+                    task_data["top1"].mean()  # type: ignore[union-attr] * 100
                     if not task_data.empty and "top1" in task_data.columns
                     else 0
                 )

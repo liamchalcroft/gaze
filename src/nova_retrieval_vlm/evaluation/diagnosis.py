@@ -22,7 +22,8 @@ def gpt4o_semantic_match(
         # Create the semantic matching prompt
         prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
-Your task is to determine if two diagnostic labels refer to the same medical condition, even if expressed differently.
+Your task is to determine if two diagnostic labels refer to the same medical condition,
+even if expressed differently.
 
 Consider these diagnostically equivalent:
 - Different terminology for the same condition (e.g., "heart attack" = "myocardial infarction")
@@ -34,7 +35,8 @@ Consider these diagnostically equivalent:
 PREDICTION: "{pred}"
 REFERENCE: "{ref}"
 
-Respond with ONLY "YES" if they refer to the same medical condition, or "NO" if they refer to different conditions.
+Respond with ONLY "YES" if they refer to the same medical condition,
+or "NO" if they refer to different conditions.
 """
 
         # Get model client and make the comparison

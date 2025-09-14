@@ -41,7 +41,7 @@ class BM25Retriever:
         index_path = Path(index_dir)
         docs_file = index_path / "bm25_docs.jsonl"
         if docs_file.exists():
-            with open(docs_file) as f:
+            with docs_file.open() as f:
                 docs = [json.loads(line) for line in f]
         else:
             # Graceful fallback for test environments – create an *empty* document list.
@@ -106,7 +106,7 @@ class DenseRetriever:
             )
 
         self.index = faiss.read_index(str(index_path / "faiss.index"))
-        with open(index_path / "faiss_docs.jsonl") as f:
+        with (index_path / "faiss_docs.jsonl").open() as f:
             self.docs = [json.loads(line) for line in f]
         self.texts = [d["text"] for d in self.docs]
         self.model_name = model_name

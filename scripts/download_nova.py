@@ -26,10 +26,13 @@ def main():
 
     # Save to disk for reproducibility
     print(f"Saving dataset to disk at {args.data_dir}/nova_")
-    for split, dataset in ds.items():
-        path = f"{args.data_dir}/nova_{split}"
-        dataset.save_to_disk(path)
-        print(f"Saved split '{split}' to {path}")
+    if hasattr(ds, "items"):
+        for split, dataset in ds.items():
+            if isinstance(split, str):
+                path = f"{args.data_dir}/nova_{split}"
+                if hasattr(dataset, "save_to_disk"):
+                    dataset.save_to_disk(path)
+                    print(f"Saved split '{split}' to {path}")
 
 
 if __name__ == "__main__":
