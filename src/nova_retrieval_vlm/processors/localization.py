@@ -91,34 +91,51 @@ class LocalizationProcessor(BaseProcessor):
         self, responses: list[ModelResponse], ground_truth: list[str]
     ) -> EvaluationMetrics:
         """Evaluate localization responses."""
-        # Extract predicted boxes from responses
-        predicted_boxes = []
+        # Extract predicted boxes from responses - format for evaluator
+        predicted_dicts = []
         for response in responses:
             try:
                 parsed = json.loads(response.text)
-                predicted_boxes.append(parsed.get("boxes", []))
+                boxes = parsed.get("boxes", [])
+                # Create dict format expected by evaluator
+                predicted_dicts.append(
+                    {
+                        "boxes": boxes,
+                        "scores": [1.0] * len(boxes),  # Default confidence scores
+                        "labels": [0] * len(boxes),  # Default label 0 for all detections
+                    }
+                )
             except json.JSONDecodeError:
-                # Handle invalid JSON by using empty boxes list
-                predicted_boxes.append([])
+                # Handle invalid JSON by using empty detection dict
+                predicted_dicts.append({"boxes": [], "scores": [], "labels": []})
 
-        # Parse ground truth boxes
-        ground_truth_boxes = []
+        # Parse ground truth boxes - format for evaluator
+        ground_truth_dicts = []
         for gt in ground_truth:
             if isinstance(gt, str):
                 gt_parsed = json.loads(gt)
-                ground_truth_boxes.append(gt_parsed.get("boxes", []))
+                boxes = gt_parsed.get("boxes", [])
             else:
-                ground_truth_boxes.append(gt)
+                boxes = gt if isinstance(gt, list) else []
+
+            # Create dict format expected by evaluator
+            ground_truth_dicts.append(
+                {
+                    "boxes": boxes,
+                    "scores": [1.0] * len(boxes),  # Ground truth has confidence 1.0
+                    "labels": [0] * len(boxes),  # Default label 0 for all ground truth
+                }
+            )
 
         # Use existing evaluation function
-        results = evaluate_detection(predicted_boxes, ground_truth_boxes)
+        results = evaluate_detection(predicted_dicts, ground_truth_dicts)
 
         return EvaluationMetrics(
-            accuracy=results.get("mAP@0.5", 0.0),  # Use mAP@0.5 as primary accuracy
+            accuracy=results.get("map50", 0.0),  # Use mAP@0.5 as primary accuracy
             precision=results.get("precision"),
             recall=results.get("recall"),
             f1_score=results.get("f1_score"),
-            auc_roc=results.get("mAP@0.75"),
+            auc_roc=results.get("map30"),  # Use mAP@0.3 as secondary metric
         )
 
     def _create_localization_prompt(self, image_path: Path, metadata: dict[str, Any]) -> str:

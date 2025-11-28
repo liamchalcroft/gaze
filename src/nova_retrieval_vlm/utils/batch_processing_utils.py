@@ -20,7 +20,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
 
+import matplotlib
+import matplotlib.pyplot as plt
 from loguru import logger
+from matplotlib import patches
+from matplotlib import patheffects as pe
+from matplotlib.lines import Line2D
+from PIL import Image
+
+# Import at top level to avoid circular imports
+from nova_retrieval_vlm.evaluation import evaluate
+
+# Constants
+BBOX_COORDS_COUNT = 4  # Standard bounding box has 4 coordinates
 
 if TYPE_CHECKING:
     from matplotlib.lines import Line2D
@@ -40,30 +52,19 @@ class BatchContext:  # noqa: D101 – simple data container
 # ---------------------------------------------------------------------------
 
 
-def convert_localization_schema(result: dict) -> None:
-    """Convert new localization schema to legacy format for backward compatibility."""
+def normalize_localization_result(result: dict) -> None:
+    """Normalize localization result to standard format with boxes/labels/scores keys.
+
+    Handles conversion from model output format (localizations) to evaluation format.
+    """
+    # Convert from model output format if needed
     if "localizations" in result and "boxes" not in result:
         localizations = result["localizations"]
-        boxes = []
-        labels = []
-        scores = []
-
-        for loc in localizations:
-            if "bounding_box" in loc:
-                boxes.append(loc["bounding_box"])
-                labels.append("anomaly")  # Standard label for compatibility
-                scores.append(loc.get("confidence", 1.0))
-
-        result["boxes"] = boxes
-        result["labels"] = labels
-        result["scores"] = scores
-
-
-def normalize_localization_result(result: dict) -> None:  # noqa: D401
-    """Add *boxes* / *labels* / *scores* keys if missing (in-place)."""
-
-    # First convert new schema to legacy if needed
-    convert_localization_schema(result)
+        result["boxes"] = [loc["bounding_box"] for loc in localizations if "bounding_box" in loc]
+        result["labels"] = ["anomaly"] * len(result["boxes"])
+        result["scores"] = [
+            loc.get("confidence", 1.0) for loc in localizations if "bounding_box" in loc
+        ]
 
     if "boxes" not in result or result["boxes"] is None:
         result["boxes"] = []
@@ -120,7 +121,7 @@ def _iter_boxes_generic(raw_boxes: list[Any]):
     """Yield boxes in [x1,y1,x2,y2] regardless of input encoding."""
 
     for b in raw_boxes:
-        if isinstance(b, list | tuple) and len(b) == 4:
+        if isinstance(b, list | tuple) and len(b) == BBOX_COORDS_COUNT:
             yield b
         elif isinstance(b, dict):
             if all(k in b for k in ("x1", "y1", "x2", "y2")):
@@ -136,14 +137,6 @@ def draw_ground_truth_vs_predicted_boxes(
     out_path: Path,
 ) -> None:
     """Create *out_path* PNG with GT (green) and pred (red) boxes."""
-
-    import matplotlib
-    import matplotlib.pyplot as plt
-    from matplotlib import patches
-    from matplotlib import patheffects as pe
-    from matplotlib.lines import Line2D
-    from PIL import Image
-
     matplotlib.use("Agg")  # headless backend
 
     img = Image.open(img_path).convert("L")
@@ -195,8 +188,6 @@ def draw_ground_truth_vs_predicted_boxes(
 
 def compute_evaluation_metrics(img_folder: Path, task: str) -> None:  # noqa: D401
     """Run evaluation for this image and write metrics.json."""
-
-    from nova_retrieval_vlm.evaluation import evaluate  # local import
 
     pred_file = img_folder / "pred.jsonl"
     ref_file = img_folder / "ref.jsonl"

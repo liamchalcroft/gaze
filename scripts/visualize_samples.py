@@ -16,8 +16,10 @@ import PIL.ExifTags
 import PIL.Image
 
 # Monkey-patch missing EXIF Base.Orientation tag for decoding
+# This must happen before importing PIL modules
 PIL.ExifTags.Base = type("Base", (), {"Orientation": 274})
 PIL.Image.ExifTags = PIL.ExifTags
+
 from datasets import load_dataset
 from PIL import Image
 from PIL import ImageDraw

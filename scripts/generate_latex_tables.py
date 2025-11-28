@@ -11,6 +11,9 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
+# Constants
+FLOAT_PRECISION_TOLERANCE = 1e-6
+
 # Mapping from internal approach names to display names for the table
 APPROACH_DISPLAY_NAMES = {
     "baseline": "Baseline",
@@ -162,7 +165,8 @@ def generate_performance_table(
         "  \\centering",
         "  \\begin{tabular}{lccc}",
         "    \\hline",
-        "    \\textbf{Agent Configuration} & \\textbf{Localisation mAP50} & \\textbf{Caption BLEU} & \\textbf{Diagnosis Top-1}\\\\",
+        "    \\textbf{Agent Configuration} & \\textbf{Localisation mAP50} & "
+        "\\textbf{Caption BLEU} & \\textbf{Diagnosis Top-1}\\\\",
         "    \\hline",
     ]
 
@@ -211,12 +215,18 @@ def generate_performance_table(
         # Bold the best scores
         if (
             not pd.isna(data["localization_map50"])
-            and abs(data["localization_map50"] - best_map50) < 1e-6
+            and abs(data["localization_map50"] - best_map50) < FLOAT_PRECISION_TOLERANCE
         ):
             map50_str = f"\\textbf{{{map50_str}}}"
-        if not pd.isna(data["caption_bleu"]) and abs(data["caption_bleu"] - best_bleu) < 1e-6:
+        if (
+            not pd.isna(data["caption_bleu"])
+            and abs(data["caption_bleu"] - best_bleu) < FLOAT_PRECISION_TOLERANCE
+        ):
             bleu_str = f"\\textbf{{{bleu_str}}}"
-        if not pd.isna(data["diagnosis_top1"]) and abs(data["diagnosis_top1"] - best_top1) < 1e-6:
+        if (
+            not pd.isna(data["diagnosis_top1"])
+            and abs(data["diagnosis_top1"] - best_top1) < FLOAT_PRECISION_TOLERANCE
+        ):
             top1_str = f"\\textbf{{{top1_str}}}"
 
         latex_lines.append(f"    {display_name:<25} & {map50_str} & {bleu_str} & {top1_str}\\\\")
@@ -236,7 +246,7 @@ def generate_performance_table(
     )
 
     # Write to file
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         f.write("\n".join(latex_lines))
 
     logger.info(f"Performance table saved to {output_file}")
@@ -310,7 +320,7 @@ def generate_detailed_table(df: pd.DataFrame, output_file: Path) -> None:
     latex_lines.extend(["    \\hline", "  \\end{tabular}", "\\end{table}"])
 
     # Write to file
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         f.write("\n".join(latex_lines))
 
     logger.info(f"Detailed table saved to {output_file}")
@@ -416,7 +426,7 @@ def generate_task_breakdown_table(df: pd.DataFrame, output_file: Path) -> None:
     latex_lines.extend(["    \\hline", "  \\end{tabular}", "\\end{table*}"])
 
     # Write to file
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         f.write("\n".join(latex_lines))
 
     logger.info(f"Task breakdown table saved to {output_file}")
@@ -458,7 +468,7 @@ def generate_summary_statistics(df: pd.DataFrame, output_file: Path) -> None:
     latex_lines.extend(["    \\hline", "  \\end{tabular}", "\\end{table}"])
 
     # Write to file
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         f.write("\n".join(latex_lines))
 
     logger.info(f"Summary statistics table saved to {output_file}")

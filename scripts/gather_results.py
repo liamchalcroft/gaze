@@ -33,7 +33,7 @@ class BenchmarkResults:
 def load_individual_metrics(metrics_file: Path) -> dict[str, float] | None:
     """Load metrics from a single metrics.json file."""
     try:
-        with open(metrics_file) as f:
+        with metrics_file.open() as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to load {metrics_file}: {e}")
@@ -196,7 +196,7 @@ def save_results(results: list[BenchmarkResults], output_dir: Path) -> None:
         },
     }
 
-    with open(output_dir / "aggregated_results.json", "w") as f:
+    with (output_dir / "aggregated_results.json").open("w") as f:
         json.dump(json_data, f, indent=2)
     logger.info(f"Saved JSON results to {output_dir / 'aggregated_results.json'}")
 

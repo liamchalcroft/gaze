@@ -1,36 +1,21 @@
+"""Retrieval implementations for BM25, dense, and hybrid search."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Protocol
 
-try:
-    import faiss  # type: ignore
-    import numpy as np
-except Exception:  # pragma: no cover
-    np = None  # type: ignore
-    faiss = None  # type: ignore
-
-# sentence-transformers (requires torch)
-try:
-    from sentence_transformers import CrossEncoder  # type: ignore
-    from sentence_transformers import SentenceTransformer  # type: ignore
-except Exception:  # pragma: no cover
-    SentenceTransformer = None  # type: ignore
-    CrossEncoder = None  # type: ignore
-
-# haystack (used for BM25)
-try:
-    from haystack.components.retrievers.in_memory import (
-        InMemoryBM25Retriever as HS_BM25,  # type: ignore
-    )
-    from haystack.dataclasses import Document  # type: ignore
-    from haystack.document_stores.in_memory import InMemoryDocumentStore  # type: ignore
-except Exception:  # pragma: no cover
-    InMemoryDocumentStore = HS_BM25 = Document = None  # type: ignore
+import faiss
+import numpy as np
+from haystack.components.retrievers.in_memory import InMemoryBM25Retriever as HS_BM25
+from haystack.dataclasses import Document
+from haystack.document_stores.in_memory import InMemoryDocumentStore
+from sentence_transformers import CrossEncoder
+from sentence_transformers import SentenceTransformer
 
 
-class BaseRetriever(Protocol):  # typing.Protocol
+class BaseRetriever(Protocol):
     def __call__(self, query: str, k: int = 6) -> list[str]: ...
 
 
@@ -40,111 +25,43 @@ class BM25Retriever:
     def __init__(self, index_dir: str | Path):
         index_path = Path(index_dir)
         docs_file = index_path / "bm25_docs.jsonl"
-        if docs_file.exists():
-            with docs_file.open() as f:
-                docs = [json.loads(line) for line in f]
-        else:
-            # Graceful fallback for test environments – create an *empty* document list.
-            docs = []
+        if not docs_file.exists():
+            raise FileNotFoundError(f"BM25 index file not found: {docs_file}")
 
-        if InMemoryDocumentStore is None or HS_BM25 is None:
-            raise ImportError("haystack not available - BM25Retriever cannot be instantiated.")
+        with docs_file.open() as f:
+            docs = [json.loads(line) for line in f]
 
         store = InMemoryDocumentStore()
         hay_docs = [Document(content=d["text"], meta=d) for d in docs]
         store.write_documents(hay_docs)
         self.retriever = HS_BM25(document_store=store)
 
-        # Verify the retriever has the expected method (try 'run' first, then 'retrieve')
-        if not hasattr(self.retriever, "run") and not hasattr(self.retriever, "retrieve"):
-            available_methods = [attr for attr in dir(self.retriever) if not attr.startswith("_")]
-            raise AttributeError(
-                f"BM25Retriever.retriever object has no 'run' or 'retrieve' method. "
-                f"Available methods: {available_methods}. "
-                f"This may indicate a Haystack version compatibility issue."
-            )
-
     def __call__(self, query: str, k: int = 6) -> list[str]:
-        try:
-            # Prefer the more explicit `retrieve` when available (stable across Haystack versions)
-            if hasattr(self.retriever, "retrieve"):
-                results = self.retriever.retrieve(query=query, top_k=k)
-                return [doc.content for doc in results]
-            # Fallback to the pipeline-style `run` API introduced in newer Haystack versions
-            elif hasattr(self.retriever, "run"):
-                results = self.retriever.run(query=query, top_k=k)
-                return [doc.content for doc in results["documents"]]
-            else:
-                available_methods = [
-                    attr for attr in dir(self.retriever) if not attr.startswith("_")
-                ]
-                raise AttributeError(
-                    f"BM25Retriever failed. Available methods: {available_methods}. "
-                    f"Haystack version compatibility issue detected."
-                )
-        except Exception as e:
-            available_methods = [attr for attr in dir(self.retriever) if not attr.startswith("_")]
-            raise AttributeError(
-                f"BM25Retriever failed during execution. Available methods: {available_methods}. "
-                f"Error: {e}"
-            ) from e
+        results = self.retriever.run(query=query, top_k=k)
+        return [doc.content for doc in results["documents"]]
 
 
 class DenseRetriever:
     """Dense retriever using FAISS and SentenceTransformer embeddings."""
 
-    # Default to the lightweight MiniLM model to keep the dependency footprint
-    # small for CI test environments.  Higher-quality models such as
-    # *intfloat/e5-base-v2* can still be selected at runtime via the optional
-    # ``model_name`` parameter.
     def __init__(self, index_dir: str | Path, *, model_name: str = "all-MiniLM-L6-v2"):
         index_path = Path(index_dir)
-
-        if faiss is None or SentenceTransformer is None or np is None:
-            raise ImportError(
-                "FAISS, NumPy, and sentence-transformers are required for DenseRetriever."
-            )
-
         self.index = faiss.read_index(str(index_path / "faiss.index"))
         with (index_path / "faiss_docs.jsonl").open() as f:
             self.docs = [json.loads(line) for line in f]
         self.texts = [d["text"] for d in self.docs]
         self.model_name = model_name
         self.model = SentenceTransformer(model_name)
-
-        # Determine whether we need to add prefix tokens for query encoding
         self._use_e5_prefix = "e5" in model_name.lower()
 
     def __call__(self, query: str, k: int = 6) -> list[str]:
-        if faiss is None or np is None:
-            raise RuntimeError("DenseRetriever cannot run without FAISS and NumPy.")
-
-        # Apply "query: " prefix expected by e5-style models if applicable
         if self._use_e5_prefix:
             query = f"query: {query}"
 
-        # Encode the query to a NumPy vector. The sentence-transformers encoder
-        # returns a 1-D array of shape ``(d,)``.  FAISS helper utilities such as
-        # ``faiss.normalize_L2`` expect a 2-D array with shape ``(n, d)`` where
-        # *n* is the number of vectors.  Wrap the vector in an additional axis
-        # to satisfy this requirement and to avoid the "tuple index out of
-        # range" error when FAISS attempts to access ``shape[1]``.
-
         q_emb = self.model.encode(query, convert_to_numpy=True)
-
-        # L2-normalise the *original* 1-D vector so that unit tests that spy
-        # on ``faiss.normalize_L2`` see the expected call argument.
         faiss.normalize_L2(q_emb)
-
-        # Wrap the vector into an outer list so that the resulting shape is
-        # ``(1, d)`` for FAISS.  This also triggers the mocked ``np.array``
-        # call expected by the unit test suite.
         q_emb = np.array([q_emb])
-
-        # Perform the search.
         _, indices = self.index.search(q_emb, k)
-
-        # indices is shape (1, k); flatten to list and map to texts.
         return [self.texts[i] for i in indices[0] if i < len(self.texts)]
 
 
@@ -152,10 +69,6 @@ class CrossEncoderReranker:
     """Cross-encoder re-ranker for improving retrieval precision."""
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
-        if CrossEncoder is None:
-            raise ImportError(
-                "sentence-transformers with CrossEncoder support required for re-ranking."
-            )
         self.model = CrossEncoder(model_name)
 
     def rerank(self, query: str, documents: list[str], top_k: int = None) -> list[str]:

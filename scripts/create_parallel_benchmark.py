@@ -11,10 +11,10 @@ def read_existing_script(script_path: Path) -> str:
     try:
         return script_path.read_text()
     except FileNotFoundError:
-        raise FileNotFoundError(f"Script not found: {script_path}")
+        raise FileNotFoundError(f"Script not found: {script_path}") from None
 
 
-def create_parallel_version(script_content: str, approach_name: str) -> str:
+def create_parallel_version(_script_content: str, approach_name: str) -> str:
     """Transform a sequential script to a parallel version."""
 
     # Template for parallel script
@@ -68,7 +68,8 @@ run_model_task() {{
 
     # Create run directory and log configuration
     mkdir -p "${{RUN_DIR}}"
-    echo "Configuration: approach={approach_name}, task=${{TASK}}, model=${{MODEL}}" > "${{RUN_DIR}}/config.txt"
+    echo "Configuration: approach={approach_name}, task=${{TASK}}, model=${{MODEL}}" \\
+        > "${{RUN_DIR}}/config.txt"
     echo "Parallel execution enabled" >> "${{RUN_DIR}}/config.txt"
 
     local log_file="${{RUN_DIR}}/execution.log"

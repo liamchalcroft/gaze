@@ -82,11 +82,9 @@ def extract_metric_values(
     sample_data: dict[str, dict[str, list[dict[str, float]]]], approach: str, task: str, metric: str
 ) -> list[float]:
     """Extract values for a specific metric from sample data."""
-    values = []
-    for sample in sample_data.get(approach, {}).get(task, []):
-        if metric in sample:
-            values.append(sample[metric])
-    return values
+    return [
+        sample[metric] for sample in sample_data.get(approach, {}).get(task, []) if metric in sample
+    ]
 
 
 def compute_effect_size_cohens_d(a: np.ndarray, b: np.ndarray) -> float:
@@ -359,22 +357,21 @@ def save_statistical_results(results: list[StatisticalTest], output_dir: Path) -
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Convert to DataFrame for easy manipulation
-    data = []
-    for result in results:
-        data.append(
-            {
-                "approach_a": result.approach_a,
-                "approach_b": result.approach_b,
-                "task": result.task,
-                "metric": result.metric,
-                "test_type": result.test_type,
-                "statistic": result.statistic,
-                "p_value": result.p_value,
-                "effect_size": result.effect_size,
-                "significant": result.significant,
-                "sample_size": result.sample_size,
-            }
-        )
+    data = [
+        {
+            "approach_a": result.approach_a,
+            "approach_b": result.approach_b,
+            "task": result.task,
+            "metric": result.metric,
+            "test_type": result.test_type,
+            "statistic": result.statistic,
+            "p_value": result.p_value,
+            "effect_size": result.effect_size,
+            "significant": result.significant,
+            "sample_size": result.sample_size,
+        }
+        for result in results
+    ]
 
     df = pd.DataFrame(data)
 

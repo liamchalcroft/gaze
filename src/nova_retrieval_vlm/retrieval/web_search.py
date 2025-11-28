@@ -796,18 +796,6 @@ class MedicalWebSearcher(WebSearcher):
         """
         return self.search(query, medical_focus=False)
 
-    def medical_search(self, query: str) -> list[WebSearchResult]:
-        """
-        Alias for search_medical for backward compatibility.
-
-        Args:
-            query: Search query
-
-        Returns:
-            List of medical web search results
-        """
-        return self.search_medical(query)
-
     def _is_medical_source(self, url: str) -> bool:
         """Check if URL is from a reputable medical source."""
         url_lower = url.lower()

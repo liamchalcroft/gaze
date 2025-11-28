@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from datasets import load_dataset
 from PIL import Image
+
+from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
+from nova_retrieval_vlm.models.openrouter_adapter import OpenRouterAdapter
 
 from .plotting import overlay_boxes
 
@@ -18,44 +24,76 @@ def load_nova_dataset() -> Any:
     return load_dataset("Ano-2090/Nova", split="test", trust_remote_code=False)
 
 
-def dummy_predict(model_name: str, image: Image.Image, task: str) -> dict[str, Any]:  # noqa: ARG001 - Placeholder function
-    """Placeholder prediction function.
+async def predict_with_model(model_name: str, image: Image.Image, task: str) -> dict[str, Any]:
+    """Real prediction function using proper model adapters."""
+    # Save image to temporary file for model adapters
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+        image.save(temp_file.name, format="JPEG", quality=95)
+        image_path = Path(temp_file.name)
 
-    This stub returns deterministic fake outputs so that the GUI remains
-    functional in environments without model access.
-    """
-    if task == "localization":
-        return {
-            "boxes": [[20, 20, 80, 80]],
-            "labels": ["anomaly"],
-            "reasoning": f"{model_name} reasoning for localization.",
-            "reasoning_steps": [
-                "Locate suspicious regions in the image",
-                "Compare with known abnormal patterns",
-            ],
-            "retrieval": ["Example guideline passage 1", "Example guideline passage 2"],
-        }
-    if task == "caption":
-        return {
-            "text": f"{model_name} caption describing the image.",
-            "reasoning": f"{model_name} reasoning for captioning.",
-            "reasoning_steps": [
-                "Identify key structures",
-                "Summarise overall appearance",
-            ],
-            "retrieval": ["Example caption passage"],
-        }
-    if task == "diagnosis":
-        return {
-            "text": f"{model_name} predicted diagnosis.",
-            "reasoning": f"{model_name} reasoning for diagnosis.",
-            "reasoning_steps": [
-                "Consider clinical history",
-                "Match findings with likely diagnoses",
-            ],
-            "retrieval": ["Example diagnosis passage"],
-        }
-    return {}
+    try:
+        # Create model adapter based on model name
+        if model_name.startswith("openai/"):
+            adapter = OpenAIAdapter(model_name=model_name.split("/", 1)[1])
+        else:
+            adapter = OpenRouterAdapter(model_name=model_name)
+
+        # Create task-specific prompt based on task type
+        if task == "localization":
+            system_prompt = (
+                "Analyze this medical image and locate any abnormalities or regions of interest. "
+                "Return your response as JSON with 'boxes' (list of [x, y, width, height] coordinates) "
+                "and 'reasoning'."
+            )
+        elif task == "caption":
+            system_prompt = (
+                "Generate a detailed medical caption for this image. "
+                "Return your response as JSON with 'text' (the caption) and 'reasoning'."
+            )
+        elif task == "diagnosis":
+            system_prompt = (
+                "Provide a medical diagnosis based on this image. "
+                "Return your response as JSON with 'text' (diagnosis), 'confidence' (0-1), "
+                "and 'reasoning'."
+            )
+        else:
+            raise ValueError(f"Unknown task: {task}")
+
+        # Get model response
+        response_text, generation_log = await adapter.generate(
+            image_path=image_path,
+            passages=[],  # No retrieval for now - can be added later
+            system_prompt=system_prompt,
+            max_tokens=512,
+            temperature=0.1,
+        )
+
+        # Parse JSON response
+        try:
+            result = json.loads(response_text)
+            result["model_name"] = model_name
+            result["generation_log"] = {
+                "tokens": generation_log.tokens,
+                "cost": generation_log.cost,
+                "timestamp": generation_log.timestamp,
+            }
+            return result
+        except json.JSONDecodeError:
+            # If not JSON, return as text response
+            return {
+                "text": response_text,
+                "reasoning": f"Response from {model_name}",
+                "model_name": model_name,
+                "generation_log": {
+                    "tokens": generation_log.tokens,
+                    "cost": generation_log.cost,
+                    "timestamp": generation_log.timestamp,
+                },
+            }
+
+    finally:
+        # Clean up temporary file
+        image_path.unlink(missing_ok=True)
 
 
 def render_prediction(result: dict[str, Any], image_path: Path, task: str) -> None:
@@ -130,7 +168,7 @@ def main() -> None:
             for task in tasks:
                 with st.container():
                     st.markdown(f"### {task.capitalize()}")
-                    res = dummy_predict(model, image, task)
+                    res = asyncio.run(predict_with_model(model, image, task))
                     render_prediction(res, image_path, task)
 
 

@@ -9,16 +9,18 @@ This is a research framework for comparing vision-language models on the NOVA br
 ```
 nova_retrieval_vlm/
 ├── src/nova_retrieval_vlm/     # Main Python package
-│   ├── cli.py                  # Main CLI interface (2,121 lines - needs refactoring)
+│   ├── cli.py                  # Main CLI interface
 │   ├── config.py               # Hydra configuration classes
+│   ├── agentic/                # Agentic processing (multi-turn, visual tools)
 │   ├── data/                   # Dataset handling
 │   ├── evaluation/             # Task-specific evaluation metrics
-│   ├── guidelines/             # Retrieval system (BM25, FAISS, Hybrid)
 │   ├── models/                 # Model adapters (OpenAI, OpenRouter)
+│   ├── processors/             # Task processors (localization, diagnosis, caption)
 │   ├── prompts/                # Jinja2 prompt templates
+│   ├── retrieval/              # Retrieval system (BM25, FAISS, Hybrid)
 │   └── visualization/          # Streamlit GUI and plotting
 ├── scripts/                    # Utility scripts for benchmarking
-├── tests/                      # Test suite with pytest
+├── tests/                      # Test suite (150+ tests)
 ├── paper/                      # LaTeX paper files
 └── docs/                       # Documentation
 ```
@@ -71,7 +73,7 @@ bash scripts/run_multiturn_benchmark.sh
 ```
 
 ## Technology Stack
-- **Core**: Python 3.9+, PyTorch, Hydra configuration
+- **Core**: Python 3.10+, PyTorch, Hydra configuration
 - **Models**: OpenRouter API (100+ models), OpenAI API
 - **Retrieval**: Haystack (BM25, FAISS), Sentence Transformers
 - **Evaluation**: TorchMetrics, BERTScore, RadGraph
@@ -81,13 +83,18 @@ bash scripts/run_multiturn_benchmark.sh
 - **Modern Tools**: fd (file search), ast-grep (code analysis)
 
 ## Important Files
-- `src/nova_retrieval_vlm/cli_new.py` - Modern CLI with processor pattern
-- `src/nova_retrieval_vlm/processors/` - Modular task processors
+- `src/nova_retrieval_vlm/cli.py` - Main CLI interface
+- `src/nova_retrieval_vlm/config.py` - Configuration dataclasses (includes AgenticConfig)
 - `src/nova_retrieval_vlm/types.py` - Type definitions with jaxtyping/beartype
-- `src/nova_retrieval_vlm/config.py` - Configuration dataclasses
+- `src/nova_retrieval_vlm/agentic/` - Agentic processing module:
+  - `processor.py` - Core AgenticProcessor with multi-turn reasoning
+  - `tools.py` - ToolRegistry with visual tools (zoom, crop, contrast, threshold)
+  - `localization.py` - AgenticLocalizationProcessor
+  - `diagnosis.py` - AgenticDiagnosisProcessor
+  - `retrieval_manager.py` - RetrievalManager for knowledge retrieval
+- `src/nova_retrieval_vlm/processors/` - Task processors (localization, diagnosis, caption)
 - `src/nova_retrieval_vlm/models/openai_adapter.py` - Model API interface
-- `src/nova_retrieval_vlm/evaluation/` - Evaluation metrics
-- `scripts/analyze_benchmark_results.py` - Result analysis
+- `src/nova_retrieval_vlm/evaluation/` - Evaluation metrics (NOVA benchmark protocol)
 
 ## Architecture & Design Principles
 
@@ -235,9 +242,8 @@ uv run python -m tracemalloc -c "import nova_retrieval_vlm"
 - ✅ Pyright configuration for type checking
 - ✅ Processor pattern architecture
 - ✅ Type-safe core modules with jaxtyping/beartype
-- 🔄 Complete migration from old CLI (cli.py → cli_new.py)
-- 🔄 Full test suite with type validation
-- ⏳ Legacy code cleanup (remove cli.py when ready)
+- ✅ Agentic processing module with visual tools and retrieval integration
+- ✅ Test suite (150+ tests)
 
 ---
 *This file was created to help Claude understand the project structure and common tasks. Update it when making significant architectural changes.*

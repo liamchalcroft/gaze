@@ -52,7 +52,7 @@ graph TD
 | Directory | Purpose |
 |-----------|---------|
 | `src/nova_retrieval_vlm/` | Main Python package with all core functionality |
-| `tests/` | Comprehensive test suite (84+ passing tests) |
+| `tests/` | Test suite (150+ tests) |
 | `scripts/` | Benchmarking and data processing utilities |
 | `docs/` | Documentation and usage guides |
 | `paper/` | Research paper LaTeX source |
@@ -65,8 +65,8 @@ graph TD
 
 ### Prerequisites
 
-- Python ≥ 3.10
-- uv package manager (recommended) or pip
+- Python 3.10+
+- uv package manager
 
 ### Setup
 
@@ -78,11 +78,7 @@ graph TD
 
 2. **Install dependencies:**
    ```bash
-   # Using uv (recommended)
    uv sync
-   
-   # Or using pip
-   pip install -e .
    ```
 
 3. **Configure environment variables:**
@@ -264,35 +260,29 @@ Results are automatically saved with detailed logs and can be visualized using b
 
 ### Running Tests
 
-The framework includes a comprehensive test suite with 84+ passing tests:
-
 ```bash
 # Run all tests
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=nova_retrieval_vlm
+uv run pytest --cov=nova_retrieval_vlm --cov-report=html
 
-# Run specific test categories
-uv run python scripts/run_comprehensive_tests.py --mode=unit
-uv run python scripts/run_comprehensive_tests.py --mode=integration
-
-# Run performance tests
-uv run python scripts/run_comprehensive_tests.py --mode=stress
+# Run specific test file
+uv run pytest tests/test_agentic.py -v
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
-black .
-isort .
-
-# Lint code  
-ruff check .
+# Lint and format (uses ruff)
+uv run ruff check .
+uv run ruff format .
 
 # Type checking
-pyright src/
+uv run pyright src/
+
+# Run all quality checks
+./scripts/check_quality.sh
 ```
 
 ### Contributing
@@ -302,66 +292,6 @@ pyright src/
 3. Make changes with tests
 4. Run the full test suite
 5. Submit a pull request
-
-## Next Steps & Improvements
-
-### Research Extensions
-
-**Multi-Modal Retrieval Enhancement**
-- Implement cross-modal retrieval combining text and image embeddings
-- Explore graph-based retrieval using medical knowledge graphs
-- Investigate attention-based fusion mechanisms for retrieved content
-
-**Model Architecture Innovation**  
-- Fine-tune specialized medical VLMs on domain-specific data
-- Develop multi-turn reasoning chains with self-correction mechanisms
-- Implement uncertainty quantification for model predictions
-
-**Evaluation Framework Enhancement**
-- Conduct human expert validation studies with radiologists
-- Implement statistical significance testing with multiple comparison corrections
-- Develop interpretability analysis tools for model decision processes
-
-### Technical Improvements
-
-**Performance Optimization**
-- Implement streaming inference for processing large datasets
-- Add GPU memory optimization with dynamic batching
-- Develop distributed processing capabilities across multiple nodes
-
-**System Architecture**
-- Add model serving optimization with TorchScript/ONNX conversion  
-- Implement advanced caching strategies for retrieval results
-- Build real-time monitoring and alerting systems
-
-**User Experience Enhancement**
-- Create web-based dashboard for experiment management
-- Add interactive result visualization with drill-down capabilities  
-- Implement automated report generation with statistical analysis
-
-### Infrastructure Development
-
-**Deployment & Operations**
-- Container orchestration with Kubernetes for scalable deployment
-- CI/CD pipeline optimization with automated testing and deployment
-- Production monitoring with metrics, logging, and tracing
-
-**Data Management**
-- Implement versioned dataset management system
-- Add data quality validation and monitoring tools
-- Create automated data pipeline for new medical imaging datasets
-
-### Research Applications
-
-**Clinical Integration**
-- Develop clinical decision support system integration
-- Implement DICOM compatibility for hospital system integration  
-- Create regulatory compliance framework for medical AI applications
-
-**Cross-Domain Generalization**
-- Extend framework to other medical imaging modalities (CT, X-ray, ultrasound)
-- Implement domain adaptation techniques for cross-dataset generalization
-- Develop few-shot learning capabilities for rare conditions
 
 ## Citation
 

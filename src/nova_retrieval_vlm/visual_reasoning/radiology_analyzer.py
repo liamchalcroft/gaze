@@ -19,9 +19,11 @@ import numpy as np
 import numpy.typing as npt
 from loguru import logger
 
-# Import tensor validation types
 from nova_retrieval_vlm.types import ImageArray
 from nova_retrieval_vlm.types import tensor_validated
+
+# Constants
+MIN_DIMENSIONS_FOR_GRAYSCALE = 2
 
 # Analysis constants
 MINIMUM_VENTRICLE_AREA = 100
@@ -127,7 +129,7 @@ class BrainStructureDetector:
         if len(image.shape) == RGB_CHANNELS:
             gray = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
         else:
-            gray = image.squeeze() if len(image.shape) > 2 else image
+            gray = image.squeeze() if len(image.shape) > MIN_DIMENSIONS_FOR_GRAYSCALE else image
 
         # Ensure proper uint8 format for OpenCV operations
         if gray.dtype != np.uint8:
@@ -270,7 +272,7 @@ class BilateralSymmetryAnalyzer:
         if len(image.shape) == RGB_CHANNELS:
             gray = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
         else:
-            gray = image.squeeze() if len(image.shape) > 2 else image
+            gray = image.squeeze() if len(image.shape) > MIN_DIMENSIONS_FOR_GRAYSCALE else image
 
         # Ensure proper data type for OpenCV operations
         if gray.dtype != np.uint8:

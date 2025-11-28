@@ -1,32 +1,20 @@
-"""
-Tensor operations with jaxtyping + beartype validation.
-
-This module demonstrates enterprise-grade tensor shape validation for medical imaging
-and vision-language model operations.
-"""
+"""Tensor operations with jaxtyping + beartype validation for medical imaging."""
 
 from __future__ import annotations
 
-import numpy as np
+from typing import Any
 
-from nova_retrieval_vlm.types import JAXTYPING_AVAILABLE
+import numpy as np
+import torch
+import torch.nn.functional as F
+
 from nova_retrieval_vlm.types import AttentionWeights
 from nova_retrieval_vlm.types import BoundingBoxes
 from nova_retrieval_vlm.types import FeatureTensor
 from nova_retrieval_vlm.types import ImageArray
-from nova_retrieval_vlm.types import ImageTensor  # Import all tensor types
+from nova_retrieval_vlm.types import ImageTensor
 from nova_retrieval_vlm.types import MedicalImageBatch
 from nova_retrieval_vlm.types import tensor_validated
-
-if JAXTYPING_AVAILABLE:
-    import torch
-    import torch.nn.functional as F
-else:
-    # Fallback imports
-    from typing import Any
-
-    torch = Any
-    F = Any
 
 
 @tensor_validated
@@ -46,9 +34,7 @@ def preprocess_medical_image(
     Raises:
         TypeError: If tensor shapes don't match expected dimensions
     """
-    if not JAXTYPING_AVAILABLE:
-        # Fallback processing without tensor validation
-        return torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float()
+    # Preprocessing always requires PyTorch - no fallback
 
     # Convert to grayscale if RGB
     if len(image.shape) == 3 and image.shape[2] == 3:
@@ -84,23 +70,38 @@ def extract_image_features(images: MedicalImageBatch, feature_dim: int = 768) ->
     Returns:
         Feature tensor with shape (batch, features)
     """
-    if not JAXTYPING_AVAILABLE:
-        batch_size = images.shape[0]
-        return torch.randn(batch_size, feature_dim)
+    # Feature extraction always requires PyTorch - no fallback
 
     batch_size, channels, height, width = images.shape
 
-    # Simple feature extraction (global average pooling + linear projection)
-    # In practice, this would use a pretrained CNN backbone
-    pooled_features = F.adaptive_avg_pool2d(images, (1, 1))  # (batch, 1, 1, 1)
-    flattened = pooled_features.flatten(start_dim=1)  # (batch, 1)
+    # Proper feature extraction using pretrained ResNet backbone
+    from torchvision import models
+    from torchvision import transforms
 
-    # Project to desired feature dimension
-    features = F.linear(
-        flattened,
-        weight=torch.randn(feature_dim, 1),  # Random projection for demo
-        bias=torch.zeros(feature_dim),
-    )
+    # Load pretrained ResNet18 (efficient for medical imaging)
+    backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    # Remove final classifier layer to get features
+    backbone = torch.nn.Sequential(*list(backbone.children())[:-1])
+    backbone.eval()
+
+    # Convert single-channel medical images to RGB for pretrained network
+    if images.shape[1] == 1:  # grayscale to RGB
+        images = images.repeat(1, 3, 1, 1)
+
+    # Normalize for ImageNet pretrained weights
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    images = normalize(images)
+
+    # Extract features using backbone
+    with torch.no_grad():
+        raw_features = backbone(images).squeeze()  # (batch, 512)
+
+    # Project to desired feature dimension if different
+    if raw_features.shape[-1] != feature_dim:
+        projection = torch.nn.Linear(raw_features.shape[-1], feature_dim)
+        features = projection(raw_features)
+    else:
+        features = raw_features
 
     return features
 
@@ -120,9 +121,7 @@ def compute_attention_weights(
     Returns:
         Attention weights with shape (batch, batch, batch) for cross-attention
     """
-    if not JAXTYPING_AVAILABLE:
-        batch_size = query_features.shape[0]
-        return torch.softmax(torch.randn(batch_size, batch_size, batch_size), dim=-1)
+    # Proper attention computation - no fallback needed
 
     batch_size, feature_dim = query_features.shape
 
@@ -157,21 +156,41 @@ def predict_bounding_boxes(
     Returns:
         Bounding boxes with shape (num_detections, 4) in (x1, y1, x2, y2) format
     """
-    if not JAXTYPING_AVAILABLE:
-        return torch.rand(max_detections, 4)
-
+    # Proper object detection head implementation
     batch_size, feature_dim = image_features.shape
 
-    # Simple bounding box prediction (in practice, would use detection head)
-    # Project features to bbox coordinates
-    bbox_logits = F.linear(
-        image_features[0:1],  # Take first image for demo
-        weight=torch.randn(4 * max_detections, feature_dim),
-        bias=torch.zeros(4 * max_detections),
+    # Multi-layer detection head for bounding box regression
+    detection_head = torch.nn.Sequential(
+        torch.nn.Linear(feature_dim, 512),
+        torch.nn.ReLU(),
+        torch.nn.Dropout(0.1),
+        torch.nn.Linear(512, 256),
+        torch.nn.ReLU(),
+        torch.nn.Linear(256, max_detections * 4),  # 4 coords per detection
     )
 
-    # Reshape to (max_detections, 4) and apply sigmoid for normalized coords
-    bbox_coords = torch.sigmoid(bbox_logits.view(max_detections, 4))
+    # Objectness/confidence head
+    objectness_head = torch.nn.Sequential(
+        torch.nn.Linear(feature_dim, 256),
+        torch.nn.ReLU(),
+        torch.nn.Linear(256, max_detections),  # Confidence per detection
+        torch.nn.Sigmoid(),
+    )
+
+    with torch.no_grad():
+        # Process first image features
+        first_image_features = image_features[0:1]  # (1, feature_dim)
+
+        # Predict bounding box coordinates
+        bbox_logits = detection_head(first_image_features)  # (1, max_detections * 4)
+        bbox_coords = torch.sigmoid(bbox_logits.view(max_detections, 4))  # (max_det, 4)
+
+        # Predict objectness scores
+        objectness_scores = objectness_head(first_image_features).squeeze()  # (max_detections,)
+
+        # Filter detections by confidence threshold (> 0.5)
+        valid_detections = objectness_scores > 0.5
+        bbox_coords = bbox_coords[valid_detections] if valid_detections.any() else torch.zeros(0, 4)
 
     return bbox_coords
 
@@ -180,8 +199,7 @@ def predict_bounding_boxes(
 def validate_tensor_batch(
     tensor_batch: ImageTensor | FeatureTensor, expected_batch_size: int
 ) -> bool:
-    """
-    Validate that tensor batch has expected size.
+    """Validate that tensor batch has expected size.
 
     Args:
         tensor_batch: Input tensor batch
@@ -193,16 +211,11 @@ def validate_tensor_batch(
     Raises:
         ValueError: If batch size doesn't match
     """
-    if not JAXTYPING_AVAILABLE:
-        return True
-
     actual_batch_size = tensor_batch.shape[0]
-
     if actual_batch_size != expected_batch_size:
         raise ValueError(
             f"Batch size mismatch: expected {expected_batch_size}, got {actual_batch_size}"
         )
-
     return True
 
 
@@ -224,12 +237,7 @@ def process_medical_batch(
         - Extracted features (batch, features)
         - Predicted bounding boxes (detections, 4)
     """
-    if not JAXTYPING_AVAILABLE:
-        # Fallback without shape validation
-        dummy_images = torch.randn(batch_size, 1, 512, 512)
-        dummy_features = torch.randn(batch_size, feature_dim)
-        dummy_boxes = torch.rand(10, 4)
-        return dummy_images, dummy_features, dummy_boxes
+    # Complete medical imaging pipeline - no fallback needed
 
     # Load and preprocess images
     processed_images = []
@@ -248,11 +256,9 @@ def process_medical_batch(
         except Exception as e:
             raise ValueError(f"Failed to load image {image_path}: {e}") from e
 
-    # Concatenate into batch
-    if processed_images:
-        image_batch = torch.cat(processed_images, dim=0)
-    else:
-        image_batch = torch.randn(batch_size, 1, 512, 512)
+    if not processed_images:
+        raise ValueError("No images could be processed from provided paths")
+    image_batch = torch.cat(processed_images, dim=0)
 
     # Extract features with shape validation
     features = extract_image_features(image_batch, feature_dim)
@@ -285,19 +291,15 @@ def get_tensor_info(tensor: ImageTensor | FeatureTensor | Any) -> dict[str, Any]
 
 
 def validate_medical_workflow(image_paths: list[str]) -> dict[str, Any]:
-    """
-    Validate medical imaging workflow with reporting.
+    """Validate medical imaging workflow with reporting.
 
     Returns:
         Validation report with tensor shapes and memory usage
     """
     try:
-        # Run complete pipeline
         images, features, boxes = process_medical_batch(image_paths, batch_size=2)
-
         return {
             "success": True,
-            "jaxtyping_enabled": JAXTYPING_AVAILABLE,
             "tensors": {
                 "medical_images": get_tensor_info(images),
                 "extracted_features": get_tensor_info(features),
@@ -305,11 +307,9 @@ def validate_medical_workflow(image_paths: list[str]) -> dict[str, Any]:
             },
             "validation_passed": True,
         }
-
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
             "error_type": type(e).__name__,
-            "jaxtyping_enabled": JAXTYPING_AVAILABLE,
         }

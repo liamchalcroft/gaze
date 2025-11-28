@@ -1,119 +1,65 @@
 """Type definitions for the NOVA retrieval VLM project.
 
-This module provides modern type annotations using proper TYPE_CHECKING patterns
-and beartype for runtime validation.
+Provides tensor type annotations with jaxtyping and Pydantic models for
+structured validation. All dependencies are required.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 from typing import Any
 
 import numpy as np
+import torch
 from beartype import beartype
+from jaxtyping import Bool
+from jaxtyping import Float
+from jaxtyping import Int
+from jaxtyping import UInt8
+from jaxtyping import jaxtyped
 from pydantic import BaseModel
 from pydantic import Field
 
-# Runtime tensor type checking with jaxtyping + beartype
-try:
-    import torch
-    from beartype import beartype
-    from jaxtyping import Bool
-    from jaxtyping import Float
-    from jaxtyping import Int
-    from jaxtyping import UInt8
-    from jaxtyping import jaxtyped
+# Vision tensor types with jaxtyping shape specifications
+ImageTensor = Float[torch.Tensor, "batch channels height width"]
+ImageTensorSingle = Float[torch.Tensor, "channels height width"]
+GrayscaleImage = Float[torch.Tensor, "height width"]
 
-    # Enable runtime type checking for tensor shapes
-    JAXTYPING_AVAILABLE = True
+FeatureTensor = Float[torch.Tensor, "batch features"]
+EmbeddingTensor = Float[torch.Tensor, "batch embed_dim"]
+AttentionWeights = Float[torch.Tensor, "batch seq_len seq_len"]
 
-    # Vision tensor types with detailed shape specifications
-    ImageTensor = Float[torch.Tensor, "batch channels height width"]
-    ImageTensorSingle = Float[torch.Tensor, "channels height width"]
-    GrayscaleImage = Float[torch.Tensor, "height width"]
+LogitsTensor = Float[torch.Tensor, "batch classes"]
+ProbabilityTensor = Float[torch.Tensor, "batch classes"]
+ConfidenceScores = Float[torch.Tensor, "batch"]
 
-    # Feature and embedding tensors
-    FeatureTensor = Float[torch.Tensor, "batch features"]
-    EmbeddingTensor = Float[torch.Tensor, "batch embed_dim"]
-    AttentionWeights = Float[torch.Tensor, "batch seq_len seq_len"]
+BatchIndices = Int[torch.Tensor, "batch"]
+SequenceTensor = Int[torch.Tensor, "batch seq_len"]
+TokenIds = Int[torch.Tensor, "seq_len"]
 
-    # Model output tensors
-    LogitsTensor = Float[torch.Tensor, "batch classes"]
-    ProbabilityTensor = Float[torch.Tensor, "batch classes"]
-    ConfidenceScores = Float[torch.Tensor, "batch"]
+BoundingBoxes = Float[torch.Tensor, "num_boxes 4"]
+BatchedBoundingBoxes = Float[torch.Tensor, "batch max_boxes 4"]
 
-    # Sequence and batch tensors
-    BatchIndices = Int[torch.Tensor, "batch"]
-    SequenceTensor = Int[torch.Tensor, "batch seq_len"]
-    TokenIds = Int[torch.Tensor, "seq_len"]
+MedicalImageBatch = Float[torch.Tensor, "batch 1 height width"]
+MultiModalFeatures = Float[torch.Tensor, "batch modalities features"]
 
-    # Bounding box tensors (x1, y1, x2, y2 format)
-    BoundingBoxes = Float[torch.Tensor, "num_boxes 4"]
-    BatchedBoundingBoxes = Float[torch.Tensor, "batch max_boxes 4"]
-
-    # Medical imaging specific
-    MedicalImageBatch = Float[torch.Tensor, "batch 1 height width"]  # Grayscale medical images
-    MultiModalFeatures = Float[torch.Tensor, "batch modalities features"]
-
-    # NumPy array types for image processing
-    ImageArray = Float[np.ndarray, "height width channels"]
-    GrayscaleArray = Float[np.ndarray, "height width"]
-    FeatureArray = Float[np.ndarray, "features"]
-    MaskArray = Bool[np.ndarray, "height width"]
-    IntensityArray = UInt8[np.ndarray, "height width"]
-
-    # Modern jaxtyping + beartype decorator (v0.2.24+)
-    def tensor_validated(func):
-        """Decorator using modern jaxtyped syntax with beartype for comprehensive validation."""
-        return jaxtyped(typechecker=beartype)(func)
-
-except ImportError:
-    # Graceful fallback when torch/jaxtyping not available
-    JAXTYPING_AVAILABLE = False
-
-    # Fallback types
-    ImageTensor = Any
-    ImageTensorSingle = Any
-    GrayscaleImage = Any
-    FeatureTensor = Any
-    EmbeddingTensor = Any
-    AttentionWeights = Any
-    LogitsTensor = Any
-    ProbabilityTensor = Any
-    ConfidenceScores = Any
-    BatchIndices = Any
-    SequenceTensor = Any
-    TokenIds = Any
-    BoundingBoxes = Any
-    BatchedBoundingBoxes = Any
-    MedicalImageBatch = Any
-    MultiModalFeatures = Any
-    ImageArray = np.ndarray
-    GrayscaleArray = np.ndarray
-    FeatureArray = np.ndarray
-    MaskArray = np.ndarray
-    IntensityArray = np.ndarray
-    torch = Any
-    jaxtyped = Any
-
-    # Fallback decorator
-    def tensor_validated(func):
-        """Fallback decorator when jaxtyping unavailable."""
-        return beartype(func)
+# NumPy array types for image processing
+ImageArray = Float[np.ndarray[Any, Any], "height width channels"]
+GrayscaleArray = Float[np.ndarray[Any, Any], "height width"]
+FeatureArray = Float[np.ndarray[Any, Any], "features"]
+MaskArray = Bool[np.ndarray[Any, Any], "height width"]
+IntensityArray = UInt8[np.ndarray[Any, Any], "height width"]
 
 
-# Type checking aliases for backward compatibility
-if TYPE_CHECKING:
-    # These are available for static type checking
-    pass
+def tensor_validated(func: Any) -> Any:
+    """Decorator combining jaxtyped shape validation with beartype runtime checks."""
+    return jaxtyped(typechecker=beartype)(func)
+
 
 # Path types
-from typing import Union
-
-ImagePath = Union[str, Path]
-ModelPath = Union[str, Path]
+ImagePath = str | Path
+ModelPath = str | Path
 
 # Core data structures
 MetadataDict = dict[str, Any]
@@ -209,7 +155,7 @@ class VisionAnalysisResponse(BaseModel):
 
     request_id: str = Field(description="Matching request identifier")
     analysis_result: ModelResponse = Field(description="Main analysis result")
-    generation_log: dict | None = Field(None, description="Generation metadata")
+    generation_log: dict[str, Any] | None = Field(None, description="Generation metadata")
     processing_time: float = Field(ge=0.0, description="Total processing time in seconds")
     error: str | None = Field(None, description="Error message if analysis failed")
 

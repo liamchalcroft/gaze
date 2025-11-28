@@ -39,7 +39,7 @@ def main():
     # Load and plot metrics
     metrics_file = run_dir / "run.json"
     if metrics_file.exists():
-        metrics = json.load(open(metrics_file))
+        metrics = json.load(metrics_file.open())
         plot_metrics(metrics, out_dir / "metrics.png", title=f"Metrics: {run_dir.name}")
         print(f"Saved metrics plot to {out_dir / 'metrics.png'}")
     else:

@@ -1,7 +1,5 @@
 # Contributing to NOVA Retrieval VLM
 
-Thank you for your interest in contributing to the NOVA Retrieval VLM framework! This project aims to advance research in medical imaging analysis through retrieval-augmented vision-language models.
-
 ## Getting Started
 
 ### Development Setup
@@ -14,23 +12,14 @@ Thank you for your interest in contributing to the NOVA Retrieval VLM framework!
 
 2. **Set up development environment:**
    ```bash
-   # Install dependencies
-   uv pip install -e .
-   
-   # Install pre-commit hooks
+   uv sync
    pre-commit install
-   
-   # Verify setup
-   python scripts/setup_check.py --verbose
    ```
 
 3. **Configure environment:**
    ```bash
-   # Copy example environment file
    cp .env.example .env
-   
-   # Add your API keys to .env
-   # (see README.md for details)
+   # Add your API keys to .env (see README.md)
    ```
 
 ### Development Workflow
@@ -42,14 +31,10 @@ Thank you for your interest in contributing to the NOVA Retrieval VLM framework!
 
 2. **Make your changes and test:**
    ```bash
-   # Run tests
-   pytest
-   
-   # Check code quality
-   black .
-   isort .
-   ruff check .
-   mypy src/
+   uv run pytest
+   uv run ruff check .
+   uv run ruff format .
+   uv run pyright src/
    ```
 
 3. **Commit your changes:**
@@ -259,32 +244,10 @@ For benchmark contributions:
 
 ## Getting Help
 
-### Support Channels
-
-- 📖 Check the [Documentation](./docs/)
-- 🐛 Search [GitHub Issues](https://github.com/your-org/nova_retrieval_vlm/issues)
-- 💬 Join our [Discord Community](https://discord.gg/your-server)
-- 📧 Email maintainers for private issues
-
-### Development Questions
-
+- Check the [Documentation](./docs/)
+- Search [GitHub Issues](https://github.com/your-org/nova_retrieval_vlm/issues)
 - Ask in GitHub Discussions
-- Include relevant context
-- Share minimal reproducible examples
-- Be specific about your environment
-
-## Recognition
-
-Contributors will be:
-- Listed in AUTHORS.md
-- Mentioned in release notes
-- Acknowledged in papers (for significant contributions)
-- Invited to co-author on relevant publications
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same MIT License that covers the project.
-
----
-
-Thank you for contributing to advancing medical AI research! 🧠✨ 
+By contributing, you agree that your contributions will be licensed under the MIT License.

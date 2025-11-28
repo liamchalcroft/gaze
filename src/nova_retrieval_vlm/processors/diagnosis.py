@@ -121,8 +121,8 @@ Primary Diagnosis:"""
         lines = diagnosis_text.split("\n")
 
         # Look for lines starting with diagnosis indicators
-        for line in lines:
-            line = line.strip()
+        for raw_line in lines:
+            line = raw_line.strip()
             if line.lower().startswith(("primary diagnosis:", "diagnosis:", "most likely:")):
                 # Extract the diagnosis after the colon
                 parts = line.split(":", 1)

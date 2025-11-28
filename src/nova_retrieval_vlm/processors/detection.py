@@ -85,30 +85,51 @@ class DetectionProcessor(BaseProcessor):
         self, responses: list[ModelResponse], ground_truth: list[str]
     ) -> EvaluationMetrics:
         """Evaluate detection responses."""
-        # Extract predicted detections from responses
-        predicted_detections = []
+        # Extract predicted detections from responses - format for evaluator
+        predicted_dicts = []
         for response in responses:
-            parsed = json.loads(response.text)
-            predicted_detections.append(parsed.get("detections", []))
+            try:
+                parsed = json.loads(response.text)
+                detections = parsed.get("detections", [])
+                # Create dict format expected by evaluator
+                predicted_dicts.append(
+                    {
+                        "boxes": detections,
+                        "scores": [1.0] * len(detections),  # Default confidence scores
+                        "labels": [0] * len(detections),  # Default label 0 for all detections
+                    }
+                )
+            except json.JSONDecodeError:
+                # Handle invalid JSON by using empty detection dict
+                predicted_dicts.append({"boxes": [], "scores": [], "labels": []})
 
-        # Parse ground truth detections
-        ground_truth_detections = []
+        # Parse ground truth detections - format for evaluator
+        ground_truth_dicts = []
         for gt in ground_truth:
             if isinstance(gt, str):
                 gt_parsed = json.loads(gt)
-                ground_truth_detections.append(gt_parsed.get("detections", []))
+                detections = gt_parsed.get("detections", [])
             else:
-                ground_truth_detections.append(gt)
+                detections = gt if isinstance(gt, list) else []
+
+            # Create dict format expected by evaluator
+            ground_truth_dicts.append(
+                {
+                    "boxes": detections,
+                    "scores": [1.0] * len(detections),  # Ground truth has confidence 1.0
+                    "labels": [0] * len(detections),  # Default label 0 for all ground truth
+                }
+            )
 
         # Use existing evaluation function
-        results = evaluate_detection(predicted_detections, ground_truth_detections)
+        results = evaluate_detection(predicted_dicts, ground_truth_dicts)
 
         return EvaluationMetrics(
-            accuracy=results.get("mAP", 0.0),
+            accuracy=results.get("map50", 0.0),  # Use mAP@0.5 as primary accuracy
             precision=results.get("precision"),
             recall=results.get("recall"),
             f1_score=results.get("f1_score"),
-            auc_roc=results.get("auc"),
+            auc_roc=results.get("map30"),  # Use mAP@0.3 as secondary metric
         )
 
     def _create_detection_prompt(self, image_path: Path, metadata: dict[str, Any]) -> str:

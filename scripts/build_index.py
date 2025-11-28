@@ -12,12 +12,7 @@ Usage:
 
 import argparse
 
-try:
-    from nova_retrieval_vlm.retrieval.web_search import build_indexes
-except ImportError:
-    # Fallback if the module doesn't exist
-    def build_indexes(**kwargs):
-        print("Warning: build_indexes function not available. Index building disabled.")
+from nova_retrieval_vlm.knowledge_base.index_builder import build_indexes
 
 
 def main():
@@ -43,7 +38,7 @@ def main():
         type=str,
         default="strict",
         choices=["strict", "lax", "off"],
-        help="Robots.txt handling: strict (default), lax (fall back to Googlebot rules), off (ignore)",
+        help="Robots.txt handling: strict (default), lax (Googlebot fallback), off (ignore)",
     )
     parser.add_argument(
         "--no-parallel-index-build",

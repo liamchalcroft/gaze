@@ -7,8 +7,8 @@ import sys
 
 def check_python():
     major, minor = sys.version_info[:2]
-    if major < 3 or (major == 3 and minor < 9):
-        return False, f"Python >=3.9 required, found {major}.{minor}"
+    if major < 3 or (major == 3 and minor < 10):
+        return False, f"Python >=3.10 required, found {major}.{minor}"
     return True, f"Python version {major}.{minor}"
 
 

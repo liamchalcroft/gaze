@@ -186,18 +186,3 @@ def create_enhanced_prompt(
         mode=mode,
         system_prompt_override=system_prompt_override,
     )
-
-
-# Backward compatibility - keep the original function signature
-@beartype
-def load_prompt_legacy(
-    template_name: str,
-    image_path: Path,
-    passages: list[str],
-    metadata: dict[str, Any],
-) -> str:
-    """
-    Legacy function for backward compatibility.
-    Uses the original Jinja-only approach without system prompt integration.
-    """
-    return load_jinja_template(template_name, image_path, passages, metadata)

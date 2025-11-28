@@ -1,16 +1,14 @@
-# NOVA System Prompts
+# System Prompts
 
-This document describes the comprehensive system prompts used in the NOVA medical image analysis system. These prompts are designed to optimize model performance for different analysis modes and capabilities.
+System prompts for the NOVA medical image analysis system. Each mode has a specialized prompt optimized for its analysis approach.
 
 ## Overview
 
-The NOVA system uses structured system prompts that are inspired by the Cursor Agent system prompt design. Each prompt is carefully crafted to:
-
-1. **Define the AI's role and capabilities** clearly
-2. **Provide specific behavioral guidelines** for medical analysis
-3. **Ensure clinical accuracy and safety** in all assessments
-4. **Optimize for specific analysis modes** (baseline, multiturn, visual, etc.)
-5. **Enforce proper output formats** and JSON compliance
+System prompts define:
+- AI role and capabilities
+- Medical analysis guidelines
+- Output format requirements (JSON)
+- Mode-specific behaviors
 
 ## Available Modes
 
@@ -214,19 +212,6 @@ To add a new mode:
 - Use precise medical terminology
 - Structure responses logically
 
-## Testing
-
-Run the system prompt tests:
-
-```bash
-python test_system_prompts.py
-```
-
-This will verify:
-- All system prompts can be loaded
-- Mode detection works correctly
-- Enhanced prompt creation functions properly
-
 ## Examples
 
 ### Baseline Analysis
@@ -282,18 +267,3 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-## Future Enhancements
-
-Potential improvements to the system prompts:
-
-1. **Dynamic Prompt Adaptation**: Adjust prompts based on image characteristics
-2. **Specialized Medical Domains**: Domain-specific prompts for different medical specialties
-3. **Interactive Refinement**: Allow user feedback to improve prompt effectiveness
-4. **Performance Optimization**: Optimize prompt length and structure for different models
-5. **Multi-language Support**: Support for non-English medical terminology
-
-## References
-
-- [Cursor Agent System Prompt](https://gist.github.com/sshh12/25ad2e40529b269a88b80e7cf1c38084)
-- [NOVA Benchmark Documentation](docs/)
-- [Medical Image Analysis Guidelines](docs/guidelines.yaml) 

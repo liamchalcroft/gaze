@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,10 +11,13 @@ import hydra
 from beartype import beartype
 from hydra.core.config_store import ConfigStore
 from loguru import logger
+from PIL import Image
 
 if TYPE_CHECKING:
     pass
 
+from nova_retrieval_vlm.agentic import AgenticDiagnosisProcessor
+from nova_retrieval_vlm.agentic import AgenticLocalizationProcessor
 from nova_retrieval_vlm.config import Config
 from nova_retrieval_vlm.data.nova_dataset import get_dataloader
 from nova_retrieval_vlm.processors import BaseProcessor
@@ -24,7 +28,22 @@ from nova_retrieval_vlm.processors import LocalizationProcessor
 from nova_retrieval_vlm.processors import ProcessorConfig
 from nova_retrieval_vlm.types import BatchData
 
-# Register processors
+
+def _image_to_path(image: Image.Image | str) -> str:
+    """Convert PIL Image to temporary file path, or return existing path."""
+    if isinstance(image, str):
+        # Already a path
+        return image
+    elif isinstance(image, Image.Image):
+        # Save PIL Image to temporary file
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+            image.save(temp_file.name, format="JPEG", quality=95)
+            return temp_file.name
+    else:
+        raise ValueError(f"Unsupported image type: {type(image)}")
+
+
+# Register processors (standard and agentic variants)
 PROCESSORS: dict[str, type[BaseProcessor]] = {
     "localization": LocalizationProcessor,
     "caption": CaptionProcessor,
@@ -32,22 +51,54 @@ PROCESSORS: dict[str, type[BaseProcessor]] = {
     "diagnosis": DiagnosisProcessor,
 }
 
+# Agentic processor variants
+AGENTIC_PROCESSORS: dict[str, type[BaseProcessor]] = {
+    "localization": AgenticLocalizationProcessor,
+    "diagnosis": AgenticDiagnosisProcessor,
+}
+
 
 @beartype
 def create_processor(config: Config) -> BaseProcessor:
-    """Create processor instance based on task."""
-    if config.task not in PROCESSORS:
-        raise ValueError(f"Unknown task: {config.task}. Available: {list(PROCESSORS.keys())}")
+    """Create processor instance based on task and agentic config."""
+    task_name = config.task.value if hasattr(config.task, "value") else str(config.task)
 
-    processor_cls = PROCESSORS[config.task]
+    # Check for agentic mode
+    if config.agentic.enabled and task_name in AGENTIC_PROCESSORS:
+        logger.info(f"Using agentic processor for {task_name}")
+        processor_cls = AGENTIC_PROCESSORS[task_name]
+
+        processor_config = ProcessorConfig(
+            task_name=task_name,
+            model_name=config.model.name,
+            batch_size=config.batch_size,
+            use_retrieval=config.use_retrieval,
+            retrieval_type=config.retrieval.type,
+            output_dir=Path(config.paths.output_dir),
+            skip_existing=config.skip_existing,
+        )
+
+        return processor_cls(
+            config=processor_config,
+            use_visual_reasoning=config.agentic.use_visual_reasoning,
+            use_tools=config.agentic.use_tools,
+            max_turns=config.agentic.max_turns,
+            index_dir=Path(config.paths.index_dir) if config.use_retrieval else None,
+        )
+
+    # Standard processor
+    if task_name not in PROCESSORS:
+        raise ValueError(f"Unknown task: {task_name}. Available: {list(PROCESSORS.keys())}")
+
+    processor_cls = PROCESSORS[task_name]
 
     processor_config = ProcessorConfig(
-        task_name=config.task,
+        task_name=task_name,
         model_name=config.model.name,
         batch_size=config.batch_size,
         use_retrieval=config.use_retrieval,
         retrieval_type=config.retrieval.type,
-        output_dir=Path(config.output_dir),
+        output_dir=Path(config.paths.output_dir),
         skip_existing=config.skip_existing,
     )
 
@@ -57,15 +108,23 @@ def create_processor(config: Config) -> BaseProcessor:
 @beartype
 async def run_task(config: Config) -> None:
     """Run the specified task with modern architecture."""
-    logger.info(f"Starting task: {config.task}")
+    task_name = config.task.value if hasattr(config.task, "value") else str(config.task)
+    logger.info(f"Starting task: {task_name}")
     logger.info(f"Model: {config.model.name}")
     logger.info(f"Use retrieval: {config.use_retrieval}")
+    if config.agentic.enabled:
+        logger.info(
+            f"Agentic mode: visual_reasoning={config.agentic.use_visual_reasoning}, "
+            f"tools={config.agentic.use_tools}, max_turns={config.agentic.max_turns}"
+        )
 
     # Create processor
     processor = create_processor(config)
 
     # Get data loader
-    dataloader = get_dataloader(batch_size=config.batch_size, data_dir=config.paths.data_dir)
+    dataloader = get_dataloader(
+        batch_size=config.batch_size, data_dir=config.paths.data_dir, use_transforms=False
+    )
 
     # Process batches
     all_responses = []
@@ -96,7 +155,10 @@ async def run_task(config: Config) -> None:
             # Create BatchData from raw batch
             try:
                 batch_data = BatchData(
-                    images=[str(item["image"]) if "image" in item else "" for item in batch_items],
+                    images=[
+                        _image_to_path(item["image"]) if "image" in item else ""
+                        for item in batch_items
+                    ],
                     metadata=[item.get("metadata", {}) for item in batch_items],
                     labels=(
                         [item.get("label") for item in batch_items]

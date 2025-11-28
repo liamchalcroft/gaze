@@ -5,19 +5,6 @@ import hashlib
 import html
 import re
 import time
-
-try:
-    import defusedxml.ElementTree as ET
-except ImportError:
-    # Fallback to standard library with warning
-    import warnings
-    import xml.etree.ElementTree as ET
-
-    warnings.warn(
-        "defusedxml not available, using potentially unsafe XML parsing",
-        SecurityWarning,
-        stacklevel=2,
-    )
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
@@ -27,11 +14,13 @@ from urllib.parse import urljoin
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
+import defusedxml.ElementTree as ET
 import requests
 import yaml
 from bs4 import BeautifulSoup
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langdetect import detect  # language detection
+from loguru import logger
 from pypdf import PdfReader
 from readability import Document as ReadabilityDocument  # content extraction
 
@@ -111,9 +100,9 @@ def _save_etag_cache():
     if _etag_path:
         try:
             Path(_etag_path).write_text(yaml.safe_dump(_etag_cache))
-        except (OSError, yaml.YAMLError, FileNotFoundError, PermissionError):
-            # Log the error but don't crash - ETag cache is not critical
-            pass
+        except (OSError, yaml.YAMLError, FileNotFoundError, PermissionError) as e:
+            # ETag cache is not critical, but log the error for debugging
+            logger.warning(f"Failed to save ETag cache to {_etag_path}: {e}")
 
 
 # -----------------------------------------------------------------------------
@@ -361,19 +350,19 @@ def _download_url(
     # Skip problematic URLs early
     if _should_skip_url(url):
         if verbose:
-            pass
+            logger.info(f"Skipping problematic URL: {url}")
         return url, "", False
 
     # Respect robots.txt
     if not _is_allowed(url, robots_mode=robots_mode):
         if verbose:
-            pass
+            logger.info(f"URL disallowed by robots.txt: {url}")
         return url, "", False
 
     # Skip huge PDFs early
     if url.lower().endswith(".pdf") and _should_skip_pdf(url):
         if verbose:
-            pass
+            logger.info(f"Skipping large PDF: {url}")
         return url, "", False
 
     urlparse(url)
@@ -390,17 +379,17 @@ def _download_url(
     resp = _http_get(url, user_agent=ua)
     if resp is None:
         if verbose:
-            pass
+            logger.warning(f"Failed to get response from: {url}")
         return url, "", False
     if not resp.ok:
         if verbose:
-            pass
+            logger.warning(f"HTTP {resp.status_code} error for: {url}")
         return url, "", False
 
     # If conditional GET returns 304, reuse existing file
     if resp.status_code == 304 and out_file.exists():
         if verbose:
-            pass
+            logger.debug(f"Using cached file for unchanged URL: {url}")
         return url, str(out_file), True
 
     # Update extension based on Content-Type header
@@ -415,11 +404,12 @@ def _download_url(
     # Duplicate HTML detection via SimHash (skip writing)
     if ext == ".html" and _is_duplicate_html(resp.text):
         if verbose:
-            pass
+            logger.debug(f"Skipping duplicate HTML content: {url}")
         return url, "", False
 
     if verbose:
-        len(resp.content) // 1024
+        content_size_kb = len(resp.content) // 1024
+        logger.info(f"Downloaded {content_size_kb}KB from: {url}")
     out_file.write_bytes(resp.content)
 
     # Throttle between requests
@@ -488,9 +478,9 @@ def _process_file(
                     lines = first_page_text.strip().split("\n")[:5]  # First 5 lines
                     document_title = " ".join(lines).strip()[:100]  # Limit length
                 text = clean_text(text)
-            except Exception:
+            except Exception as e:
                 if verbose:
-                    pass
+                    logger.warning(f"Failed to parse PDF {filepath}: {e}")
                 # Fallback: treat as HTML if PDF parsing fails
                 try:
                     raw_html = Path(filepath).read_text(errors="ignore")
@@ -550,9 +540,9 @@ def _process_file(
                     _clean_soup(soup)
                     text = soup.get_text(separator=" ")
                     text = clean_text(text)
-                except Exception:
+                except Exception as e:
                     if verbose:
-                        pass
+                        logger.error(f"Failed to parse HTML fallback for {filepath}: {e}")
                     return [], []
         else:
             # Handle HTML files with better error handling

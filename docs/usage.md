@@ -3,21 +3,17 @@
 ## Installation
 
 ### Prerequisites
-- Python e 3.9
-- uv (recommended) or pip
+
+- Python 3.10+
+- uv package manager
 - OpenRouter and/or OpenAI API keys
 
 ### Install Dependencies
+
 ```bash
-# Clone the repository
 git clone https://github.com/your-org/nova_retrieval_vlm.git
 cd nova_retrieval_vlm
-
-# Install with uv (recommended)
-uv pip install -e .
-
-# Or with pip
-pip install -e .
+uv sync
 ```
 
 ### Environment Setup
@@ -116,6 +112,19 @@ python -m nova_retrieval_vlm.cli approach=visual
 All capabilities combined.
 ```bash
 python -m nova_retrieval_vlm.cli approach=comprehensive
+```
+
+### Agentic Mode
+Multi-turn reasoning with visual tools and retrieval integration.
+```bash
+# Enable agentic processing
+python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true
+
+# With visual reasoning and tools
+python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
+
+# Configure max turns
+python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true agentic.max_turns=5
 ```
 
 ## Retrieval Configuration

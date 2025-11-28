@@ -1,12 +1,8 @@
 """
-Advanced Retrieval System for Medical VLM
+Retrieval Pipeline for Medical VLM.
 
-This module implements state-of-the-art retrieval techniques including:
-- Dense retrieval with medical-specific embeddings
-- Cross-encoder re-ranking
-- Multi-modal retrieval (text + image features)
-- Domain knowledge integration
-- Query expansion with medical synonyms
+Combines dense retrieval, cross-encoder reranking, and query expansion
+for medical document retrieval.
 """
 
 from __future__ import annotations
@@ -211,8 +207,8 @@ class MedicalConceptExtractor:
         return extracted
 
 
-class AdvancedRetriever:
-    """State-of-the-art retrieval system for medical VLM."""
+class RetrievalPipeline:
+    """Retrieval pipeline combining dense retrieval, reranking, and query expansion."""
 
     def __init__(
         self,
@@ -231,7 +227,7 @@ class AdvancedRetriever:
 
     def build_index(self, documents: list[str], save_path: Path | None = None) -> None:
         """Build retrieval index from documents."""
-        logger.info("Building advanced retrieval index...")
+        logger.info("Building retrieval index...")
 
         # Build dense index
         self.dense_retriever.build_index(documents)
@@ -240,7 +236,7 @@ class AdvancedRetriever:
         if save_path:
             self.save_index(save_path)
 
-        logger.info("Advanced retrieval index built successfully")
+        logger.info("Retrieval index built")
 
     def save_index(self, save_path: Path) -> None:
         """Save retrieval index to disk."""

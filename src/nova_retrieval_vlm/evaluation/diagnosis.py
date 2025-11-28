@@ -8,13 +8,12 @@ from typing import Any
 from loguru import logger
 
 
-def gpt4o_semantic_match(
-    pred: str, ref: str, model_name: str = "mistralai/mistral-small-3.2-24b-instruct:free"
-) -> bool:
+def gpt4o_semantic_match(pred: str, ref: str, model_name: str = "openai/gpt-4o") -> bool:
     """
-    Use Mistral Small 3.2 to perform semantic matching between prediction and reference diagnosis.
+    Use GPT-4o to perform semantic matching between prediction and reference diagnosis.
 
-    This follows the official NOVA evaluation protocol for diagnosis task.
+    This follows the official NOVA evaluation protocol for diagnosis task:
+    "GPT-4o is used to perform semantic matching between predictions and ground truth labels"
     """
     try:
         from nova_retrieval_vlm.models import get_model_client
@@ -65,14 +64,13 @@ def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
     use_gpt4o_matching: bool = True,
-    model_name: str = "mistralai/mistral-small-3.2-24b-instruct:free",
+    model_name: str = "openai/gpt-4o",
 ) -> dict[str, float]:
     """
-    Official NOVA diagnosis evaluation using LLM semantic matching.
+    Official NOVA diagnosis evaluation using GPT-4o semantic matching.
 
     This implements the exact protocol described in the NOVA paper:
     "GPT-4o is used to perform semantic matching between predictions and ground truth labels"
-    We use Mistral Small 3.2 as a free alternative that provides equivalent semantic matching.
 
     Args:
         preds: List of predicted diagnosis or list of predictions (for top-5).
@@ -157,15 +155,3 @@ def evaluate_diagnosis_nova_official(
     results["entropy"] = entropy
 
     return results
-
-
-def evaluate_diagnosis(
-    preds: Sequence[Any | list[Any]],
-    refs: Sequence[Any],
-) -> dict[str, float]:
-    """
-    Backward compatibility wrapper that uses the official NOVA protocol.
-
-    This function now delegates to evaluate_diagnosis_nova_official() for consistency.
-    """
-    return evaluate_diagnosis_nova_official(preds, refs, use_gpt4o_matching=True)

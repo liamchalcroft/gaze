@@ -1,25 +1,25 @@
+"""Model adapters for vision-language model APIs."""
+
 from .base import BaseAdapter
 from .openai_adapter import OpenAIAdapter
+from .openrouter_adapter import OpenRouterAdapter
 
 
-def get_model_client(model_name: str = "mistralai/mistral-small-3.2-24b-instruct:free"):
-    """
-    Get a model client for the specified model using OpenRouter interface.
-    
-    This uses the same OpenRouter interface as the main CLI tasks for consistency.
-    
+def get_model_client(model_name: str) -> OpenAIAdapter:
+    """Get a model client for the specified model using OpenRouter interface.
+
     Args:
-        model_name: Name of the model to use (default: openai/gpt-4o)
-        
-    Returns:
-        An OpenAIAdapter client configured for OpenRouter (same as CLI tasks)
-    """
-    # Always use OpenRouter interface for consistency with main CLI tasks
-    return OpenAIAdapter(
-        model_name=model_name,
-        max_retries=3,
-        timeout=60
-        # base_url defaults to OpenRouter in OpenAIAdapter
-    )
+        model_name: Model identifier (OpenRouter format: provider/model:tier)
 
-__all__ = ["base", "qwen_router", "internvlm_router", "get_model_client", "OpenAIAdapter", "BaseAdapter"] 
+    Returns:
+        Configured OpenAIAdapter client for OpenRouter
+    """
+    return OpenAIAdapter(model_name=model_name, max_retries=3, timeout=60)
+
+
+__all__ = [
+    "BaseAdapter",
+    "OpenAIAdapter",
+    "OpenRouterAdapter",
+    "get_model_client",
+]

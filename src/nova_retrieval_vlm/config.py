@@ -92,6 +92,35 @@ class TaskType(str, Enum):
     VISUALIZE = "visualize"
 
 
+class AgenticConfig(BaseModel):
+    """Agentic processing configuration."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable agentic processing with visual reasoning and tool calling",
+    )
+    use_visual_reasoning: bool = Field(
+        default=True,
+        description="Run visual pre-analysis (structure detection, symmetry analysis)",
+    )
+    use_tools: bool = Field(
+        default=True,
+        description="Enable tool calling (zoom, crop, contrast, threshold)",
+    )
+    max_turns: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum turns for multi-turn refinement",
+    )
+    confidence_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for early termination",
+    )
+
+
 class VisualizationConfig(BaseModel):
     """Visualization configuration with validation."""
 
@@ -113,6 +142,9 @@ class Config(BaseModel):
         default_factory=RetrievalConfig, description="Retrieval configuration"
     )
     paths: PathsConfig = Field(default_factory=PathsConfig, description="Path configuration")
+    agentic: AgenticConfig = Field(
+        default_factory=AgenticConfig, description="Agentic processing configuration"
+    )
     task: TaskType = Field(default=TaskType.LOCALIZATION, description="Task to perform")
     batch_size: int = Field(
         default=4, ge=1, le=64, description="Number of samples per batch for inference"
@@ -135,12 +167,18 @@ class Config(BaseModel):
         le=60.0,
         description="Delay in seconds between API requests to avoid rate limiting",
     )
+    skip_existing: bool = Field(default=True, description="Skip processing existing results files")
 
     @field_validator("prompt_text")
     @classmethod
     def validate_prompt_text(cls, v: str) -> str:
         """Validate and clean prompt text."""
         return v.strip()
+
+    @property
+    def output_dir(self) -> str:
+        """Convenience property for output directory."""
+        return self.paths.output_dir
 
     def model_post_init(self, __context) -> None:
         """Post-initialization setup."""
@@ -150,5 +188,3 @@ class Config(BaseModel):
         # Validate task-specific configuration
         if self.task == TaskType.VISUALIZE and self.visualization.num_samples <= 0:
             raise ValueError("Visualization requires num_samples > 0")
-
-

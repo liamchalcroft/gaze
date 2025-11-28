@@ -1,9 +1,4 @@
-"""
-Comprehensive API serialization utilities using Pydantic.
-
-This module demonstrates enterprise-grade API serialization patterns with
-proper validation, error handling, and performance optimization.
-"""
+"""API serialization utilities using Pydantic."""
 
 from __future__ import annotations
 
@@ -26,7 +21,7 @@ from nova_retrieval_vlm.types import VisionAnalysisResponse
 
 
 class APISerializer:
-    """Enterprise-grade API serialization with comprehensive validation."""
+    """API serialization with Pydantic validation."""
 
     @staticmethod
     @beartype
@@ -86,7 +81,7 @@ class APISerializer:
         image_path: str | Path,
         task_type: str,
         use_retrieval: bool = False,
-        metadata: Union[MetadataDict, None] = None,
+        metadata: MetadataDict | None = None,
     ) -> VisionAnalysisRequest:
         """
         Create a validated vision analysis request.
@@ -105,6 +100,7 @@ class APISerializer:
             timestamp=time.time(),
             image_path=image_path,
             task_type=task_type,
+            system_prompt=None,  # Default to None, can be overridden
             use_retrieval=use_retrieval,
             metadata=metadata or {},
         )
@@ -116,7 +112,7 @@ class APISerializer:
         analysis_text: str,
         confidence: float,
         processing_time: float,
-        generation_log: Union[dict, None] = None,
+        generation_log: dict[str, Any] | None = None,
     ) -> VisionAnalysisResponse:
         """
         Create a successful analysis response.
@@ -138,6 +134,7 @@ class APISerializer:
             analysis_result=analysis_result,
             generation_log=generation_log,
             processing_time=processing_time,
+            error=None,  # Success response has no error
         )
 
     @staticmethod
@@ -162,6 +159,7 @@ class APISerializer:
         return VisionAnalysisResponse(
             request_id=request_id,
             analysis_result=analysis_result,
+            generation_log=None,  # Error case has no generation log
             processing_time=processing_time,
             error=error_message,
         )
@@ -216,7 +214,7 @@ class ResponseValidator:
         Returns:
             Dictionary of validation metrics
         """
-        metrics = {
+        metrics: dict[str, Any] = {
             "total_requests": len(response.results),
             "successful_requests": 0,
             "failed_requests": 0,
@@ -237,83 +235,3 @@ class ResponseValidator:
             metrics["success_rate"] = metrics["successful_requests"] / metrics["total_requests"]
 
         return metrics
-
-
-@beartype
-def demo_api_serialization() -> dict[str, Any]:
-    """
-    Demonstrate comprehensive API serialization patterns.
-
-    Returns:
-        Demo results with serialization examples
-    """
-    logger.info("🧪 Demonstrating Pydantic API serialization...")
-
-    # Create a vision analysis request
-    request = APISerializer.create_vision_request(
-        image_path="/path/to/test_image.jpg",
-        task_type="diagnosis",
-        use_retrieval=True,
-        metadata={"patient_id": "P001", "study_date": "2024-01-15"},
-    )
-
-    # Serialize to JSON
-    request_json = APISerializer.serialize_response(request)
-    logger.info(f"✅ Serialized request: {len(request_json)} bytes")
-
-    # Create success response
-    success_response = APISerializer.create_success_response(
-        request_id=request.request_id,
-        analysis_text="No acute abnormalities detected. Normal brain MRI findings.",
-        confidence=0.87,
-        processing_time=2.34,
-        generation_log={"tokens": 42, "cost": 0.01},
-    )
-
-    # Serialize response
-    response_json = APISerializer.serialize_response(success_response)
-    logger.info(f"✅ Serialized success response: {len(response_json)} bytes")
-
-    # Validate response
-    is_valid = ResponseValidator.validate_analysis_response(success_response)
-    logger.info(f"✅ Response validation: {'PASSED' if is_valid else 'FAILED'}")
-
-    # Create error response
-    APISerializer.create_error_response(
-        request_id=request.request_id, error_message="Image file not found", processing_time=0.12
-    )
-
-    # Test deserialization
-    try:
-        deserialized_request = APISerializer.deserialize_request(
-            request_json, VisionAnalysisRequest
-        )
-        logger.info(f"✅ Deserialization successful: {deserialized_request.task_type}")
-    except ValidationError as e:
-        logger.error(f"❌ Deserialization failed: {e}")
-        return {"success": False, "error": str(e)}
-
-    return {
-        "success": True,
-        "request_size_bytes": len(request_json),
-        "response_size_bytes": len(response_json),
-        "validation_passed": is_valid,
-        "serialization_format": "JSON with Pydantic validation",
-        "features": [
-            "Comprehensive field validation",
-            "Automatic JSON schema generation",
-            "Type-safe serialization/deserialization",
-            "Built-in error handling",
-            "Performance optimization",
-        ],
-    }
-
-
-if __name__ == "__main__":
-    # Run demonstration
-    result = demo_api_serialization()
-
-    if result["success"]:
-
-        for _feature in result["features"]:
-            pass
