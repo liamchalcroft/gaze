@@ -511,7 +511,6 @@ class TestMemoryAndPerformanceStress:
     @pytest.mark.slow
     def test_many_small_batches_vs_few_large_batches(self, mock_image):
         """Compare performance of many small batches vs few large batches."""
-        total_images = 100
 
         # Test many small batches (10 images each, 10 batches)
         small_batch_times = []
@@ -558,8 +557,6 @@ class TestMemoryAndPerformanceStress:
         total_small_time = sum(small_batch_times)
 
         # Compare performance characteristics
-        print(f"Many small batches total time: {total_small_time:.3f}s")
-        print(f"One large batch time: {large_batch_time:.3f}s")
 
         # Both approaches should complete in reasonable time
         assert total_small_time < 30.0  # 30 seconds max
@@ -594,7 +591,7 @@ class TestResourceLimitsAndBoundaryConditions:
         # All valid responses should be handled gracefully
         for response in valid_responses:
             assert response.text is not None
-            assert isinstance(response.confidence, (int, float))
+            assert isinstance(response.confidence, int | float)
             assert 0.0 <= response.confidence <= 1.0
 
         # Invalid negative confidence should raise ValidationError
@@ -615,7 +612,7 @@ class TestResourceLimitsAndBoundaryConditions:
             "mixed_precision": {"boxes": [[1, 2.5, 3, 4.7]]},
         }
 
-        for case_name, case_data in boundary_cases.items():
+        for case_data in boundary_cases.values():
             # Should normalize without crashing
             normalize_localization_result(case_data)
             assert "boxes" in case_data
@@ -771,13 +768,13 @@ class TestNetworkAndIOFailures:
             prediction_list = []
 
             # Should handle permission errors gracefully
-            with pytest.raises((PermissionError, OSError)):
-                with patch(
-                    "nova_retrieval_vlm.utils.batch_processing_utils.compute_evaluation_metrics"
-                ):
-                    postprocess_batch_result(
-                        batch_ctx, prediction_result, "localization", mock_dataset, prediction_list
-                    )
+            with (
+                pytest.raises((PermissionError, OSError)),
+                patch("nova_retrieval_vlm.utils.batch_processing_utils.compute_evaluation_metrics"),
+            ):
+                postprocess_batch_result(
+                    batch_ctx, prediction_result, "localization", mock_dataset, prediction_list
+                )
 
     async def test_corrupted_model_responses(self, mock_image):
         """Test handling of corrupted or truncated model responses."""

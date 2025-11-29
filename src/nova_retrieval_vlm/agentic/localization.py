@@ -1,7 +1,6 @@
 """Agentic localization processor.
 
-Enhanced localization with visual reasoning integration,
-tool calling, and multi-turn refinement.
+Enhanced localization with tool calling and multi-turn refinement.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from loguru import logger
 
 from nova_retrieval_vlm.agentic.processor import AgenticProcessor
 from nova_retrieval_vlm.agentic.processor import AgenticResult
-from nova_retrieval_vlm.agentic.retrieval_manager import RetrievalManager
 from nova_retrieval_vlm.evaluation.detection import evaluate_detection
 from nova_retrieval_vlm.processors.base import BaseProcessor
 from nova_retrieval_vlm.types import BatchData
@@ -27,67 +25,53 @@ class AgenticLocalizationProcessor(BaseProcessor):
     """Agentic processor for localization tasks.
 
     Extends base localization with:
-    - Pre-analysis visual reasoning (structure detection, symmetry)
-    - Tool calling for interactive analysis (zoom, crop, contrast)
+    - Tool calling for interactive analysis (zoom, crop, contrast, flip, rotate)
     - Multi-turn refinement for uncertain cases
     - Retrieval augmentation support
+    - Visual comparison with retrieved examples (planned)
     """
 
     def __init__(
         self,
         config: Any,
-        use_visual_reasoning: bool = True,
         use_tools: bool = True,
-        max_turns: int = 3,
-        index_dir: Path | str | None = None,
+        max_turns: int = 10,
     ):
         """Initialize agentic localization processor.
 
         Args:
             config: ProcessorConfig with model_name, output_dir, etc.
-            use_visual_reasoning: Enable visual pre-analysis
-            use_tools: Enable tool calling (zoom, crop, etc.)
-            max_turns: Max turns for multi-turn refinement
-            index_dir: Directory containing retrieval indexes
+            use_tools: Enable tool calling (zoom, crop, web search, etc.)
+            max_turns: Max turns for multi-turn refinement (default: 10)
         """
         super().__init__(config)
-        self.use_visual_reasoning = use_visual_reasoning
         self.use_tools = use_tools
         self.max_turns = max_turns
 
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
-            use_visual_reasoning=use_visual_reasoning,
             use_tools=use_tools,
             max_turns=max_turns,
         )
 
-        # Initialize retrieval manager if enabled
-        self._retrieval_manager = None
-        if config.use_retrieval and index_dir:
-            self._retrieval_manager = RetrievalManager(
-                index_dir=index_dir,
-                retrieval_type=config.retrieval_type,
-                top_k=5,
-            )
+        logger.info(
+            f"Initialized AgenticLocalizationProcessor with {max_turns} max turns, "
+            f"tools={'enabled' if use_tools else 'disabled'}"
+        )
 
     @beartype
     async def process_batch(self, batch: BatchData, batch_idx: int) -> list[ModelResponse]:
-        """Process localization batch with agentic analysis."""
+        """Process localization batch with fully agentic analysis."""
         responses = []
 
         for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
 
-            # Get retrieval passages if configured
-            retrieval_passages = self._get_retrieval_passages(metadata)
-
-            # Run agentic analysis
+            # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
                 task="localization",
                 metadata=metadata,
-                retrieval_passages=retrieval_passages,
             )
 
             # Convert to ModelResponse
@@ -99,28 +83,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
 
         return responses
 
-    def _get_retrieval_passages(
-        self,
-        metadata: dict[str, Any],
-        visual_analysis: Any = None,
-    ) -> list[str]:
-        """Get retrieval passages based on config and metadata.
-
-        Args:
-            metadata: Image metadata containing patient info, modality, etc.
-            visual_analysis: Optional visual analysis results for query building
-
-        Returns:
-            List of retrieved passages for context augmentation.
-        """
-        if not self.config.use_retrieval or self._retrieval_manager is None:
-            return []
-
-        return self._retrieval_manager.retrieve_for_task(
-            task="localization",
-            metadata=metadata,
-            visual_analysis=visual_analysis,
-        )
+    # NOTE: Retrieval method removed - model now uses search_web tool for independent information retrieval
 
     def _convert_result(
         self,
@@ -137,12 +100,6 @@ class AgenticLocalizationProcessor(BaseProcessor):
         labels = response.get("labels", [])
         reasoning = response.get("reasoning", "")
 
-        # Add visual analysis context to reasoning if available
-        if result.visual_analysis:
-            va = result.visual_analysis
-            reasoning += f"\n\nVisual pre-analysis: {va.overall_assessment}"
-            reasoning += f" (symmetry: {va.symmetry_analysis.symmetry_score:.2f})"
-
         return ModelResponse(
             text=json.dumps({"boxes": boxes, "labels": labels}),
             confidence=result.confidence,
@@ -154,27 +111,25 @@ class AgenticLocalizationProcessor(BaseProcessor):
                 "sample_idx": sample_idx,
                 "num_turns": len(result.turns),
                 "total_tokens": result.total_tokens,
-                "used_visual_reasoning": result.visual_analysis is not None,
                 "tool_calls": sum(len(t.tool_calls) for t in result.turns),
+                "web_searches_used": sum(
+                    1
+                    for t in result.turns
+                    if any(tc.get("name") == "search_web" for tc in t.tool_calls)
+                ),
             },
         )
 
     def _log_analysis(self, result: AgenticResult, sample_idx: int) -> None:
         """Log analysis details for debugging."""
+        tool_count = sum(len(t.tool_calls) for t in result.turns)
         logger.info(
             f"Sample {sample_idx}: "
             f"confidence={result.confidence:.2f}, "
             f"turns={len(result.turns)}, "
+            f"tools={tool_count}, "
             f"tokens={result.total_tokens}"
         )
-
-        if result.visual_analysis:
-            va = result.visual_analysis
-            logger.debug(
-                f"  Visual analysis: "
-                f"symmetry={va.symmetry_analysis.symmetry_score:.2f}, "
-                f"features={len(va.visual_features)}"
-            )
 
     @beartype
     def evaluate_responses(

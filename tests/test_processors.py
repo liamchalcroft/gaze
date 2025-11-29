@@ -13,7 +13,6 @@ import pytest
 
 from nova_retrieval_vlm.processors import BaseProcessor
 from nova_retrieval_vlm.processors import CaptionProcessor
-from nova_retrieval_vlm.processors import DetectionProcessor
 from nova_retrieval_vlm.processors import DiagnosisProcessor
 from nova_retrieval_vlm.processors import LocalizationProcessor
 from nova_retrieval_vlm.processors import ProcessorConfig
@@ -36,7 +35,7 @@ class TestProcessorConfig:
         assert config.task_name == "localization"
         assert config.model_name == "gpt-4o"
         assert config.batch_size == 8  # Default value
-        assert config.use_retrieval == False  # Default value
+        assert not config.use_retrieval  # Default value
 
     def test_processor_config_all_fields(self):
         """Test ProcessorConfig with all fields specified."""
@@ -53,10 +52,10 @@ class TestProcessorConfig:
         assert config.task_name == "caption"
         assert config.model_name == "claude-3-sonnet"
         assert config.batch_size == 16
-        assert config.use_retrieval == True
+        assert config.use_retrieval
         assert config.retrieval_type == "hybrid"
         assert config.output_dir == Path("/tmp/output")
-        assert config.skip_existing == True
+        assert config.skip_existing
 
     def test_processor_config_defaults(self):
         """Test ProcessorConfig default values."""
@@ -66,10 +65,10 @@ class TestProcessorConfig:
         )
 
         assert config.batch_size == 8
-        assert config.use_retrieval == False
+        assert not config.use_retrieval
         assert config.retrieval_type == "bm25"
         assert config.output_dir == Path("./runs")
-        assert config.skip_existing == False
+        assert not config.skip_existing
 
 
 @pytest.mark.unit
@@ -102,7 +101,7 @@ class TestBaseProcessor:
         config = ProcessorConfig(task_name="test", model_name="test-model", skip_existing=False)
         processor = self.ConcreteProcessor(config)
 
-        assert processor.should_skip_batch(0) == False
+        assert not processor.should_skip_batch(0)
 
     def test_should_skip_batch_checks_file_existence(self):
         """Test should_skip_batch checks for existing output files."""
@@ -114,13 +113,13 @@ class TestBaseProcessor:
             processor = self.ConcreteProcessor(config)
 
             # Should not skip when file doesn't exist
-            assert processor.should_skip_batch(0) == False
+            assert not processor.should_skip_batch(0)
 
             # Create output file
             (output_dir / "batch_0.json").touch()
 
             # Should skip when file exists
-            assert processor.should_skip_batch(0) == True
+            assert processor.should_skip_batch(0)
 
     def test_save_batch_results(self):
         """Test save_batch_results creates correct output file."""
@@ -455,63 +454,6 @@ class TestDiagnosisProcessor:
 
 
 @pytest.mark.unit
-class TestDetectionProcessor:
-    """Test cases for DetectionProcessor."""
-
-    @pytest.fixture
-    def processor_config(self) -> ProcessorConfig:
-        """Create test configuration for DetectionProcessor."""
-        return ProcessorConfig(
-            task_name="detection",
-            model_name="gpt-4o",
-        )
-
-    @pytest.mark.asyncio
-    @patch("nova_retrieval_vlm.processors.detection.OpenAIAdapter")
-    async def test_process_batch(
-        self,
-        mock_adapter_class: MagicMock,
-        processor_config: ProcessorConfig,
-        mock_batch_data: BatchData,
-    ):
-        """Test DetectionProcessor processes batch correctly."""
-        mock_adapter = AsyncMock()
-        mock_adapter.generate.return_value = (
-            '{"detections": [{"bbox": [10, 20, 30, 40], "class": "anomaly", "confidence": 0.9}], "reasoning": "Detection analysis completed"}',
-            MagicMock(),
-        )
-        mock_adapter_class.return_value = mock_adapter
-
-        processor = DetectionProcessor(processor_config)
-        responses = await processor.process_batch(mock_batch_data, 0)
-
-        assert len(responses) == 2
-        assert all(isinstance(r, ModelResponse) for r in responses)
-        assert responses[0].reasoning is not None and "Detection" in responses[0].reasoning
-
-    def test_evaluate_responses(self, processor_config: ProcessorConfig):
-        """Test DetectionProcessor evaluation."""
-        processor = DetectionProcessor(processor_config)
-
-        responses = [
-            ModelResponse(text='{"detections": [[10, 20, 30, 40]]}', confidence=0.8),
-        ]
-        ground_truth = ['{"detections": [[10, 20, 30, 40]]}']
-
-        with patch("nova_retrieval_vlm.processors.detection.evaluate_detection") as mock_eval:
-            mock_eval.return_value = {
-                "map50": 0.85,
-                "precision": 0.82,
-                "map30": 0.8,
-                "map50_95": 0.7,
-            }
-
-            metrics = processor.evaluate_responses(responses, ground_truth)
-
-            assert isinstance(metrics, EvaluationMetrics)
-            assert metrics.accuracy == 0.85
-
-
 @pytest.mark.integration
 class TestProcessorIntegration:
     """Integration tests for processor system."""
@@ -557,7 +499,6 @@ class TestProcessorIntegration:
             LocalizationProcessor(config),
             CaptionProcessor(config),
             DiagnosisProcessor(config),
-            DetectionProcessor(config),
         ]
 
         for processor in processors:

@@ -13,7 +13,6 @@ sys.path.insert(0, str(project_root / "src"))
 from nova_retrieval_vlm.config import Config
 from nova_retrieval_vlm.config import ModelConfig
 from nova_retrieval_vlm.config import PathsConfig
-from nova_retrieval_vlm.config import RetrievalConfig
 from nova_retrieval_vlm.types import BatchData
 
 
@@ -28,13 +27,9 @@ def test_config():
             temperature=0.5,
             max_tokens=100,
         ),
-        paths=PathsConfig(
-            data_dir="./tests/data", index_dir="./tests/indexes", output_dir="./tests/outputs"
-        ),
-        retrieval=RetrievalConfig(type="bm25", top_k=3, hybrid_ratio=0.5),
+        paths=PathsConfig(data_dir="./tests/data", output_dir="./tests/outputs"),
         task="localization",
         batch_size=1,
-        use_retrieval=False,
         max_iterations=1,
         request_delay=0.1,
         strict_mode=True,

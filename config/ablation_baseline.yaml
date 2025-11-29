@@ -1,0 +1,29 @@
+# Ablation Study: Baseline vs Agentic Comparison
+
+defaults:
+  - ablation_config
+
+# Focus on baseline vs agentic comparison
+task: diagnosis
+model:
+  name: "x-ai/grok-4.1-fast:free"
+  temperature: 0.0
+
+agentic:
+  enabled: true
+  ablation_mode: "baseline_vs_agentic"
+  single_config: null
+
+  # Compare single-shot baseline with multi-turn agentic
+  reasoning_enabled: false
+  enable_research_metrics: true
+  use_tools: true
+  max_turns: 10
+  use_retrieval: false
+
+paths:
+  output_dir: "./runs/ablation/baseline_vs_agentic"
+
+hydra:
+  run:
+    dir: ${paths.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}

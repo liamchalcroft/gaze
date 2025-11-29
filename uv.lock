@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <4.0"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -2415,6 +2415,21 @@ wheels = [
 ]
 
 [[package]]
+name = "minijinja"
+version = "2.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/a0/7c0855b0bc0c08693cd0eccaed6a843ca143966358e83df0a4f3f319c257/minijinja-2.12.0.tar.gz", hash = "sha256:3161784322cd94ccf1dc7448382ea91d9c62aa9b8ebc7a781d4ae78ee4f1268d", size = 271547, upload-time = "2025-08-24T09:53:13.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/7a/b5ad673aa42475ec5e2734f6230e3e18bdbf847465f929e742be0c16b7f1/minijinja-2.12.0-cp38-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:5d243630682d0289911972bf5b7deba0f4c3839fd18178e9d068d68e835827a9", size = 1943582, upload-time = "2025-08-24T09:53:05.046Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/fa/25038504701ea73ba10fea8ea64e3bad0d0e3c936cbdb8d8dccc095cec75/minijinja-2.12.0-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ebbb265c6b1d0f5c8828504c25b6fb0ff03e351fbf97eea6915dfcf9e6e26ec9", size = 999204, upload-time = "2025-08-24T09:53:06.766Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/8f/910c81002f8a899056272102a686dab129e86d3fee48350e4d5a6478e5ac/minijinja-2.12.0-cp38-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:0c11de5c402e77ec002d55de4dc5e3b6ec1771ce496f0e75b834a84827073966", size = 981696, upload-time = "2025-08-24T09:53:07.899Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/d3/7deca4098c2d1816f773f673eaa04dd52ab6285489a029e51cdb96663ea4/minijinja-2.12.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:466f7a26b67b740c3b8d3b5e891acda65f4f07324bd714e873829c6a8ecd3dab", size = 1055415, upload-time = "2025-08-24T09:53:09.105Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/63/bc8b5662f6f6a54f733026e4604020441ec49fe9155d1fb25c4fe452d8b3/minijinja-2.12.0-cp38-abi3-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:8981c7ffd8303ab9fad412e92263e058db98d62e9d3eda00f14e5cddc9382505", size = 1152799, upload-time = "2025-08-24T09:53:10.246Z" },
+    { url = "https://files.pythonhosted.org/packages/16/c3/4b4968f7e12327d96835c81db88513c278cfdabaf9302a8bdc238968bad4/minijinja-2.12.0-cp38-abi3-win32.whl", hash = "sha256:46f15728ed043f1f8332cbf8ceaa489c13b01ae960b156a015d7b8d64d2d08bd", size = 949919, upload-time = "2025-08-24T09:53:11.44Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/b9/376325cd5fbc113e222c9975fbc3fc5d3f24ca31bc2a448cf9879a4bd956/minijinja-2.12.0-cp38-abi3-win_amd64.whl", hash = "sha256:65f4f8cc47511807fd3ffbe3637bb274e7e69796bf83ece48e138d91c1f19c4f", size = 992329, upload-time = "2025-08-24T09:53:12.851Z" },
+]
+
+[[package]]
 name = "mistune"
 version = "3.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2773,6 +2788,7 @@ name = "nova-retrieval-vlm"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "anthropic" },
     { name = "beartype" },
     { name = "bert-score" },
@@ -2788,6 +2804,7 @@ dependencies = [
     { name = "langdetect" },
     { name = "loguru" },
     { name = "matplotlib" },
+    { name = "minijinja" },
     { name = "more-itertools" },
     { name = "nibabel" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
@@ -2840,6 +2857,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.13" },
     { name = "anthropic" },
     { name = "beartype" },
     { name = "bert-score" },
@@ -2854,6 +2872,7 @@ requires-dist = [
     { name = "langdetect" },
     { name = "loguru" },
     { name = "matplotlib" },
+    { name = "minijinja", specifier = ">=2.12.0" },
     { name = "more-itertools" },
     { name = "nibabel" },
     { name = "numpy" },

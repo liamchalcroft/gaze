@@ -478,7 +478,7 @@ class TestErrorRecoveryAndResilience:
 
     def test_invalid_response_handling(self, mock_image):
         """Test handling of invalid model responses."""
-        batch_data = BatchData(images=[mock_image], metadata=[{}])
+        BatchData(images=[mock_image], metadata=[{}])
 
         processor_config = ProcessorConfig(task_name="localization", model_name="test-model")
         processor = LocalizationProcessor(processor_config)

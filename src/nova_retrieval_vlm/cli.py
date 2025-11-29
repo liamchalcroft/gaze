@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import hydra
 from beartype import beartype
@@ -22,7 +22,6 @@ from nova_retrieval_vlm.config import Config
 from nova_retrieval_vlm.data.nova_dataset import get_dataloader
 from nova_retrieval_vlm.processors import BaseProcessor
 from nova_retrieval_vlm.processors import CaptionProcessor
-from nova_retrieval_vlm.processors import DetectionProcessor
 from nova_retrieval_vlm.processors import DiagnosisProcessor
 from nova_retrieval_vlm.processors import LocalizationProcessor
 from nova_retrieval_vlm.processors import ProcessorConfig
@@ -34,20 +33,17 @@ def _image_to_path(image: Image.Image | str) -> str:
     if isinstance(image, str):
         # Already a path
         return image
-    elif isinstance(image, Image.Image):
+    else:
         # Save PIL Image to temporary file
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
             image.save(temp_file.name, format="JPEG", quality=95)
             return temp_file.name
-    else:
-        raise ValueError(f"Unsupported image type: {type(image)}")
 
 
 # Register processors (standard and agentic variants)
 PROCESSORS: dict[str, type[BaseProcessor]] = {
     "localization": LocalizationProcessor,
     "caption": CaptionProcessor,
-    "detection": DetectionProcessor,
     "diagnosis": DiagnosisProcessor,
 }
 
@@ -72,18 +68,14 @@ def create_processor(config: Config) -> BaseProcessor:
             task_name=task_name,
             model_name=config.model.name,
             batch_size=config.batch_size,
-            use_retrieval=config.use_retrieval,
-            retrieval_type=config.retrieval.type,
             output_dir=Path(config.paths.output_dir),
             skip_existing=config.skip_existing,
         )
 
         return processor_cls(
             config=processor_config,
-            use_visual_reasoning=config.agentic.use_visual_reasoning,
             use_tools=config.agentic.use_tools,
             max_turns=config.agentic.max_turns,
-            index_dir=Path(config.paths.index_dir) if config.use_retrieval else None,
         )
 
     # Standard processor
@@ -96,8 +88,6 @@ def create_processor(config: Config) -> BaseProcessor:
         task_name=task_name,
         model_name=config.model.name,
         batch_size=config.batch_size,
-        use_retrieval=config.use_retrieval,
-        retrieval_type=config.retrieval.type,
         output_dir=Path(config.paths.output_dir),
         skip_existing=config.skip_existing,
     )
@@ -106,15 +96,15 @@ def create_processor(config: Config) -> BaseProcessor:
 
 
 @beartype
-async def run_task(config: Config) -> None:
+async def run_task(config: Config) -> dict[str, Any]:
     """Run the specified task with modern architecture."""
     task_name = config.task.value if hasattr(config.task, "value") else str(config.task)
     logger.info(f"Starting task: {task_name}")
     logger.info(f"Model: {config.model.name}")
-    logger.info(f"Use retrieval: {config.use_retrieval}")
+    logger.info(f"Web search: {'enabled via tools' if config.agentic.enabled else 'disabled'}")
     if config.agentic.enabled:
         logger.info(
-            f"Agentic mode: visual_reasoning={config.agentic.use_visual_reasoning}, "
+            f"Agentic mode: reasoning_enabled={config.agentic.reasoning_enabled}, "
             f"tools={config.agentic.use_tools}, max_turns={config.agentic.max_turns}"
         )
 
@@ -199,6 +189,7 @@ async def run_task(config: Config) -> None:
             logger.info("Evaluating results...")
             metrics = processor.evaluate_responses(all_responses, all_ground_truth)
             logger.info(f"Final metrics: {metrics}")
+
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
             metrics = {}
@@ -207,7 +198,14 @@ async def run_task(config: Config) -> None:
         metrics = {}
 
     logger.success(f"Task {config.task} completed successfully!")
-    return metrics
+
+    # Convert metrics to dict for consistent return type
+    if hasattr(metrics, '__dict__'):
+        return metrics.__dict__
+    elif isinstance(metrics, dict):
+        return metrics
+    else:
+        return {}  # Fallback for other types
 
 
 @hydra.main(version_base="1.3", config_path="../../config", config_name="config")

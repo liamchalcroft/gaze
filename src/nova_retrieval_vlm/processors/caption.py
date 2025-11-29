@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from beartype import beartype
 from PIL import Image
 
 # Lazy import to avoid torch import issues during collection
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
+from nova_retrieval_vlm.prompts.prompt_loader import create_enhanced_prompt
 from nova_retrieval_vlm.types import BatchData
 from nova_retrieval_vlm.types import EvaluationMetrics
 from nova_retrieval_vlm.types import ModelResponse
@@ -34,15 +34,28 @@ class CaptionProcessor(BaseProcessor):
             # Load image
             Image.open(image_path)
 
-            # Create caption prompt
-            prompt = self._create_caption_prompt(image_path, metadata)
+            # Create unified prompt for all tasks
+            prompt = create_enhanced_prompt(
+                template_name="all_tasks.jinja",
+                image_path=image_path,
+                passages=[],
+                metadata={
+                    **metadata,
+                    "width": Image.open(image_path).width,
+                    "height": Image.open(image_path).height,
+                    "image_id": image_path.name,
+                    "enable_visual_tools": False,
+                    "enable_web_search": False,
+                },
+                mode="single_turn",
+            )
 
             # Get model response using existing OpenAI adapter interface
             response_text, generation_log = await model_adapter.generate(
                 image_path=Path(image_path),
                 passages=[],
                 system_prompt=prompt,
-                max_tokens=256,
+                max_tokens=1024,  # Increased for comprehensive response
                 temperature=0.1,
             )
 
@@ -52,9 +65,15 @@ class CaptionProcessor(BaseProcessor):
                 "log": generation_log,
             }
 
-            # Extract caption text
-            caption = model_result.get("text", "").strip()
-            confidence = model_result.get("confidence", 0.5)
+            # Extract caption from JSON response
+            import json
+
+            response_text = model_result.get("text", "").strip()
+
+            # Parse JSON response from unified prompt
+            response_json = json.loads(response_text)
+            caption = response_json.get("caption", {}).get("description", "").strip()
+            confidence = response_json.get("caption", {}).get("confidence", 0.5)
 
             # Create structured response
             response = ModelResponse(
@@ -93,23 +112,3 @@ class CaptionProcessor(BaseProcessor):
             f1_score=results.get("bert_f1"),
             auc_roc=results.get("meteor"),
         )
-
-    def _create_caption_prompt(self, image_path: Path, metadata: dict[str, Any]) -> str:
-        """Create caption prompt for the medical image."""
-        modality = metadata.get("modality", "medical image")
-        patient_info = metadata.get("patient_info", "")
-
-        prompt = f"""Provide a detailed medical description of this {modality}.
-
-Image: {image_path.name}
-{f"Patient context: {patient_info}" if patient_info else ""}
-
-Describe:
-- Image modality and acquisition details
-- Anatomical structures visible
-- Any abnormalities, lesions, or pathological findings
-- Image quality and technical parameters
-
-Provide a comprehensive but concise medical caption."""
-
-        return prompt

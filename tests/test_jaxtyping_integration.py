@@ -5,12 +5,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from nova_retrieval_vlm.tensor_ops import (
-    compute_attention_weights,
-    extract_image_features,
-    validate_medical_workflow,
-    validate_tensor_batch,
-)
+from nova_retrieval_vlm.tensor_ops import compute_attention_weights
+from nova_retrieval_vlm.tensor_ops import extract_image_features
+from nova_retrieval_vlm.tensor_ops import validate_medical_workflow
+from nova_retrieval_vlm.tensor_ops import validate_tensor_batch
 
 
 class TestTensorValidation:
@@ -52,23 +50,23 @@ class TestMedicalWorkflow:
         assert "tensors" in result or "error" in result
 
 
-class TestRadiologyAnalyzer:
-    """Tests for radiology analyzer initialization."""
+class TestImageOps:
+    """Tests for image operations."""
 
-    def test_medical_image_analyzer_init(self):
-        """Test MedicalImageAnalyzer initialization."""
-        from nova_retrieval_vlm.visual_reasoning.radiology_analyzer import (
-            MedicalImageAnalyzer,
-        )
+    def test_flip_horizontal_import(self):
+        """Test flip_horizontal is importable."""
+        from nova_retrieval_vlm.visual_reasoning import flip_horizontal
 
-        analyzer = MedicalImageAnalyzer()
-        assert analyzer is not None
+        assert flip_horizontal is not None
 
-    def test_bilateral_symmetry_analyzer_init(self):
-        """Test BilateralSymmetryAnalyzer initialization."""
-        from nova_retrieval_vlm.visual_reasoning.radiology_analyzer import (
-            BilateralSymmetryAnalyzer,
-        )
+    def test_flip_vertical_import(self):
+        """Test flip_vertical is importable."""
+        from nova_retrieval_vlm.visual_reasoning import flip_vertical
 
-        analyzer = BilateralSymmetryAnalyzer()
-        assert analyzer is not None
+        assert flip_vertical is not None
+
+    def test_rotate_90_import(self):
+        """Test rotate_90 is importable."""
+        from nova_retrieval_vlm.visual_reasoning import rotate_90
+
+        assert rotate_90 is not None

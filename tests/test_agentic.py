@@ -180,10 +180,10 @@ class TestAgenticConfig:
         config = AgenticConfig()
 
         assert config.enabled is False
-        assert config.use_visual_reasoning is True
         assert config.use_tools is True
-        assert config.max_turns == 3
+        assert config.max_turns == 10
         assert config.confidence_threshold == 0.7
+        assert config.reasoning_enabled is False
 
     def test_agentic_config_in_main_config(self):
         """Test agentic config is part of main config."""
@@ -219,13 +219,11 @@ class TestAgenticProcessor:
 
         processor = AgenticProcessor(
             model_name="openai/gpt-4o",
-            use_visual_reasoning=True,
             use_tools=True,
             max_turns=3,
         )
 
         assert processor.model_name == "openai/gpt-4o"
-        assert processor.use_visual_reasoning is True
         assert processor.use_tools is True
         assert processor.max_turns == 3
 
@@ -237,7 +235,10 @@ class TestAgenticProcessor:
         # Mock the OpenAIAdapter at class level before lazy initialization
         mock_response = '{"boxes": [[10, 10, 50, 50]], "labels": ["lesion"], "reasoning": "test"}'
         mock_adapter = MagicMock()
-        mock_adapter.generate = AsyncMock(return_value=(mock_response, MagicMock(total_tokens=100)))
+        # generate_chat returns (text, tool_calls, log)
+        mock_log = MagicMock()
+        mock_log.tokens = 100
+        mock_adapter.generate_chat = AsyncMock(return_value=(mock_response, None, mock_log))
 
         with patch(
             "nova_retrieval_vlm.agentic.processor.OpenAIAdapter",
@@ -245,7 +246,6 @@ class TestAgenticProcessor:
         ):
             processor = AgenticProcessor(
                 model_name="openai/gpt-4o",
-                use_visual_reasoning=False,  # Disable to avoid heavy computation
                 use_tools=False,
             )
 
@@ -269,49 +269,7 @@ class TestAgenticProcessor:
             Path(f.name).unlink(missing_ok=True)
 
 
-class TestRetrievalManager:
-    """Tests for the RetrievalManager class."""
-
-    def test_manager_initialization(self, tmp_path):
-        """Test retrieval manager initialization."""
-        from nova_retrieval_vlm.agentic import RetrievalManager
-
-        manager = RetrievalManager(
-            index_dir=tmp_path,
-            retrieval_type="bm25",
-            top_k=5,
-        )
-
-        assert manager.index_dir == tmp_path
-        assert manager.retrieval_type == "bm25"
-        assert manager.top_k == 5
-
-    def test_retrieve_without_index(self, tmp_path):
-        """Test retrieval when index doesn't exist."""
-        from nova_retrieval_vlm.agentic import RetrievalManager
-
-        manager = RetrievalManager(index_dir=tmp_path, retrieval_type="bm25")
-
-        # Should return empty list when index not found
-        result = manager.retrieve({"modality": "MRI"})
-        assert result == []
-
-    def test_build_query_from_metadata(self, tmp_path):
-        """Test query building from metadata."""
-        from nova_retrieval_vlm.agentic import RetrievalManager
-
-        manager = RetrievalManager(index_dir=tmp_path)
-
-        query = manager._build_query(
-            metadata={
-                "modality": "MRI",
-                "clinical_history": "headaches for 2 weeks",
-            },
-            visual_analysis=None,
-        )
-
-        assert "MRI" in query
-        assert "headaches" in query
+# RetrievalManager tests removed - replaced with search_web tool
 
 
 class TestAgenticLocalizationProcessor:
@@ -338,12 +296,10 @@ class TestAgenticLocalizationProcessor:
 
         processor = AgenticLocalizationProcessor(
             config=processor_config,
-            use_visual_reasoning=True,
             use_tools=True,
             max_turns=3,
         )
 
-        assert processor.use_visual_reasoning is True
         assert processor.use_tools is True
         assert processor.max_turns == 3
 
@@ -388,3 +344,127 @@ class TestCLIAgenticIntegration:
         processor = create_processor(config)
 
         assert isinstance(processor, AgenticLocalizationProcessor)
+
+
+class TestAgenticWebSearchIntegration:
+    """Tests for web search integration in agentic tools."""
+
+    @pytest.fixture
+    def temp_image(self):
+        """Create a temporary test image."""
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            img = Image.new("RGB", (100, 100), color="white")
+            img.save(f.name)
+            yield Path(f.name)
+            # Cleanup
+            Path(f.name).unlink(missing_ok=True)
+
+    def test_tool_registry_includes_search_web(self):
+        """Test that search_web tool is included in tool registry."""
+        registry = ToolRegistry()
+        schemas = registry.get_tool_schemas()
+
+        search_web_schema = next(
+            (schema for schema in schemas if schema["function"]["name"] == "search_web"), None
+        )
+
+        assert search_web_schema is not None, "search_web tool not found in registry"
+
+        # Verify tool schema structure
+        function_def = search_web_schema["function"]
+        assert function_def["name"] == "search_web"
+        assert "query" in function_def["parameters"]["required"]
+        assert function_def["parameters"]["properties"]["query"]["type"] == "string"
+
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
+    def test_search_web_tool_execution(self, mock_search, temp_image):
+        """Test search_web tool execution with mocking."""
+        # Mock successful search result
+        from nova_retrieval_vlm.retrieval.web_search import SearchResult
+
+        mock_search.return_value = [
+            SearchResult(
+                title="Test Medical Paper",
+                url="https://pubmed.ncbi.nlm.nih.gov/12345",
+                content="Test medical content with reliability scoring",
+                snippet="Test medical content snippet",
+                source="pubmed",
+                reliability_score=0.9,
+                medical_relevance=0.85,
+                extracted_entities=["glioblastoma", "MRI", "diagnosis"],
+            )
+        ]
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        # Test search_web tool execution
+        result = registry.execute(
+            "search_web", query="glioblastoma MRI findings", search_type="pubmed"
+        )
+
+        assert result.success is True
+        assert "Found 1" in result.description
+        assert result.metadata["results_count"] == 1
+        assert result.metadata["query"] == "glioblastoma MRI findings"
+        assert result.metadata["search_type"] == "pubmed"
+
+        # Verify the search was called with correct parameters
+        mock_search.assert_called_once_with(
+            query="glioblastoma MRI findings", max_results=5, search_type="pubmed"
+        )
+
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
+    def test_search_web_error_handling(self, mock_search, temp_image):
+        """Test search_web tool error handling."""
+        mock_search.side_effect = Exception("Search failed")
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        result = registry.execute("search_web", query="test query")
+
+        assert result.success is False
+        assert "search failed" in result.description.lower()
+        assert "error" in result.metadata
+
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
+    def test_search_web_empty_results(self, mock_search, temp_image):
+        """Test search_web tool with empty results."""
+        mock_search.return_value = []
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        result = registry.execute("search_web", query="obscure condition")
+
+        assert result.success is False  # Implementation returns False for no results
+        assert (
+            "no results" in result.description.lower()
+            or "no pubmed results" in result.description.lower()
+        )
+        assert result.metadata["results_count"] == 0
+
+    @patch("nova_retrieval_vlm.retrieval.web_search.PubMedSearchEngine")
+    def test_search_result_creation(self, mock_engine):
+        """Test SearchResult dataclass creation and validation."""
+        from nova_retrieval_vlm.retrieval.web_search import SearchResult
+
+        result = SearchResult(
+            title="Test Paper",
+            url="https://example.com/paper",
+            content="This is a test medical paper content.",
+            snippet="Test snippet",
+            source="pubmed",
+            reliability_score=0.85,
+            medical_relevance=0.9,
+            extracted_entities=["glioblastoma", "MRI", "diagnosis"],
+        )
+
+        assert result.title == "Test Paper"
+        assert result.url == "https://example.com/paper"
+        assert result.snippet == "Test snippet"
+        assert result.source == "pubmed"
+        assert result.reliability_score == 0.85
+        assert result.medical_relevance == 0.9
+        assert "glioblastoma" in result.extracted_entities

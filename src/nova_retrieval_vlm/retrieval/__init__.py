@@ -1,19 +1,13 @@
-"""Retrieval system for medical knowledge and web search."""
+"""Enhanced web search system for medical knowledge retrieval."""
 
-from .pipeline_retrieval import RetrievalPipeline
-from .retrievers import BM25Retriever
-from .retrievers import CrossEncoderReranker
-from .retrievers import DenseRetriever
-from .retrievers import HybridRetriever
-from .retrievers import MedicalQueryExpander
-from .web_search import MedicalWebSearcher
+from .web_search import SearchResult
+from .web_search import WebSearchManager
+from .web_search import search_medical_literature
+from .web_search import search_medical_literature_sync
 
 __all__ = [
-    "BM25Retriever",
-    "CrossEncoderReranker",
-    "DenseRetriever",
-    "HybridRetriever",
-    "MedicalQueryExpander",
-    "MedicalWebSearcher",
-    "RetrievalPipeline",
+    "SearchResult",
+    "WebSearchManager",
+    "search_medical_literature",
+    "search_medical_literature_sync",
 ]

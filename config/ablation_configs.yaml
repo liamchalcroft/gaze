@@ -1,0 +1,135 @@
+# Ablation Study Configurations
+# Individual experiment configurations for systematic component evaluation
+
+# 1. Absolute baseline - single shot, no tools, no reasoning
+baseline_single_shot:
+  name: baseline_single_shot
+  description: Absolute baseline: single prompt, no tools, no reasoning
+  single_shot: true
+  use_tools: false
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 1
+  enabled_tools: []
+  disabled_tools: []
+
+# 2. Agentic baseline - multi-turn with all tools
+agentic_baseline:
+  name: agentic_baseline
+  description: Multi-turn agentic system with all tools
+  single_shot: false
+  use_tools: true
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools: []
+
+# 3. Reasoning enabled
+reasoning_enabled:
+  name: reasoning_enabled
+  description: Multi-turn agentic system with reasoning enabled
+  single_shot: false
+  use_tools: true
+  use_reasoning: true
+  use_retrieval: false
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools: []
+
+# 4. No visual tools (only web search)
+no_visual_tools:
+  name: no_visual_tools
+  description: Multi-turn agentic system with only web search tool
+  single_shot: false
+  use_tools: true
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools:
+    - zoom
+    - crop
+    - adjust_contrast
+    - threshold
+    - flip_horizontal
+    - flip_vertical
+    - rotate
+
+# 5. Only visual tools (no web search)
+only_visual_tools:
+  name: only_visual_tools
+  description: Multi-turn agentic system with only visual tools
+  single_shot: false
+  use_tools: true
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools:
+    - search_web
+
+# 6. No tools - just conversation
+no_tools:
+  name: no_tools
+  description: Multi-turn conversation without tools
+  single_shot: false
+  use_tools: false
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 5
+  enabled_tools: []
+  disabled_tools: []
+
+# 7. Limited visual tools (zoom and crop only)
+limited_visual_tools:
+  name: limited_visual_tools
+  description: Multi-turn agentic system with basic visual tools only
+  single_shot: false
+  use_tools: true
+  use_reasoning: false
+  use_retrieval: false
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools:
+    - adjust_contrast
+    - threshold
+    - flip_horizontal
+    - flip_vertical
+    - rotate
+
+# 8. With retrieval augmentation
+with_retrieval:
+  name: with_retrieval
+  description: Multi-turn agentic system with retrieval augmentation
+  single_shot: false
+  use_tools: true
+  use_reasoning: false
+  use_retrieval: true
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools: []
+
+# 9. Retrieval only (no tools)
+retrieval_only:
+  name: retrieval_only
+  description: Single prompt with retrieval augmentation, no tools
+  single_shot: true
+  use_tools: false
+  use_reasoning: false
+  use_retrieval: true
+  max_turns: 1
+  enabled_tools: []
+  disabled_tools: []
+
+# 10. Reasoning + Retrieval
+reasoning_with_retrieval:
+  name: reasoning_with_retrieval
+  description: Multi-turn agentic system with reasoning and retrieval
+  single_shot: false
+  use_tools: true
+  use_reasoning: true
+  use_retrieval: true
+  max_turns: 10
+  enabled_tools: []
+  disabled_tools: []

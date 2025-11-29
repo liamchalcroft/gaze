@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from beartype import beartype
 from PIL import Image
 
 from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
+from nova_retrieval_vlm.prompts.prompt_loader import create_enhanced_prompt
 from nova_retrieval_vlm.types import BatchData
 from nova_retrieval_vlm.types import EvaluationMetrics
 from nova_retrieval_vlm.types import ModelResponse
@@ -34,15 +34,28 @@ class DiagnosisProcessor(BaseProcessor):
             # Load image
             Image.open(image_path)
 
-            # Create diagnosis prompt
-            prompt = self._create_diagnosis_prompt(image_path, metadata)
+            # Create unified prompt for all tasks
+            prompt = create_enhanced_prompt(
+                template_name="all_tasks.jinja",
+                image_path=image_path,
+                passages=[],
+                metadata={
+                    **metadata,
+                    "width": Image.open(image_path).width,
+                    "height": Image.open(image_path).height,
+                    "image_id": image_path.name,
+                    "enable_visual_tools": False,
+                    "enable_web_search": False,
+                },
+                mode="single_turn",
+            )
 
             # Get model response using existing OpenAI adapter interface
             response_text, generation_log = await model_adapter.generate(
                 image_path=Path(image_path),
                 passages=[],
                 system_prompt=prompt,
-                max_tokens=512,
+                max_tokens=1024,  # Increased for comprehensive response
                 temperature=0.0,
             )
 
@@ -52,9 +65,15 @@ class DiagnosisProcessor(BaseProcessor):
                 "log": generation_log,
             }
 
-            # Extract diagnosis
-            diagnosis_text = model_result.get("text", "").strip()
-            confidence = model_result.get("confidence", 0.5)
+            # Extract diagnosis from JSON response
+            import json
+
+            response_text = model_result.get("text", "").strip()
+
+            # Parse JSON response from unified prompt
+            response_json = json.loads(response_text)
+            diagnosis_text = response_json.get("diagnosis", {}).get("primary_diagnosis", "").strip()
+            confidence = response_json.get("diagnosis", {}).get("confidence", 0.5)
 
             # Parse structured diagnosis if provided
             diagnosis = self._extract_primary_diagnosis(diagnosis_text)
@@ -93,28 +112,6 @@ class DiagnosisProcessor(BaseProcessor):
             f1_score=results.get("f1_score"),
             auc_roc=results.get("auc"),  # If available from evaluation
         )
-
-    def _create_diagnosis_prompt(self, image_path: Path, metadata: dict[str, Any]) -> str:
-        """Create diagnosis prompt for the medical image."""
-        modality = metadata.get("modality", "medical image")
-        patient_info = metadata.get("patient_info", "")
-        clinical_history = metadata.get("clinical_history", "")
-
-        prompt = f"""Analyze this {modality} and provide a medical diagnosis.
-
-Image: {image_path.name}
-{f"Patient information: {patient_info}" if patient_info else ""}
-{f"Clinical history: {clinical_history}" if clinical_history else ""}
-
-Based on your analysis, provide:
-1. Primary diagnosis (most likely condition)
-2. Differential diagnoses (alternative possibilities)
-3. Confidence level and reasoning
-4. Recommended follow-up or additional studies
-
-Primary Diagnosis:"""
-
-        return prompt
 
     def _extract_primary_diagnosis(self, diagnosis_text: str) -> str:
         """Extract the primary diagnosis from the full response."""

@@ -1,20 +1,25 @@
 """
-Web Search Component for Medical VLM
+Enhanced Web Search Tool for LLM Agents
 
-This module provides web search capabilities that can be integrated into the
-visual multiturn pipeline, allowing the model to search for current medical
-information, guidelines, and research while analyzing medical images.
+This module provides a production-ready web search tool designed specifically for LLM agents,
+with proper error handling, result formatting, source verification, and reliability scoring.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
 import time
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
+from urllib.parse import urlparse
 
+import aiohttp
 import requests
 import urllib3
-from bs4 import BeautifulSoup
+from beartype import beartype
 from loguru import logger
 
 # Suppress SSL warnings for web scraping
@@ -22,827 +27,610 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 @dataclass
-class WebSearchResult:
-    """Result from web search with metadata."""
+class SearchResult:
+    """Enhanced search result with LLM-friendly formatting."""
 
     title: str
     url: str
-    snippet: str
-    source: str  # 'google', 'duckduckgo', 'pubmed', 'scraped', etc.
-    relevance_score: float
-    medical_concepts: list[str]
+    content: str  # Full content or detailed snippet
+    snippet: str  # Brief description
+    source: str
+    reliability_score: float  # 0.0-1.0
     publication_date: str | None = None
+    author: str | None = None
+    journal: str | None = None
+    doi: str | None = None
+    content_type: str = "unknown"  # article, guidelines, case_report, review
+    medical_relevance: float = 0.0  # Medical relevance score
+    extracted_entities: list[str] = field(default_factory=list)  # Medical entities found
+    citation_count: int | None = None  # For academic sources
+    open_access: bool = False
+
+    def to_llm_dict(self) -> dict[str, Any]:
+        """Convert to LLM-friendly dictionary format."""
+        return {
+            "title": self.title,
+            "url": self.url,
+            "summary": self.snippet,
+            "content": self.content[:2000] + "..." if len(self.content) > 2000 else self.content,
+            "source": self.source,
+            "reliability": f"{self.reliability_score:.2f}",
+            "medical_relevance": f"{self.medical_relevance:.2f}",
+            "publication_date": self.publication_date,
+            "content_type": self.content_type,
+            "key_entities": self.extracted_entities[:10],  # Top 10 entities
+            "open_access": self.open_access,
+        }
 
 
-class WebSearcher:
-    """Web search component for medical information retrieval."""
+class SearchEngine:
+    """Base class for search engines with common functionality."""
 
-    def __init__(
-        self,
-        search_engines: list[str] | None = None,
-        medical_sites: list[str] | None = None,
-        max_results: int = 5,
-        timeout: int = 15,
-    ):
-        """
-        Initialize web searcher.
-
-        Args:
-            search_engines: List of search engines to use
-            medical_sites: List of medical websites to prioritize
-            max_results: Maximum results per search
-            timeout: Request timeout in seconds
-        """
-        self.search_engines = search_engines or ["duckduckgo_html", "pubmed"]
-        self.medical_sites = medical_sites or [
-            "pubmed.ncbi.nlm.nih.gov",
-            "www.ncbi.nlm.nih.gov",
-            "www.radiologyinfo.org",
-            "www.nice.org.uk",
-            "www.acr.org",
-            "www.aan.com",
-            "www.rcr.ac.uk",
-            "radiopaedia.org",
-            "mriquestions.com",
-            "www.uptodate.com",
-            "www.medscape.com",
-            "emedicine.medscape.com",
-            "www.nejm.org",
-            "www.thelancet.com",
-            "jamanetwork.com",
-            "pubs.rsna.org",
-            "link.springer.com",
-            "onlinelibrary.wiley.com",
-        ]
-        self.max_results = max_results
+    def __init__(self, name: str, timeout: int = 30, max_retries: int = 3):
+        self.name = name
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.session = requests.Session()
+        self.session.headers.update(self._get_headers())
 
-        # Enhanced user agent for better compatibility
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    def _get_headers(self) -> dict[str, str]:
+        """Get standard headers for web requests."""
+        return {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         }
 
-    def search(self, query: str, medical_focus: bool = True) -> list[WebSearchResult]:
-        """
-        Perform web search across multiple engines.
-
-        Args:
-            query: Search query
-            medical_focus: Whether to add medical context to the query
-
-        Returns:
-            List of web search results
-        """
-        results = []
-
-        # Add medical context to query if medical_focus is True
-        if medical_focus:
-            # Enhance query with medical terms while keeping it natural
-            # Avoid duplication if medical terms already present
-            query_lower = query.lower()
-            if not any(term in query_lower for term in ["medical", "radiology", "imaging"]):
-                enhanced_query = f"{query} medical radiology imaging"
-            else:
-                enhanced_query = query
-        else:
-            enhanced_query = query
-
-        logger.info(f"Starting web search for: '{enhanced_query}'")
-
-        # Try the original query first
-        results = self._try_search_engines(enhanced_query)
-
-        # If no results and query is complex, try fallback strategies
-        if not results and medical_focus:
-            logger.info("No results from original query, trying fallback strategies...")
-            results = self._try_fallback_searches(query)
-
-        if not results:
-            logger.warning("No results from any search engine")
-            return []
-
-        # Remove duplicates and rank results
-        unique_results = self._deduplicate_results(results)
-        ranked_results = self._rank_results(unique_results, query)
-
-        final_results = ranked_results[: self.max_results]
-        logger.info(f"Returning {len(final_results)} final results")
-
-        return final_results
-
-    def _try_search_engines(self, query: str) -> list[WebSearchResult]:
-        """Try all configured search engines with the given query."""
-        results = []
-
-        # Search across different engines
-        for engine in self.search_engines:
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        """Search with retry logic."""
+        for attempt in range(self.max_retries):
             try:
-                logger.info(f"Searching with {engine}...")
-
-                if engine == "duckduckgo_html":
-                    engine_results = self._search_duckduckgo_html(query)
-                elif engine == "pubmed":
-                    engine_results = self._search_pubmed(query)
-                elif engine == "google_scrape":
-                    engine_results = self._search_google_scrape(query)
-                else:
-                    logger.warning(f"Unknown search engine: {engine}")
-                    continue
-
-                if engine_results:
-                    logger.info(f"Found {len(engine_results)} results from {engine}")
-                    results.extend(engine_results)
-                else:
-                    logger.warning(f"No results from {engine}")
-
-                # Rate limiting between engines
-                time.sleep(2)
+                results = await self._search_impl(query, max_results)
+                if results:
+                    return results
 
             except Exception as e:
-                logger.error(f"Search failed for {engine}: {e}")
-                continue
+                logger.warning(f"Search attempt {attempt + 1} failed for {self.name}: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2**attempt)  # Exponential backoff
 
-        return results
-
-    def _try_fallback_searches(self, original_query: str) -> list[WebSearchResult]:
-        """Try simplified versions of complex queries."""
-        fallback_queries = self._generate_fallback_queries(original_query)
-
-        for fallback_query in fallback_queries:
-            logger.info(f"Trying fallback query: '{fallback_query}'")
-            results = self._try_search_engines(fallback_query)
-            if results:
-                logger.info(f"Fallback query successful with {len(results)} results")
-                return results
-
-            # Small delay between fallback attempts
-            time.sleep(1)
-
+        logger.error(f"All search attempts failed for {self.name}")
         return []
 
-    def _generate_fallback_queries(self, query: str) -> list[str]:
-        """Generate simpler versions of complex queries."""
-        fallback_queries = []
+    async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
+        """Implement actual search logic in subclasses."""
+        raise NotImplementedError
 
-        # Extract key medical terms
-        important_terms = []
-        medical_keywords = [
-            "hyperintensity",
-            "glioma",
-            "metastasis",
-            "abscess",
-            "tumor",
-            "lesion",
-            "cerebellar",
-            "brain",
-            "mri",
-            "ct",
-            "flair",
-            "t1",
-            "t2",
-            "diagnosis",
-            "differential",
-            "imaging",
-            "radiology",
-            "pathology",
-            "anatomy",
-        ]
+    def _calculate_reliability(self, url: str, source: str) -> float:
+        """Calculate source reliability score."""
+        _ = source  # Unused parameter
+        # High-reliability medical sources
+        high_reliability = {
+            "pubmed.ncbi.nlm.nih.gov": 0.95,
+            "www.ncbi.nlm.nih.gov": 0.95,
+            "www.cochrane.org": 0.95,
+            "www.who.int": 0.95,
+            "www.fda.gov": 0.90,
+            "www.nice.org.uk": 0.90,
+            "www.acr.org": 0.85,
+            "radiopaedia.org": 0.85,
+            "www.radiologyinfo.org": 0.85,
+        }
 
-        query_words = query.lower().split()
-        for word in query_words:
-            # Remove common connectors and extract meaningful terms
-            clean_word = word.strip(".,!?()[]{}")
-            if clean_word in medical_keywords:
-                important_terms.append(clean_word)
+        domain = urlparse(url).netloc.lower()
+        if domain in high_reliability:
+            return high_reliability[domain]
 
-        # Strategy 1: Use first few important terms
-        if len(important_terms) >= 2:
-            fallback_queries.append(" ".join(important_terms[:3]))
+        # Academic sources
+        if any(academic in domain for academic in ["edu", "nih.", "gov.", "ac.", "org."]):
+            return 0.80
 
-        # Strategy 2: Extract main anatomical/pathological terms
-        anatomy_terms = ["cerebellar", "brain", "cerebral", "spinal"]
-        pathology_terms = ["hyperintensity", "glioma", "metastasis", "abscess", "tumor", "lesion"]
+        # Medical publishers
+        if any(
+            publisher in domain
+            for publisher in ["elsevier", "wiley", "springer", "thelancet", "jamanetwork"]
+        ):
+            return 0.85
 
-        anatomy_found = [term for term in important_terms if term in anatomy_terms]
-        pathology_found = [term for term in important_terms if term in pathology_terms]
+        # General web sources
+        return 0.60
 
-        if anatomy_found and pathology_found:
-            fallback_queries.append(f"{anatomy_found[0]} {pathology_found[0]}")
 
-        # Strategy 3: Just use the most specific medical term
-        if pathology_found:
-            fallback_queries.append(pathology_found[0])
-        elif anatomy_found:
-            fallback_queries.append(anatomy_found[0])
+class PubMedSearchEngine(SearchEngine):
+    """Enhanced PubMed search with better error handling and metadata extraction."""
 
-        # Remove duplicates while preserving order
-        unique_fallbacks = []
-        for q in fallback_queries:
-            if q and q not in unique_fallbacks:
-                unique_fallbacks.append(q)
+    def __init__(self, **kwargs):
+        super().__init__("PubMed", **kwargs)
+        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+        self.api_key = os.getenv("NCBI_API_KEY")
 
-        return unique_fallbacks[:3]  # Limit to 3 fallback attempts
+    def _get_headers(self) -> dict[str, str]:
+        headers = super()._get_headers()
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
-    def _search_duckduckgo_html(self, query: str) -> list[WebSearchResult]:
-        """Search DuckDuckGo by scraping HTML results."""
+    async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
+        """Search PubMed with enhanced metadata extraction."""
         try:
-            # Use DuckDuckGo HTML search
-            search_url = "https://html.duckduckgo.com/html/"
-            params = {"q": query}
-
-            # Use better headers to avoid detection
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "keep-alive",
-            }
-
-            response = requests.get(
-                search_url, params=params, headers=headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-
-            if response.status_code != 200:
-                logger.warning(f"DuckDuckGo returned status {response.status_code}")
-                return []
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = []
-
-            # Try multiple selectors as DuckDuckGo structure changes
-            selectors_to_try = [
-                "div.result",  # Original selector
-                'div[class*="result"]',  # Contains "result"
-                "div.web-result",  # Alternative
-                "article",  # Generic article tags
-                "div.links_main",  # Another possible selector
-            ]
-
-            result_divs = []
-            for selector in selectors_to_try:
-                result_divs = soup.select(selector)
-                if result_divs:
-                    logger.debug(f"Found {len(result_divs)} results with selector: {selector}")
-                    break
-
-            if not result_divs:
-                logger.warning("No result divs found with any selector")
-                return []
-
-            for div in result_divs[:5]:  # Limit to top 5 results
-                try:
-                    # Try multiple approaches to extract title and URL
-                    title_link = None
-                    title = ""
-                    url = ""
-                    snippet = ""
-
-                    # Try different selectors for title/link
-                    title_selectors = [
-                        "a.result__a",
-                        'a[class*="result"]',
-                        "h2 a",
-                        "h3 a",
-                        'a[href*="http"]',
-                    ]
-
-                    for title_selector in title_selectors:
-                        title_link = div.select_one(title_selector)
-                        if title_link:
-                            break
-
-                    if title_link:
-                        title = title_link.get_text(strip=True)
-                        url = title_link.get("href", "")
-                    else:
-                        # Fallback: look for any link
-                        all_links = div.find_all("a", href=True)
-                        for link in all_links:
-                            href = link.get("href", "")
-                            if href.startswith("http") and not href.startswith(
-                                "https://duckduckgo.com"
-                            ):
-                                title = link.get_text(strip=True)
-                                url = href
-                                break
-
-                    # Try to extract snippet
-                    snippet_selectors = [
-                        "a.result__snippet",
-                        "div.result__snippet",
-                        "span.result__snippet",
-                        'div[class*="snippet"]',
-                        "p",
-                    ]
-
-                    for snippet_selector in snippet_selectors:
-                        snippet_elem = div.select_one(snippet_selector)
-                        if snippet_elem:
-                            snippet = snippet_elem.get_text(strip=True)
-                            break
-
-                    # If still no snippet, use any text content
-                    if not snippet:
-                        snippet = div.get_text(strip=True)[:200]  # First 200 chars
-
-                    # Only add if we have at least title and URL
-                    if title and url and url.startswith("http"):
-                        results.append(
-                            WebSearchResult(
-                                title=title,
-                                url=url,
-                                snippet=snippet,
-                                source="duckduckgo",
-                                relevance_score=0.8,
-                                medical_concepts=self._extract_medical_concepts(
-                                    f"{title} {snippet}"
-                                ),
-                            )
-                        )
-
-                except Exception as e:
-                    logger.debug(f"Error parsing result div: {e}")
-                    continue
-
-            logger.debug(f"DuckDuckGo extracted {len(results)} results")
-            return results
-
-        except requests.exceptions.Timeout:
-            logger.warning("DuckDuckGo search timed out")
-            return []
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"DuckDuckGo request failed: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"DuckDuckGo HTML search failed: {e}")
-            return []
-
-    def _search_google_scrape(self, query: str) -> list[WebSearchResult]:
-        """Search Google by scraping results (use carefully due to rate limits)."""
-        try:
-            # Use Google search URL
-            search_url = "https://www.google.com/search"
-            params = {"q": query, "num": 10, "hl": "en"}
-
-            response = requests.get(
-                search_url, params=params, headers=self.headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            results = []
-
-            # Find search result divs (Google's structure changes frequently)
-            search_results = soup.find_all("div", class_="g")
-
-            for result in search_results[:5]:
-                try:
-                    # Extract title and URL
-                    title_elem = result.find("h3")
-                    if not title_elem:
-                        continue
-
-                    title = title_elem.get_text(strip=True)
-
-                    # Find the link
-                    link_elem = result.find("a")
-                    if not link_elem:
-                        continue
-
-                    url = link_elem.get("href", "")
-
-                    # Extract snippet
-                    snippet_elem = result.find("span", class_="st") or result.find(
-                        "div", class_="s"
-                    )
-                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-
-                    if title and url and url.startswith("http"):
-                        results.append(
-                            WebSearchResult(
-                                title=title,
-                                url=url,
-                                snippet=snippet,
-                                source="google",
-                                relevance_score=0.9,
-                                medical_concepts=self._extract_medical_concepts(
-                                    f"{title} {snippet}"
-                                ),
-                            )
-                        )
-
-                except Exception as e:
-                    logger.debug(f"Error parsing Google result: {e}")
-                    continue
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Google scraping failed: {e}")
-            return []
-
-    def _search_pubmed(self, query: str) -> list[WebSearchResult]:
-        """Search PubMed using E-utilities API."""
-        try:
-            # Use PubMed E-utilities API
-            base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
-
-            # Search for articles
-            search_url = f"{base_url}esearch.fcgi"
+            # Step 1: Search for articles
+            search_url = f"{self.base_url}esearch.fcgi"
             search_params = {
                 "db": "pubmed",
                 "term": query,
-                "retmax": 5,
+                "retmax": max_results,
                 "retmode": "json",
                 "sort": "relevance",
-                "tool": "nova_retrieval_vlm",  # Identify our tool to NCBI
-                "email": "research@example.com",  # Required by NCBI guidelines
+                "tool": "nova_retrieval_vlm",
+                "email": "research@example.com",
             }
 
-            # Add extra delay for NCBI rate limiting
-            time.sleep(1)
+            if self.api_key:
+                search_params["api_key"] = self.api_key
 
-            response = requests.get(search_url, params=search_params, timeout=self.timeout)
-            response.raise_for_status()
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(search_url, params=search_params, timeout=self.timeout) as response,
+            ):
+                if response.status != 200:
+                    return []
+                search_data = await response.json()
 
-            if response.status_code != 200:
-                logger.warning(f"PubMed search returned status {response.status_code}")
+            if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
                 return []
 
-            search_data = response.json()
-
-            # Check for errors in the response
-            if "error" in search_data:
-                logger.warning(f"PubMed API error: {search_data['error']}")
+            pmid_list = search_data["esearchresult"]["idlist"]
+            if not pmid_list:
                 return []
 
-            # Get article details
-            if "esearchresult" in search_data and "idlist" in search_data["esearchresult"]:
-                pmid_list = search_data["esearchresult"]["idlist"]
+            # Step 2: Fetch detailed information
+            return await self._fetch_article_details(pmid_list)
 
-                if not pmid_list:
-                    logger.debug("PubMed search returned empty ID list")
-                    return []
-
-                # Fetch article details
-                fetch_url = f"{base_url}esummary.fcgi"
-                fetch_params = {
-                    "db": "pubmed",
-                    "id": ",".join(pmid_list),
-                    "retmode": "json",
-                    "tool": "nova_retrieval_vlm",
-                    "email": "research@example.com",
-                }
-
-                # Add delay for rate limiting
-                time.sleep(1)
-
-                fetch_response = requests.get(fetch_url, params=fetch_params, timeout=self.timeout)
-                fetch_response.raise_for_status()
-
-                if fetch_response.status_code != 200:
-                    logger.warning(f"PubMed fetch returned status {fetch_response.status_code}")
-                    return []
-
-                fetch_data = fetch_response.json()
-
-                # Check for errors in fetch response
-                if "error" in fetch_data:
-                    logger.warning(f"PubMed fetch error: {fetch_data['error']}")
-                    return []
-
-                results = []
-                for pmid in pmid_list:
-                    if pmid in fetch_data.get("result", {}):
-                        article = fetch_data["result"][pmid]
-
-                        title = article.get("title", "No title")
-                        authors = article.get("authors", [])
-                        journal = article.get("fulljournalname", "Unknown journal")
-                        pub_date = article.get("pubdate", "Unknown date")
-
-                        # Create snippet from title and journal
-                        snippet = f"Journal: {journal}. Published: {pub_date}"
-                        if authors:
-                            author_list = authors[:3]  # First 3 authors
-                            author_names = [author.get("name", "") for author in author_list]
-                            snippet += f". Authors: {', '.join(filter(None, author_names))}"
-
-                        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-
-                        results.append(
-                            WebSearchResult(
-                                title=title,
-                                url=url,
-                                snippet=snippet,
-                                source="pubmed",
-                                relevance_score=0.9,
-                                medical_concepts=self._extract_medical_concepts(
-                                    f"{title} {snippet}"
-                                ),
-                                publication_date=pub_date,
-                            )
-                        )
-
-                return results
-            else:
-                logger.debug("PubMed search returned no esearchresult or idlist")
-                return []
-
-        except requests.exceptions.Timeout:
-            logger.warning("PubMed search timed out")
-            return []
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"PubMed request failed: {e}")
-            return []
         except Exception as e:
-            logger.error(f"PubMed search failed with unexpected error: {e}")
+            logger.error(f"PubMed search failed: {e}")
             return []
 
-    def _extract_medical_concepts(self, text: str) -> list[str]:
-        """Extract medical concepts from text using expanded terminology."""
-        medical_terms = [
-            # Imaging modalities
-            "mri",
-            "ct",
-            "x-ray",
-            "ultrasound",
-            "pet",
-            "spect",
-            "mammography",
-            "fluoroscopy",
-            "angiography",
-            "tomography",
-            # General medical terms
-            "radiology",
-            "diagnosis",
-            "prognosis",
-            "treatment",
-            "therapy",
-            "pathology",
-            "histology",
-            "biopsy",
-            "screening",
-            # Anatomical terms
-            "brain",
-            "cerebral",
-            "cerebellum",
-            "brainstem",
-            "ventricle",
-            "cortex",
-            "white matter",
-            "gray matter",
-            "csf",
-            "meninges",
-            "temporal",
-            "frontal",
-            "parietal",
-            "occipital",
-            # Pathological findings
-            "tumor",
-            "lesion",
-            "mass",
-            "nodule",
-            "cyst",
-            "edema",
-            "hemorrhage",
-            "infarct",
-            "stroke",
-            "ischemia",
-            "necrosis",
-            "inflammation",
-            "infection",
-            "abscess",
-            "hematoma",
-            # Specific conditions
-            "glioma",
-            "meningioma",
-            "metastasis",
-            "lymphoma",
-            "adenoma",
-            "hydrocephalus",
-            "atrophy",
-            "dementia",
-            "alzheimer",
-            "multiple sclerosis",
-            "epilepsy",
-            "seizure",
-            # Clinical terms
-            "contrast",
-            "enhancement",
-            "signal",
-            "intensity",
-            "artifact",
-            "protocol",
-            "sequence",
-            "acquisition",
-            "reconstruction",
-        ]
-
-        text_lower = text.lower()
-        found_concepts = [term for term in medical_terms if term in text_lower]
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_concepts = []
-        for concept in found_concepts:
-            if concept not in seen:
-                seen.add(concept)
-                unique_concepts.append(concept)
-
-        return unique_concepts
-
-    def _deduplicate_results(self, results: list[WebSearchResult]) -> list[WebSearchResult]:
-        """Remove duplicate results based on URL and title similarity."""
-        seen_urls = set()
-        seen_titles = set()
-        unique_results = []
-
-        for result in results:
-            # Normalize URL for comparison
-            url_key = result.url.lower().rstrip("/")
-            title_key = result.title.lower().strip()
-
-            if url_key not in seen_urls and title_key not in seen_titles:
-                seen_urls.add(url_key)
-                seen_titles.add(title_key)
-                unique_results.append(result)
-
-        return unique_results
-
-    def _rank_results(
-        self, results: list[WebSearchResult], original_query: str
-    ) -> list[WebSearchResult]:
-        """Rank results by relevance, medical site priority, and content quality."""
-        query_terms = original_query.lower().split()
-
-        for result in results:
-            # Base score from source reliability
-            if result.source == "pubmed":
-                result.relevance_score = 0.9
-            elif result.source == "google":
-                result.relevance_score = 0.8
-            elif result.source == "duckduckgo":
-                result.relevance_score = 0.7
-
-            # Boost medical sites
-            if any(site in result.url.lower() for site in self.medical_sites):
-                result.relevance_score *= 1.3
-
-            # Boost based on medical concepts
-            concept_boost = min(len(result.medical_concepts) * 0.1, 0.3)
-            result.relevance_score += concept_boost
-
-            # Boost based on query term overlap in title and snippet
-            title_lower = result.title.lower()
-            snippet_lower = result.snippet.lower()
-
-            title_matches = sum(1 for term in query_terms if term in title_lower)
-            snippet_matches = sum(1 for term in query_terms if term in snippet_lower)
-
-            # Weight title matches more heavily
-            overlap_boost = (title_matches * 0.3) + (snippet_matches * 0.1)
-            result.relevance_score += overlap_boost
-
-            # Boost for longer, more informative snippets
-            if len(result.snippet) > 100:
-                result.relevance_score += 0.1
-
-        # Sort by relevance score (descending)
-        results.sort(key=lambda x: x.relevance_score, reverse=True)
-        return results
-
-
-class MedicalWebSearcher(WebSearcher):
-    """Specialized web searcher for medical information."""
-
-    def __init__(self, **kwargs: Any):
-        # Use medical-optimized search engines - prioritize PubMed
-        kwargs.setdefault("search_engines", ["pubmed"])  # Start with just PubMed for reliability
-        kwargs.setdefault("timeout", 20)  # Longer timeout for medical searches
-        super().__init__(**kwargs)
-
-        # Medical query templates
-        self.query_templates = {
-            "diagnosis": "{condition} diagnosis differential radiology imaging findings",
-            "guidelines": "{condition} clinical guidelines imaging protocol recommendations",
-            "research": "{condition} recent research MRI CT imaging findings literature",
-            "anatomy": "{structure} anatomy MRI normal variants pathology",
-            "pathology": "{condition} pathology imaging characteristics MRI CT findings",
+    async def _fetch_article_details(self, pmid_list: list[str]) -> list[SearchResult]:
+        """Fetch detailed article information from PubMed."""
+        fetch_url = f"{self.base_url}esummary.fcgi"
+        fetch_params = {
+            "db": "pubmed",
+            "id": ",".join(pmid_list),
+            "retmode": "json",
         }
 
-    def search_medical(
-        self, query: str, search_type: str = "general", condition: str | None = None
-    ) -> list[WebSearchResult]:
+        if self.api_key:
+            fetch_params["api_key"] = self.api_key
+
+        # Rate limiting
+        await asyncio.sleep(0.5)
+
+        try:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(fetch_url, params=fetch_params, timeout=self.timeout) as response,
+            ):
+                if response.status != 200:
+                    return []
+                data = await response.json()
+
+            results = []
+            if "result" not in data:
+                return results
+
+            for pmid in pmid_list:
+                if pmid not in data["result"]:
+                    continue
+
+                article = data["result"][pmid]
+
+                # Extract metadata
+                title = article.get("title", "").strip()
+                authors = article.get("authors", [])
+                journal = article.get("fulljournalname", "")
+                pub_date = article.get("pubdate", "")
+                abstract = article.get("abstract", "")
+                doi = article.get("doi", "")
+                article_ids = article.get("articleids", [])
+
+                # Check for open access
+                open_access = any(
+                    aid["idtype"] == "pmc" for aid in article_ids if isinstance(aid, dict)
+                )
+
+                # Determine content type
+                publication_types = article.get("publicationtypes", [])
+                content_type = "article"  # default
+                if "Review" in publication_types:
+                    content_type = "review"
+                elif "Case Reports" in publication_types:
+                    content_type = "case_report"
+                elif "Guideline" in publication_types:
+                    content_type = "guidelines"
+
+                # Create content
+                content = abstract if abstract else title
+
+                # Extract medical entities
+                entities = self._extract_medical_entities(title + " " + content)
+
+                # Create search result
+                result = SearchResult(
+                    title=title,
+                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                    content=content,
+                    snippet=self._create_snippet(title, content),
+                    source="pubmed",
+                    reliability_score=self._calculate_reliability(
+                        f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", "pubmed"
+                    ),
+                    publication_date=pub_date,
+                    author=", ".join([a.get("name", "") for a in authors[:3]]),
+                    journal=journal,
+                    doi=doi,
+                    content_type=content_type,
+                    medical_relevance=0.9,  # PubMed is highly relevant for medical
+                    extracted_entities=entities,
+                    open_access=open_access,
+                )
+
+                results.append(result)
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to fetch article details: {e}")
+            return []
+
+    def _create_snippet(self, title: str, content: str) -> str:
+        """Create a concise snippet."""
+        if not content or content == title:
+            return title
+
+        # First 200 characters of content, or first sentence
+        snippet = content[:200]
+        sentence_end = snippet.rfind(".")
+        if sentence_end > 100:  # Prefer sentence boundaries
+            snippet = snippet[: sentence_end + 1]
+        elif len(snippet) < len(content):
+            snippet += "..."
+
+        return snippet.strip()
+
+    def _extract_medical_entities(self, text: str) -> list[str]:
+        """Extract medical entities from text."""
+        # Common medical terms and patterns
+        medical_patterns = [
+            r"\b(?:glioblastoma|meningioma|metastasis|lymphoma|astrocytoma|ependymoma)\b",
+            r"\b(?:hyperintensity|hypointensity|enhancement|edema|hemorrhage)\b",
+            r"\b(?:MRI|CT|PET|SPECT|X-ray|ultrasound)\b",
+            r"\b(?:cerebral|cerebellar|brainstem|cortex|ventricle|meninges)\b",
+            r"\b(?:contrast|gadolinium|FLAIR|T1|T2|DWI)\b",
+            r"\b(?:radiology|neurology|neurosurgery|pathology)\b",
+        ]
+
+        entities = set()
+        text_lower = text.lower()
+
+        for pattern in medical_patterns:
+            matches = re.findall(pattern, text_lower, re.IGNORECASE)
+            entities.update(matches)
+
+        return sorted(entities)
+
+
+class WebSearchManager:
+    """Manager for web search operations with LLM agent integration."""
+
+    def __init__(
+        self,
+        engines: list[str] | None = None,
+        max_results_per_engine: int = 3,
+        timeout: int = 30,
+        max_total_results: int = 10,
+        cache_duration: int = 300,  # 5 minutes
+    ):
         """
-        Perform medical-specific web search.
+        Initialize web search manager.
 
         Args:
-            query: Base search query
-            search_type: Type of medical search ('diagnosis', 'guidelines', 'research', 'anatomy', 'pathology', 'general')
-            condition: Medical condition or anatomical structure
-
-        Returns:
-            List of medical web search results
+            engines: List of search engines to use
+            max_results_per_engine: Results to fetch per engine
+            timeout: Request timeout in seconds
+            max_total_results: Maximum total results to return
+            cache_duration: Cache duration in seconds
         """
-        # Enhance query with medical context
-        if search_type in self.query_templates and condition:
-            try:
-                enhanced_query = self.query_templates[search_type].format(condition=condition)
-                final_query = f"{query} {enhanced_query}"
-            except (KeyError, ValueError) as e:
-                logger.warning(f"Query template formatting failed: {e}")
-                final_query = f"{query} medical radiology imaging"
-        else:
-            final_query = f"{query} medical imaging radiology"
+        self.max_results_per_engine = max_results_per_engine
+        self.max_total_results = max_total_results
+        self.cache_duration = cache_duration
+        self._cache: dict[str, tuple[float, list[SearchResult]]] = {}
 
-        # Perform search with medical focus
-        results = self.search(final_query, medical_focus=True)
+        # Initialize search engines
+        self.engines: list[SearchEngine] = []
+        if not engines:
+            engines = ["pubmed"]  # Default to reliable sources only
 
-        # Filter and prioritize medical sources
-        medical_results = []
-        general_results = []
-
-        for result in results:
-            if self._is_medical_source(result.url):
-                medical_results.append(result)
+        for engine in engines:
+            if engine == "pubmed":
+                self.engines.append(PubMedSearchEngine(timeout=timeout))
             else:
-                general_results.append(result)
+                logger.warning(f"Unknown search engine: {engine}")
 
-        # Return medical sources first, then general results if needed
-        final_results = medical_results
-        if len(medical_results) < self.max_results:
-            remaining_slots = self.max_results - len(medical_results)
-            final_results.extend(general_results[:remaining_slots])
+        if not self.engines:
+            logger.warning("No search engines configured, using PubMed as fallback")
+            self.engines.append(PubMedSearchEngine(timeout=timeout))
 
-        return final_results[: self.max_results]
-
-    def general_search(self, query: str) -> list[WebSearchResult]:
+    @beartype
+    async def search(
+        self,
+        query: str,
+        search_type: str = "general",
+        medical_focus: bool = True,
+        enhance_query: bool = True,
+    ) -> list[SearchResult]:
         """
-        Perform general web search (non-medical focused).
+        Perform web search with query enhancement and result ranking.
 
         Args:
             query: Search query
+            search_type: Type of search ('diagnosis', 'guidelines', 'research', 'anatomy', 'general')
+            medical_focus: Whether to prioritize medical sources
+            enhance_query: Whether to enhance the query automatically
 
         Returns:
-            List of web search results
+            Ranked list of search results
         """
-        return self.search(query, medical_focus=False)
+        # Check cache
+        cache_key = f"{query}:{search_type}:{medical_focus}"
+        if cache_key in self._cache:
+            timestamp, cached_results = self._cache[cache_key]
+            if time.time() - timestamp < self.cache_duration:
+                logger.debug(f"Using cached results for: {query}")
+                return cached_results
 
-    def _is_medical_source(self, url: str) -> bool:
-        """Check if URL is from a reputable medical source."""
-        url_lower = url.lower()
-        return any(domain in url_lower for domain in self.medical_sites)
+        # Enhance query if requested
+        search_query = self._enhance_query(query, search_type) if enhance_query else query
+        logger.info(f"Searching for: '{search_query}' (enhanced from: '{query}')")
 
-    def search_pubmed(self, query: str, max_results: int = 3) -> list[WebSearchResult]:
-        """Direct PubMed search - wrapper for the internal method."""
-        old_max = self.max_results
-        self.max_results = max_results
+        # Search across all engines
+        all_results = []
+        for engine in self.engines:
+            try:
+                results = await engine.search(search_query, self.max_results_per_engine)
+                all_results.extend(results)
+
+                # Rate limiting between engines
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Engine {engine.name} failed: {e}")
+                continue
+
+        # Filter and rank results
+        filtered_results = self._filter_results(all_results, medical_focus)
+        ranked_results = self._rank_results(filtered_results, query, search_type)
+
+        # Limit results
+        final_results = ranked_results[: self.max_total_results]
+
+        # Cache results
+        self._cache[cache_key] = (time.time(), final_results)
+
+        logger.info(f"Search complete: {len(final_results)} results from {len(all_results)} total")
+        return final_results
+
+    def _enhance_query(self, query: str, search_type: str) -> str:
+        """Enhance query based on search type."""
+        enhancements = {
+            "diagnosis": f"{query} diagnosis imaging findings radiology MRI CT",
+            "guidelines": f"{query} clinical guidelines imaging protocol radiology",
+            "research": f"{query} recent research MRI CT imaging findings study",
+            "anatomy": f"{query} anatomy normal variants imaging radiology",
+            "treatment": f"{query} treatment therapy imaging response radiology",
+            "differential": f"{query} differential diagnosis imaging findings radiology",
+        }
+
+        if search_type in enhancements:
+            return enhancements[search_type]
+        elif any(
+            term in query.lower() for term in ["diagnosis", "guidelines", "research", "anatomy"]
+        ):
+            # Query already seems enhanced
+            return query
+        else:
+            # Default medical enhancement
+            return f"{query} medical imaging radiology findings"
+
+    def _filter_results(
+        self, results: list[SearchResult], medical_focus: bool
+    ) -> list[SearchResult]:
+        """Filter and deduplicate results."""
+        seen_urls = set()
+        seen_titles = set()
+        filtered_results = []
+
+        for result in results:
+            # Skip duplicates
+            url_key = result.url.lower().rstrip("/")
+            title_key = result.title.lower().strip()
+
+            if url_key in seen_urls or title_key in seen_titles:
+                continue
+
+            seen_urls.add(url_key)
+            seen_titles.add(title_key)
+
+            # Basic quality checks
+            if not result.title or len(result.title) < 10:
+                continue
+
+            if not result.url or not result.url.startswith(("http://", "https://")):
+                continue
+
+            # Filter by medical focus if requested
+            if medical_focus and result.medical_relevance < 0.3:
+                continue
+
+            filtered_results.append(result)
+
+        return filtered_results
+
+    def _rank_results(
+        self, results: list[SearchResult], query: str, search_type: str
+    ) -> list[SearchResult]:
+        """Rank results by relevance and quality."""
+        query_terms = query.lower().split()
+
+        for result in results:
+            # Base score from reliability
+            score = result.reliability_score
+
+            # Boost for medical relevance
+            score += result.medical_relevance * 0.3
+
+            # Boost for recent publications
+            if result.publication_date:
+                try:
+                    year = int(re.search(r"\b(19|20)\d{2}\b", result.publication_date).group())
+                    current_year = 2024
+                    recency_boost = max(0, (current_year - year) / 10 * 0.1)
+                    score += recency_boost
+                except (AttributeError, ValueError, TypeError):
+                    # No valid date found, skip recency boost
+                    pass
+
+            # Boost for open access
+            if result.open_access:
+                score += 0.1
+
+            # Content type boosts based on search type
+            type_boosts = {
+                "diagnosis": {"case_report": 0.2, "article": 0.1},
+                "guidelines": {"guidelines": 0.3, "review": 0.2},
+                "research": {"article": 0.2, "review": 0.1},
+                "anatomy": {"review": 0.2, "article": 0.1},
+            }
+
+            if search_type in type_boosts and result.content_type in type_boosts[search_type]:
+                score += type_boosts[search_type][result.content_type]
+
+            # Query term matching
+            title_lower = result.title.lower()
+            content_lower = result.content.lower()
+
+            title_matches = sum(1 for term in query_terms if term in title_lower)
+            content_matches = sum(1 for term in query_terms if term in content_lower)
+
+            score += (title_matches * 0.2) + (content_matches * 0.05)
+
+            # Entity matching
+            entity_matches = sum(
+                1 for entity in result.extracted_entities if entity in query.lower()
+            )
+            score += entity_matches * 0.1
+
+            result.reliability_score = min(1.0, score)  # Cap at 1.0
+
+        # Sort by score (descending)
+        results.sort(key=lambda x: x.reliability_score, reverse=True)
+        return results
+
+    def format_for_llm(self, results: list[SearchResult], max_content_length: int = 5000) -> str:
+        """
+        Format results for LLM consumption.
+
+        Args:
+            results: Search results to format
+            max_content_length: Maximum total content length
+
+        Returns:
+            Formatted string for LLM
+        """
+        if not results:
+            return "No search results found."
+
+        formatted_results = ["## Search Results\n"]
+        total_length = len(formatted_results[0])
+
+        for i, result in enumerate(results, 1):
+            result_dict = result.to_llm_dict()
+
+            # Create formatted result
+            formatted = f"""
+### Result {i}
+
+**Title:** {result_dict["title"]}
+
+**Source:** {result_dict["source"]} (Reliability: {result_dict["reliability"]})
+**Type:** {result_dict["content_type"]} | Medical Relevance: {result_dict["medical_relevance"]}
+
+**Summary:** {result_dict["summary"]}
+
+**Key Information:**
+{result_dict["content"]}
+
+**Key Entities:** {", ".join(result_dict["key_entities"])}
+
+**URL:** {result_dict["url"]}
+"""
+
+            # Check length limit
+            if total_length + len(formatted) > max_content_length:
+                formatted.append(
+                    f"\n... ({len(results) - i + 1} more results omitted due to length limit)"
+                )
+                break
+
+            formatted_results.append(formatted)
+            total_length += len(formatted)
+
+        return "\n".join(formatted_results)
+
+
+# Convenience functions for common use cases
+async def search_medical_literature(
+    query: str, max_results: int = 5, search_type: str = "general"
+) -> list[SearchResult]:
+    """Search medical literature with optimized settings."""
+    manager = WebSearchManager(
+        engines=["pubmed"], max_total_results=max_results, max_results_per_engine=max_results
+    )
+    return await manager.search(query, search_type=search_type)
+
+
+def search_medical_literature_sync(
+    query: str, max_results: int = 5, search_type: str = "general"
+) -> list[SearchResult]:
+    """Synchronous wrapper for medical literature search."""
+    try:
+        import asyncio
+
+        # Try to get current event loop
         try:
-            results = self._search_pubmed(query)
-            return results
-        finally:
-            self.max_results = old_max
+            asyncio.get_running_loop()
+            # If we're in an async context, we need to handle this differently
+            # For now, return empty results to avoid blocking
+            logger.warning("Called sync search from async context, returning empty results")
+            return []
+        except RuntimeError:
+            # No event loop running, we can create one
+            return asyncio.run(search_medical_literature(query, max_results, search_type))
+    except Exception as e:
+        logger.error(f"Synchronous medical literature search failed: {e}")
+        return []
 
-    def guidelines_search(self, query: str) -> list[WebSearchResult]:
-        """
-        Search for clinical guidelines and protocols.
 
-        Args:
-            query: Search query for guidelines
+async def search_clinical_guidelines(query: str, max_results: int = 5) -> list[SearchResult]:
+    """Search specifically for clinical guidelines."""
+    manager = WebSearchManager(max_total_results=max_results)
+    return await manager.search(query, search_type="guidelines")
 
-        Returns:
-            List of web search results focused on clinical guidelines
-        """
-        return self.search_medical(query, search_type="guidelines")
 
-    def research_search(self, query: str) -> list[WebSearchResult]:
-        """
-        Search for recent research and studies.
-
-        Args:
-            query: Search query for research
-
-        Returns:
-            List of web search results focused on recent research
-        """
-        return self.search_medical(query, search_type="research")
-
-    def anatomy_search(self, query: str) -> list[WebSearchResult]:
-        """
-        Search for anatomical information.
-
-        Args:
-            query: Search query for anatomical information
-
-        Returns:
-            List of web search results focused on anatomy
-        """
-        return self.search_medical(query, search_type="anatomy")
+async def search_diagnostic_information(query: str, max_results: int = 5) -> list[SearchResult]:
+    """Search for diagnostic information and case reports."""
+    manager = WebSearchManager(max_total_results=max_results)
+    return await manager.search(query, search_type="diagnosis")

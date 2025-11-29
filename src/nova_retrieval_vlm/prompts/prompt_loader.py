@@ -1,5 +1,4 @@
-"""
-Prompt loading utilities for the NOVA medical image analysis system.
+"""Prompt loading utilities for the NOVA medical image analysis system.
 
 This module provides functions to load and combine system prompts with task-specific
 Jinja templates, creating comprehensive prompts for different analysis modes.
@@ -9,10 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from beartype import beartype
-from jinja2 import Environment
-from jinja2 import FileSystemLoader
-
-from .system_prompts import get_system_prompt
+from minijinja import Environment
 
 
 @beartype
@@ -21,31 +17,30 @@ def load_prompt(
     image_path: Path,
     passages: list[str],
     metadata: dict[str, Any],
-    mode: str = "baseline",
+    mode: str = "single_turn",
     system_prompt_override: str | None = None,
 ) -> str:
-    """
-    Load and render a prompt template with system prompt integration.
+    """Load and render a prompt template with system prompt integration.
 
     Args:
-        template_name: Name of the Jinja template file (e.g., 'baseline/diagnosis.jinja')
+        template_name: Name of the Jinja template file (relative to mode directory)
         image_path: Path to the image file
         passages: List of retrieved passages (if using retrieval)
         metadata: Dictionary of metadata for the prompt
-        mode: Analysis mode ('baseline', 'multiturn', 'visual', 'retrieval', 'web_search', 'comprehensive')
+        mode: Analysis mode ('single_turn' or 'agentic')
         system_prompt_override: Optional custom system prompt to override the default
 
     Returns:
         Rendered prompt string
     """
     # Get the base system prompt for the mode
-    base_system_prompt = get_system_prompt(mode)
+    base_system_prompt = load_system_prompt(mode, metadata)
 
     # Use override if provided, otherwise use the base system prompt
     system_prompt = system_prompt_override or base_system_prompt
 
     # Load the task-specific template
-    task_prompt = load_jinja_template(template_name, image_path, passages, metadata)
+    task_prompt = load_jinja_template(template_name, image_path, passages, metadata, mode)
 
     # Combine system prompt with task-specific prompt
     combined_prompt = combine_prompts(system_prompt, task_prompt, mode)
@@ -54,41 +49,71 @@ def load_prompt(
 
 
 @beartype
+def load_system_prompt(mode: str, metadata: dict[str, Any]) -> str:
+    """Load system prompt from Jinja template with dynamic tool flags.
+
+    Args:
+        mode: Analysis mode ('single_turn' or 'agentic')
+        metadata: Dictionary of metadata including tool flags
+
+    Returns:
+        Rendered system prompt string
+    """
+    # Load system prompt template
+    prompts_dir = Path(__file__).parent / mode
+    system_template_path = prompts_dir / "system.jinja"
+
+    with open(system_template_path, encoding="utf-8") as f:
+        template_content = f.read()
+
+    # Create minijinja environment and render
+    env = Environment()
+
+    context = metadata.copy()
+    return env.render_str(template_content, **context)
+
+
+@beartype
 def load_jinja_template(
     template_name: str,
     image_path: Path,
     passages: list[str],
     metadata: dict[str, Any],
+    mode: str,
 ) -> str:
-    """
-    Load and render a Jinja template with the given context.
+    """Load and render a template with the given context using minijinja.
 
     Args:
-        template_name: Name of the Jinja template file
+        template_name: Name of the template file (relative to mode directory)
         image_path: Path to the image file
         passages: List of retrieved passages
         metadata: Dictionary of metadata
+        mode: Analysis mode directory
 
     Returns:
         Rendered template string
     """
-    # Get the prompts directory
-    prompts_dir = Path(__file__).parent
-    env = Environment(loader=FileSystemLoader(str(prompts_dir)), autoescape=True)
+    # Load template file from mode-specific directory
+    prompts_dir = Path(__file__).parent / mode
+    template_path = prompts_dir / template_name
 
-    template = env.get_template(template_name)
+    with open(template_path, encoding="utf-8") as f:
+        template_content = f.read()
+
+    # Create minijinja environment and render
+    env = Environment()
+
     context = {
         "image_path": str(image_path),
         "passages": passages,
         **metadata,
     }
-    return template.render(**context)
+    return env.render_str(template_content, **context)
 
 
 @beartype
 def combine_prompts(system_prompt: str, task_prompt: str, mode: str) -> str:
-    """
-    Combine system prompt with task-specific prompt based on mode.
+    """Combine system prompt with task-specific prompt based on mode.
 
     Args:
         system_prompt: The base system prompt for the mode
@@ -98,39 +123,21 @@ def combine_prompts(system_prompt: str, task_prompt: str, mode: str) -> str:
     Returns:
         Combined prompt string
     """
-    if mode == "baseline":
-        # For baseline mode, use a simple combination
-        return f"{system_prompt}\n\n{task_prompt}"
+    if mode == "single_turn":
+        # For single-turn mode, emphasize comprehensive one-shot analysis
+        return f"{system_prompt}\n\n<comprehensive_analysis_instructions>\n{task_prompt}\n</comprehensive_analysis_instructions>\n\nProvide your complete analysis in this single response."
 
-    elif mode == "multiturn":
-        # For multiturn mode, emphasize the iterative reasoning process
-        return f"{system_prompt}\n\n<task_instructions>\n{task_prompt}\n</task_instructions>\n\nBegin your multi-turn analysis process."
-
-    elif mode == "visual":
-        # For visual mode, emphasize visual operations and web search capabilities
-        return f"{system_prompt}\n\n<visual_analysis_instructions>\n{task_prompt}\n</visual_analysis_instructions>\n\nBegin your visual analysis with appropriate operations."
-
-    elif mode == "retrieval":
-        # For retrieval mode, emphasize evidence-based analysis
-        return f"{system_prompt}\n\n<retrieval_analysis_instructions>\n{task_prompt}\n</retrieval_analysis_instructions>\n\nBegin your retrieval-augmented analysis."
-
-    elif mode == "web_search":
-        # For web search mode, emphasize real-time information gathering
-        return f"{system_prompt}\n\n<web_search_instructions>\n{task_prompt}\n</web_search_instructions>\n\nBegin your web search-augmented analysis."
-
-    elif mode == "comprehensive":
-        # For comprehensive mode, emphasize all capabilities
-        return f"{system_prompt}\n\n<comprehensive_analysis_instructions>\n{task_prompt}\n</comprehensive_analysis_instructions>\n\nBegin your comprehensive analysis using all available capabilities."
+    elif mode == "agentic":
+        # For agentic mode, emphasize tool usage and multi-turn reasoning
+        return f"{system_prompt}\n\n<agentic_analysis_instructions>\n{task_prompt}\n</agentic_analysis_instructions>\n\nBegin your agentic analysis process."
 
     else:
-        # Default fallback
-        return f"{system_prompt}\n\n{task_prompt}"
+        raise ValueError(f"Unknown mode: {mode}. Expected 'agentic' or 'single_turn'.")
 
 
 @beartype
 def get_mode_from_template(template_name: str) -> str:
-    """
-    Infer the analysis mode from the template name.
+    """Infer the analysis mode from the template name.
 
     Args:
         template_name: Name of the Jinja template
@@ -138,16 +145,12 @@ def get_mode_from_template(template_name: str) -> str:
     Returns:
         Inferred mode string
     """
-    if template_name.startswith("multiturn/"):
-        return "multiturn"
-    elif template_name.startswith("visual_multiturn/"):
-        return "visual"
-    elif template_name.startswith("retrieval_"):
-        return "retrieval"
-    elif template_name.startswith("baseline/"):
-        return "baseline"
+    if template_name.startswith("agentic_"):
+        return "agentic"
+    elif template_name.startswith("single_turn_"):
+        return "single_turn"
     else:
-        return "baseline"
+        return "single_turn"
 
 
 @beartype
@@ -159,15 +162,14 @@ def create_enhanced_prompt(
     mode: str | None = None,
     system_prompt_override: str | None = None,
 ) -> str:
-    """
-    Create an enhanced prompt with automatic mode detection and system prompt integration.
+    """Create an enhanced prompt with automatic mode detection and system prompt integration.
 
     Args:
-        template_name: Name of the Jinja template file
+        template_name: Name of the Jinja template file (can include mode prefix)
         image_path: Path to the image file
         passages: List of retrieved passages
         metadata: Dictionary of metadata
-        mode: Optional explicit mode override
+        mode: Optional explicit mode override (if not in template_name)
         system_prompt_override: Optional custom system prompt
 
     Returns:
@@ -176,6 +178,10 @@ def create_enhanced_prompt(
     # Auto-detect mode if not provided
     if mode is None:
         mode = get_mode_from_template(template_name)
+
+    # Remove mode prefix from template name if present
+    if template_name.startswith(f"{mode}_"):
+        template_name = template_name[len(f"{mode}_") :]
 
     # Load the enhanced prompt
     return load_prompt(

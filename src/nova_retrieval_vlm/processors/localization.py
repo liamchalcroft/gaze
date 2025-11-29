@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from beartype import beartype
 from PIL import Image
 
 from nova_retrieval_vlm.evaluation.detection import evaluate_detection
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
+from nova_retrieval_vlm.prompts.prompt_loader import create_enhanced_prompt
 from nova_retrieval_vlm.types import BatchData
 from nova_retrieval_vlm.types import EvaluationMetrics
 from nova_retrieval_vlm.types import ModelResponse
-from nova_retrieval_vlm.types import parse_json_response
 from nova_retrieval_vlm.visual_reasoning.image_ops import adjust_contrast
 
 from .base import BaseProcessor
@@ -41,15 +40,28 @@ class LocalizationProcessor(BaseProcessor):
             if metadata.get("low_contrast", False):
                 image = adjust_contrast(image, 1.5)
 
-            # Create localization prompt
-            prompt = self._create_localization_prompt(image_path, metadata)
+            # Create unified prompt for all tasks
+            prompt = create_enhanced_prompt(
+                template_name="all_tasks.jinja",
+                image_path=image_path,
+                passages=[],
+                metadata={
+                    **metadata,
+                    "width": image.width,
+                    "height": image.height,
+                    "image_id": image_path.name,
+                    "enable_visual_tools": False,
+                    "enable_web_search": False,
+                },
+                mode="single_turn",
+            )
 
             # Get model response using existing OpenAI adapter interface
             response_text, generation_log = await model_adapter.generate(
                 image_path=Path(image_path),
                 passages=[],  # No passages for basic localization
                 system_prompt=prompt,
-                max_tokens=512,
+                max_tokens=1024,  # Increased for comprehensive response
                 temperature=0.0,
             )
 
@@ -62,8 +74,22 @@ class LocalizationProcessor(BaseProcessor):
             # Parse JSON response
             raw_text = model_result.get("text", "")
 
-            # Parse structured response
-            parsed_response = parse_json_response(raw_text)
+            # Parse the unified JSON response
+            import json
+
+            response_json = json.loads(raw_text)
+            # Extract localization data from unified prompt response
+            localization_data = response_json.get("localization", {})
+            parsed_response = {
+                "boxes": [
+                    loc.get("bounding_box", [])
+                    for loc in localization_data.get("localizations", [])
+                ],
+                "labels": [
+                    loc.get("finding", "") for loc in localization_data.get("localizations", [])
+                ],
+                "reasoning": f"Extracted {len(localization_data.get('localizations', []))} localizations",
+            }
 
             # Extract bounding boxes
             boxes = parsed_response.get("boxes", [])
@@ -137,22 +163,3 @@ class LocalizationProcessor(BaseProcessor):
             f1_score=results.get("f1_score"),
             auc_roc=results.get("map30"),  # Use mAP@0.3 as secondary metric
         )
-
-    def _create_localization_prompt(self, image_path: Path, metadata: dict[str, Any]) -> str:
-        """Create localization prompt for the image."""
-        base_prompt = f"""Analyze this medical image and locate any abnormalities or regions of interest.
-
-Image: {image_path.name}
-Patient info: {metadata.get("patient_info", "Not provided")}
-Modality: {metadata.get("modality", "Unknown")}
-
-Provide your response as JSON with the following format:
-{{
-    "boxes": [[x1, y1, x2, y2], ...],  // Bounding boxes in pixel coordinates
-    "labels": ["label1", "label2", ...],  // Corresponding labels
-    "reasoning": "Explanation of findings"
-}}
-
-Ensure boxes are in [x1, y1, x2, y2] format where (x1,y1) is top-left and (x2,y2) is bottom-right."""
-
-        return base_prompt

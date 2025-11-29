@@ -1,0 +1,29 @@
+# Ablation Study: Reasoning Impact Analysis
+
+defaults:
+  - ablation_config
+
+# Focus on reasoning capabilities
+task: diagnosis
+model:
+  name: "x-ai/grok-4.1-fast:free"  # Grok 4.1 supports reasoning
+  temperature: 0.0
+
+agentic:
+  enabled: true
+  ablation_mode: "reasoning_impact"
+  single_config: null
+
+  # Compare configurations with and without reasoning
+  reasoning_enabled: false  # Will be overridden by ablation configs
+  enable_research_metrics: true
+  use_tools: true
+  max_turns: 10
+  use_retrieval: false
+
+paths:
+  output_dir: "./runs/ablation/reasoning_impact"
+
+hydra:
+  run:
+    dir: ${paths.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}

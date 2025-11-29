@@ -98,9 +98,9 @@ graph TD
 
 4. **Download dataset and build indexes:**
    ```bash
-   # Download NOVA dataset
+   # Download NOVA dataset from https://huggingface.co/datasets/c-i-ber/Nova
    python scripts/download_nova.py --data-dir $DATA_DIR
-   
+
    # Build retrieval indexes
    python scripts/build_index.py
    ```

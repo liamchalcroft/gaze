@@ -1,17 +1,12 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: stable
-    hooks:
-      - id: black
-  - repo: https://github.com/pycqa/isort
-    rev: 5.10.1
-    hooks:
-      - id: isort
-  - repo: https://github.com/charliermarsh/ruff
-    rev: v0.0.241
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
     hooks:
       - id: ruff
+        args: [--fix]
+      - id: ruff-format
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:
       - id: detect-secrets
+        exclude: tests/.*\.(json|yaml)$

@@ -1,7 +1,7 @@
 """Agentic diagnosis processor.
 
-Enhanced diagnosis with visual reasoning integration,
-retrieval augmentation, and multi-turn refinement.
+Enhanced diagnosis with tool calling, retrieval augmentation,
+and multi-turn refinement.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from loguru import logger
 
 from nova_retrieval_vlm.agentic.processor import AgenticProcessor
 from nova_retrieval_vlm.agentic.processor import AgenticResult
-from nova_retrieval_vlm.agentic.retrieval_manager import RetrievalManager
 from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
 from nova_retrieval_vlm.processors.base import BaseProcessor
 from nova_retrieval_vlm.types import BatchData
@@ -27,67 +26,53 @@ class AgenticDiagnosisProcessor(BaseProcessor):
     """Agentic processor for diagnosis tasks.
 
     Extends base diagnosis with:
-    - Pre-analysis visual reasoning (structure detection, symmetry)
+    - Tool calling for interactive analysis (zoom, crop, contrast, flip, rotate)
     - Retrieval augmentation (medical guidelines, similar cases)
     - Multi-turn refinement for differential diagnosis
-    - Confidence calibration based on findings
+    - Visual comparison with retrieved examples (planned)
     """
 
     def __init__(
         self,
         config: Any,
-        use_visual_reasoning: bool = True,
         use_tools: bool = True,
-        max_turns: int = 3,
-        index_dir: Path | str | None = None,
+        max_turns: int = 10,
     ):
         """Initialize agentic diagnosis processor.
 
         Args:
             config: ProcessorConfig with model_name, output_dir, etc.
-            use_visual_reasoning: Enable visual pre-analysis
-            use_tools: Enable tool calling (zoom, crop, etc.)
-            max_turns: Max turns for multi-turn refinement
-            index_dir: Directory containing retrieval indexes
+            use_tools: Enable tool calling (zoom, crop, web search, etc.)
+            max_turns: Max turns for multi-turn refinement (default: 10)
         """
         super().__init__(config)
-        self.use_visual_reasoning = use_visual_reasoning
         self.use_tools = use_tools
         self.max_turns = max_turns
 
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
-            use_visual_reasoning=use_visual_reasoning,
             use_tools=use_tools,
             max_turns=max_turns,
         )
 
-        # Initialize retrieval manager if enabled
-        self._retrieval_manager = None
-        if config.use_retrieval and index_dir:
-            self._retrieval_manager = RetrievalManager(
-                index_dir=index_dir,
-                retrieval_type=config.retrieval_type,
-                top_k=5,
-            )
+        logger.info(
+            f"Initialized AgenticDiagnosisProcessor with {max_turns} max turns, "
+            f"tools={'enabled' if use_tools else 'disabled'}"
+        )
 
     @beartype
     async def process_batch(self, batch: BatchData, batch_idx: int) -> list[ModelResponse]:
-        """Process diagnosis batch with agentic analysis."""
+        """Process diagnosis batch with fully agentic analysis."""
         responses = []
 
         for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
 
-            # Get retrieval passages if configured
-            retrieval_passages = self._get_retrieval_passages(metadata)
-
-            # Run agentic analysis
+            # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
                 task="diagnosis",
                 metadata=metadata,
-                retrieval_passages=retrieval_passages,
             )
 
             # Convert to ModelResponse
@@ -99,28 +84,7 @@ class AgenticDiagnosisProcessor(BaseProcessor):
 
         return responses
 
-    def _get_retrieval_passages(
-        self,
-        metadata: dict[str, Any],
-        visual_analysis: Any = None,
-    ) -> list[str]:
-        """Get retrieval passages for diagnosis task.
-
-        Args:
-            metadata: Image metadata containing patient info, modality, etc.
-            visual_analysis: Optional visual analysis results
-
-        Returns:
-            List of relevant medical guidelines/cases for context.
-        """
-        if not self.config.use_retrieval or self._retrieval_manager is None:
-            return []
-
-        return self._retrieval_manager.retrieve_for_task(
-            task="diagnosis",
-            metadata=metadata,
-            visual_analysis=visual_analysis,
-        )
+    # NOTE: Retrieval method removed - model now uses search_web tool for independent information retrieval
 
     def _convert_result(
         self,
@@ -146,17 +110,6 @@ class AgenticDiagnosisProcessor(BaseProcessor):
             "differential": differential,
         }
 
-        # Add visual analysis context to reasoning if available
-        if result.visual_analysis:
-            va = result.visual_analysis
-            reasoning += f"\n\nVisual pre-analysis: {va.overall_assessment}"
-            reasoning += f" (symmetry: {va.symmetry_analysis.symmetry_score:.2f})"
-
-            # Note any detected abnormalities
-            abnormal = [f for f in va.visual_features if f.feature_type == "abnormal"]
-            if abnormal:
-                reasoning += f"\nDetected abnormalities: {len(abnormal)}"
-
         return ModelResponse(
             text=json.dumps(response_text),
             confidence=confidence,
@@ -170,32 +123,33 @@ class AgenticDiagnosisProcessor(BaseProcessor):
                 "sample_idx": sample_idx,
                 "num_turns": len(result.turns),
                 "total_tokens": result.total_tokens,
-                "used_visual_reasoning": result.visual_analysis is not None,
-                "retrieval_passages_used": len(result.retrieval_passages),
+                "tool_calls": sum(len(t.tool_calls) for t in result.turns),
+                "web_searches_used": sum(
+                    1
+                    for t in result.turns
+                    if any(tc.get("name") == "search_web" for tc in t.tool_calls)
+                ),
             },
         )
 
     def _log_analysis(self, result: AgenticResult, sample_idx: int) -> None:
         """Log analysis details for debugging."""
         diagnosis = result.final_response.get("diagnosis", "N/A")
+        tool_count = sum(len(t.tool_calls) for t in result.turns)
         logger.info(
             f"Sample {sample_idx}: "
             f"diagnosis='{diagnosis[:50]}...', "
             f"confidence={result.confidence:.2f}, "
             f"turns={len(result.turns)}, "
+            f"tools={tool_count}, "
             f"tokens={result.total_tokens}"
         )
 
-        if result.visual_analysis:
-            va = result.visual_analysis
-            logger.debug(
-                f"  Visual analysis: "
-                f"symmetry={va.symmetry_analysis.symmetry_score:.2f}, "
-                f"features={len(va.visual_features)}"
-            )
-
-        if result.retrieval_passages:
-            logger.debug(f"  Retrieval: {len(result.retrieval_passages)} passages used")
+        web_searches = sum(
+            1 for t in result.turns if any(tc.get("name") == "search_web" for tc in t.tool_calls)
+        )
+        if web_searches > 0:
+            logger.debug(f"  Web searches: {web_searches} performed")
 
     @beartype
     def evaluate_responses(

@@ -90,3 +90,31 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
     else:
         arr = np.zeros_like(arr, dtype=np.uint8)
     return Image.fromarray(arr)
+
+
+@beartype
+def flip_horizontal(image: Image.Image) -> Image.Image:
+    """Flip image horizontally (left-right mirror)."""
+    return image.transpose(Image.FLIP_LEFT_RIGHT)
+
+
+@beartype
+def flip_vertical(image: Image.Image) -> Image.Image:
+    """Flip image vertically (top-bottom mirror)."""
+    return image.transpose(Image.FLIP_TOP_BOTTOM)
+
+
+@beartype
+def rotate_90(image: Image.Image, clockwise: bool = True) -> Image.Image:
+    """Rotate image by 90 degrees.
+
+    Args:
+        image: Input image
+        clockwise: If True, rotate clockwise; if False, rotate counter-clockwise
+
+    Returns:
+        Rotated image
+    """
+    if clockwise:
+        return image.transpose(Image.ROTATE_270)
+    return image.transpose(Image.ROTATE_90)

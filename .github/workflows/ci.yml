@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,14 +24,18 @@ jobs:
     - name: Install dependencies
       run: uv sync
 
-    - name: Lint
-      run: uv run ruff check .
-      continue-on-error: true
-
-    - name: Format check
-      run: uv run ruff format --check .
-      continue-on-error: true
+    - name: Code quality checks
+      run: |
+        uv run ruff check .
+        uv run ruff format --check .
+        uv run pyright src/
 
     - name: Run tests
-      run: uv run pytest tests/ -q --tb=short
-      continue-on-error: true
+      run: |
+        uv run pytest tests/ -x --tb=short
+
+    - name: Test scripts
+      run: |
+        python scripts/run_nova_evaluation.py --help
+        python scripts/analyze_results.py --help
+        ./scripts/eval_nova.sh help

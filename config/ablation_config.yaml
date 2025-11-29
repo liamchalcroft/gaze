@@ -1,0 +1,62 @@
+# Ablation Study Configuration for NOVA Retrieval VLM
+
+defaults:
+  - _self_
+
+# Task configuration for ablation studies
+task: localization  # Can be overridden: localization, diagnosis, caption
+batch_size: 2       # Smaller batch size for ablation (more configurations)
+skip_existing: true
+output_dir: ./runs/ablation
+
+# Model configuration for ablation studies
+model:
+  name: "x-ai/grok-4.1-fast:free"  # Grok 4.1 for reasoning comparisons
+  max_retries: 3
+  timeout: 60
+  temperature: 0.0  # Deterministic for research
+  max_tokens: 2048
+
+# Agentic configuration with ablation support
+agentic:
+  enabled: true
+
+  # Ablation study configuration
+  ablation_mode: "full_factorial"  # Options: baseline_vs_agentic, reasoning_impact, tool_contributions, retrieval_impact, full_factorial
+  single_config: null              # Set to specific config name to run single configuration
+
+  # Enhanced research capabilities
+  reasoning_enabled: false
+  enable_research_metrics: true
+  use_tools: true
+  max_turns: 10
+
+  # Tool filtering for ablation
+  enabled_tools: []                # Empty means all tools enabled
+  disabled_tools: []               # Tools to disable
+
+  # Single shot vs multi-turn
+  single_shot: false               # Set to true for baseline comparison
+
+  # Retrieval augmentation
+  use_retrieval: false
+
+  # Legacy settings (deprecated)
+  use_visual_reasoning: false
+  confidence_threshold: 0.7
+
+# Paths configuration
+paths:
+  data_dir: "./data/nova"
+  index_dir: "./indexes"
+  output_dir: "./runs/ablation"
+
+# Hydra settings for ablation studies
+hydra:
+  run:
+    dir: ${paths.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweeper:
+    param:
+      # Enable parameter sweeps for ablation studies
+      task: localization,diagnosis,caption
+      agentic.ablation_mode: baseline_vs_agentic,reasoning_impact,tool_contributions,full_factorial
