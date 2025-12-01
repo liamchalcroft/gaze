@@ -51,6 +51,8 @@ def evaluate(
                 "detection_mAP50": det_metrics.get("map50", 0.0),
                 "detection_mAP50_95": det_metrics.get("map50_95", 0.0),
                 "detection_ACC50": det_metrics.get("acc50", 0.0),
+                "detection_TP30": det_metrics.get("tp30", 0),
+                "detection_FP30": det_metrics.get("fp30", 0),
             }
         )
 
@@ -65,9 +67,12 @@ def evaluate(
             {
                 "caption_bleu": cap_scores.get("bleu", 0.0),
                 "caption_bert_f1": cap_scores.get("bert_f1", 0.0),
-                "caption_radgraph_f1": cap_scores.get("radgraph_f1", 0.0),
+                "caption_radgraph_f1": cap_scores.get("radgraph_f1"),
                 "caption_meteor": cap_scores.get("meteor", 0.0),
-                "caption_rouge_l": cap_scores.get("rouge_l", 0.0),
+                "caption_modality_f1": cap_scores.get("modality_f1", 0.0),
+                "caption_clinical_f1": cap_scores.get("clinical_f1", 0.0),
+                "caption_binary_accuracy": cap_scores.get("binary_accuracy", 0.0),
+                "caption_binary_f1": cap_scores.get("binary_f1", 0.0),
             }
         )
 

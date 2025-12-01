@@ -80,11 +80,11 @@ class ToolRegistry:
         self.register(
             VisualTool(
                 name="zoom",
-                description="Magnify the entire image to examine fine details or overall patterns. Essential for detailed analysis of suspicious regions.",
+                description="Magnify image for detail analysis. Use 2.0-4.0 factor.",
                 parameters={
                     "factor": {
                         "type": "number",
-                        "description": "Zoom factor: 1.0=no change, 2.0=2x zoom, 0.5=zoom out. Use 2.0-4.0 for detailed examination.",
+                        "description": "Zoom factor: 1.0=unchanged, 2.0=2x zoom.",
                         "minimum": 0.5,
                         "maximum": 4.0,
                     }
@@ -97,11 +97,11 @@ class ToolRegistry:
         self.register(
             VisualTool(
                 name="crop",
-                description="Extract a rectangular region for focused analysis. Use after identifying an area of interest to examine it in detail.",
+                description="Extract rectangular region for focused analysis.",
                 parameters={
                     "box": {
                         "type": "array",
-                        "description": "Bounding box as [x1, y1, x2, y2] where coordinates are normalized (0-1) from top-left. Example: [0.3, 0.2, 0.7, 0.8] crops center region.",
+                        "description": "Box [x1,y1,x2,y2] normalized (0-1) coordinates.",
                         "items": {"type": "number", "minimum": 0, "maximum": 1},
                         "minItems": 4,
                         "maxItems": 4,
@@ -570,12 +570,11 @@ class ToolRegistry:
                 summary += f"   **URL:** {result.url}\n"
                 formatted_results.append(summary)
 
-            # Combine all results
-            formatted_summary = "\n## PubMed Search Results\n\n" + "\n\n".join(formatted_results)
-            return formatted_summary
-
             # Calculate average reliability
             avg_reliability = avg_reliability / len(search_results)
+
+            # Combine all results
+            formatted_summary = "\n## PubMed Search Results\n\n" + "\n\n".join(formatted_results)
 
             return ToolResult(
                 success=True,
@@ -590,6 +589,7 @@ class ToolRegistry:
                     "avg_reliability": round(avg_reliability, 2),
                     "content_types": list(set(content_types)),
                     "open_access_count": sum(1 for r in search_results if r.open_access),
+                    "formatted_results": formatted_summary,
                 },
             )
 
@@ -602,20 +602,3 @@ class ToolRegistry:
                 error=f"PubMed search error: {str(e)}",
                 metadata={"query": query, "search_type": search_type, "error": str(e)},
             )
-
-    def _execute_compare_images(self, reference_url: str) -> ToolResult:
-        """Compare current image with a reference (experimental)."""
-        # TODO: Implement image comparison
-        # This would involve:
-        # 1. Fetching the reference image from URL
-        # 2. Creating a side-by-side comparison view
-        # 3. Returning the combined image for analysis
-        logger.warning("compare_images is experimental and not yet implemented")
-        return ToolResult(
-            success=False,
-            tool_name="compare_images",
-            description=f"Compare with '{reference_url}' - NOT YET IMPLEMENTED",
-            error="Image comparison is experimental and not yet implemented. "
-            "This feature will create side-by-side views for visual comparison.",
-            metadata={"reference_url": reference_url, "status": "not_implemented"},
-        )

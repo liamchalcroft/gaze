@@ -47,11 +47,16 @@ class AgenticLocalizationProcessor(BaseProcessor):
         super().__init__(config)
         self.use_tools = use_tools
         self.max_turns = max_turns
+        self.task_name = getattr(config, "task_name", "all_tasks")  # Get task name from config
 
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
             use_tools=use_tools,
+            use_web_search=False,  # Localization typically doesn't need web search
             max_turns=max_turns,
+            reasoning_enabled=config.reasoning_enabled,
+            reasoning_effort=config.reasoning_effort,
+            enable_caching=config.enable_caching,
         )
 
         logger.info(
@@ -70,7 +75,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
             # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
-                task="localization",
+                _task=self.task_name,
                 metadata=metadata,
             )
 
@@ -83,7 +88,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
 
         return responses
 
-    # NOTE: Retrieval method removed - model now uses search_web tool for independent information retrieval
+    # NOTE: Retrieval method removed - model uses search_web tool instead
 
     def _convert_result(
         self,
@@ -95,13 +100,32 @@ class AgenticLocalizationProcessor(BaseProcessor):
         """Convert AgenticResult to ModelResponse."""
         response = result.final_response
 
-        # Extract boxes and labels
-        boxes = response.get("boxes", [])
-        labels = response.get("labels", [])
+        # For unified tasks, extract caption, diagnosis, and localization
+        caption = response.get("caption", {})
+        diagnosis = response.get("diagnosis", {})
+        localization = response.get("localization", {})
         reasoning = response.get("reasoning", "")
 
+        # Extract boxes and labels from localization if available
+        boxes = []
+        labels = []
+        if localization and "localizations" in localization:
+            for loc in localization["localizations"]:
+                if "bounding_box" in loc:
+                    boxes.append(loc["bounding_box"])
+                if "finding" in loc:
+                    labels.append(loc["finding"])
+
         return ModelResponse(
-            text=json.dumps({"boxes": boxes, "labels": labels}),
+            text=json.dumps(
+                {
+                    "caption": caption,
+                    "diagnosis": diagnosis,
+                    "localization": localization,
+                    "boxes": boxes,
+                    "labels": labels,
+                }
+            ),
             confidence=result.confidence,
             reasoning=reasoning,
             metadata={

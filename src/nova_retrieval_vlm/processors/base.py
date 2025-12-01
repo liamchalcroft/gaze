@@ -36,6 +36,17 @@ class ProcessorConfig(BaseModel):
     skip_existing: bool = Field(
         default=False, description="Whether to skip processing of existing results"
     )
+    reasoning_enabled: bool = Field(
+        default=False, description="Whether to enable model reasoning (e.g., Grok reasoning mode)"
+    )
+    reasoning_effort: str = Field(
+        default="high",
+        pattern="^(high|medium|low|minimal|none)$",
+        description="Reasoning effort level for supported models",
+    )
+    enable_caching: bool = Field(
+        default=True, description="Enable prompt caching for consistent system prompts"
+    )
 
     @field_validator("task_name", "model_name")
     @classmethod
@@ -56,7 +67,8 @@ class ProcessorConfig(BaseModel):
     def model_post_init(self, __context) -> None:
         """Post-initialization validation."""
         # Task-specific validation
-        valid_tasks = {"localization", "caption", "diagnosis", "detection"}
+        # 'all_tasks' is the unified task that performs captioning, diagnosis, and localization together
+        valid_tasks = {"localization", "caption", "diagnosis", "detection", "all_tasks"}
         if self.task_name not in valid_tasks:
             logger.warning(f"Task '{self.task_name}' not in standard tasks: {valid_tasks}")
 

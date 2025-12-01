@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import os
 import time
 from collections.abc import Sequence
@@ -32,6 +31,8 @@ class OpenAIAdapter(BaseAdapter):
         max_retries: int = 3,
         timeout: int = 60,
         reasoning_enabled: bool = False,
+        reasoning_effort: str = "high",
+        enable_caching: bool = True,
     ) -> None:
         # Prefer OPENAI_API_KEY over OPENROUTER_API_KEY unless an explicit api_key is provided
         key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
@@ -44,9 +45,8 @@ class OpenAIAdapter(BaseAdapter):
             "X-Title": os.getenv("APP_NAME", "NOVA Retrieval VLM"),
         }
 
-        # Add reasoning control for models that support it (like Grok)
-        if reasoning_enabled:
-            default_headers["X-Model-Config"] = json.dumps({"reasoning": {"type": "enabled"}})
+        # Note: Reasoning is handled per OpenRouter's API format in the request body
+        # Headers are kept for compatibility but main reasoning control is in kwargs
 
         self.client = OpenAI(
             api_key=self.api_key,
@@ -59,9 +59,45 @@ class OpenAIAdapter(BaseAdapter):
         self.max_retries = max_retries
         self.timeout = timeout
         self.reasoning_enabled = reasoning_enabled
+        self.reasoning_effort = reasoning_effort
+        self.enable_caching = enable_caching
         logger.info(
-            f"Initialized OpenAIAdapter with model: {model_name}, reasoning: {reasoning_enabled}"
+            f"Initialized OpenAIAdapter with model: {model_name}, reasoning: {reasoning_enabled}, effort: {reasoning_effort}, caching: {enable_caching}"
         )
+
+    def _add_cache_control(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add cache control to messages for OpenRouter prompt caching.
+
+        Adds cache_control breakpoints to system messages and consistent content
+        to enable prompt caching and reduce costs for repeated prompts.
+        """
+        if not self.enable_caching:
+            return messages
+
+        cached_messages = []
+        for message in messages:
+            cached_message = message.copy()
+
+            # Add cache control to system messages (consistent across requests)
+            if message.get("role") == "system":
+                cached_message["cache_control"] = {"type": "cache_breakpoint"}
+
+            # For multi-content messages, add cache control to text parts
+            elif isinstance(message.get("content"), list):
+                cached_content = []
+                for content_part in message["content"]:
+                    cached_part = content_part.copy()
+                    # Add cache control to consistent text content
+                    if content_part.get(
+                        "type"
+                    ) == "text" and "Analyze the provided image" in content_part.get("text", ""):
+                        cached_part["cache_control"] = {"type": "cache_breakpoint"}
+                    cached_content.append(cached_part)
+                cached_message["content"] = cached_content
+
+            cached_messages.append(cached_message)
+
+        return cached_messages
 
     async def generate(
         self,
@@ -70,6 +106,7 @@ class OpenAIAdapter(BaseAdapter):
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict | None = None,
     ) -> tuple[str, GenerationLog]:
         # Load and optimize image
         try:
@@ -106,6 +143,9 @@ class OpenAIAdapter(BaseAdapter):
             {"role": "user", "content": user_message_content_parts},
         ]
 
+        # Add cache control for prompt caching
+        messages = self._add_cache_control(messages)
+
         # Call OpenAI SDK with proper error handling
         for attempt in range(self.max_retries):
             try:
@@ -121,9 +161,27 @@ class OpenAIAdapter(BaseAdapter):
                     if temperature is not None:
                         kwargs["temperature"] = temperature
 
-                    # Add reasoning parameter for models that support it
+                    # Add structured outputs if response_format is provided
+                    if response_format is not None:
+                        kwargs["response_format"] = response_format
+                        # Ensure strict mode is enabled for structured outputs
+                        if (
+                            isinstance(response_format, dict)
+                            and "type" in response_format
+                            and response_format["type"] == "json_schema"
+                        ):
+                            if "json_schema" in response_format:
+                                response_format["json_schema"]["strict"] = True
+
+                    # Add reasoning parameter for Grok models via OpenRouter using extra_body
+                    extra_body = {}
                     if self.reasoning_enabled:
-                        kwargs["reasoning"] = {"type": "enabled"}
+                        # OpenRouter supports reasoning via extra_body for provider-specific params
+                        extra_body["reasoning"] = {"effort": self.reasoning_effort}
+
+                    # Add extra_body if we have any provider-specific params
+                    if extra_body:
+                        kwargs["extra_body"] = extra_body
 
                     return self.client.chat.completions.create(**kwargs)
 
@@ -182,6 +240,7 @@ class OpenAIAdapter(BaseAdapter):
         max_tokens: int | None = None,
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         """Generate a response from a multi-turn conversation.
 
@@ -198,9 +257,12 @@ class OpenAIAdapter(BaseAdapter):
             try:
 
                 def _call() -> Any:
+                    # Add cache control for prompt caching
+                    cached_messages = self._add_cache_control(messages)
+
                     kwargs: dict[str, Any] = {
                         "model": self.model_name,
-                        "messages": messages,
+                        "messages": cached_messages,
                         "timeout": self.timeout,
                     }
                     if max_tokens is not None:
@@ -282,11 +344,15 @@ class OpenAIAdapter(BaseAdapter):
         system_prompt: str,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict | None = None,
     ) -> tuple[str, GenerationLog]:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_text},
         ]
+
+        # Add cache control for prompt caching
+        messages = self._add_cache_control(messages)
 
         # Call OpenAI SDK with proper error handling
         for attempt in range(self.max_retries):
@@ -303,9 +369,27 @@ class OpenAIAdapter(BaseAdapter):
                     if temperature is not None:
                         kwargs["temperature"] = temperature
 
-                    # Add reasoning parameter for models that support it
+                    # Add structured outputs if response_format is provided
+                    if response_format is not None:
+                        kwargs["response_format"] = response_format
+                        # Ensure strict mode is enabled for structured outputs
+                        if (
+                            isinstance(response_format, dict)
+                            and "type" in response_format
+                            and response_format["type"] == "json_schema"
+                        ):
+                            if "json_schema" in response_format:
+                                response_format["json_schema"]["strict"] = True
+
+                    # Add reasoning parameter for Grok models via OpenRouter using extra_body
+                    extra_body = {}
                     if self.reasoning_enabled:
-                        kwargs["reasoning"] = {"type": "enabled"}
+                        # OpenRouter supports reasoning via extra_body for provider-specific params
+                        extra_body["reasoning"] = {"effort": self.reasoning_effort}
+
+                    # Add extra_body if we have any provider-specific params
+                    if extra_body:
+                        kwargs["extra_body"] = extra_body
 
                     return self.client.chat.completions.create(**kwargs)
 

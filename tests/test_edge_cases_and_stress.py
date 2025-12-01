@@ -23,6 +23,15 @@ from nova_retrieval_vlm.utils.batch_processing_utils import BatchContext
 from nova_retrieval_vlm.utils.batch_processing_utils import normalize_localization_result
 from nova_retrieval_vlm.utils.batch_processing_utils import postprocess_batch_result
 
+# Valid unified response for mocks (matches expected JSON schema)
+VALID_UNIFIED_RESPONSE = json.dumps(
+    {
+        "caption": {"description": "Test MRI scan showing normal anatomy", "confidence": 0.9},
+        "diagnosis": {"primary_diagnosis": "Normal", "confidence": 0.9},
+        "localization": {"localizations": []},
+    }
+)
+
 
 @pytest.mark.edge_case
 class TestEdgeCaseInputs:
@@ -60,7 +69,7 @@ class TestEdgeCaseInputs:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 # Should handle mismatch gracefully (likely process up to min length)
@@ -102,7 +111,7 @@ class TestEdgeCaseInputs:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 # Should not crash with null metadata
@@ -132,7 +141,7 @@ class TestEdgeCaseInputs:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 start_time = time.time()
@@ -164,7 +173,7 @@ class TestEdgeCaseInputs:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 # Should handle invalid paths appropriately (likely raise error)
@@ -196,7 +205,7 @@ class TestEdgeCaseInputs:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 responses = await processor.process_batch(unicode_batch, 0)
@@ -457,7 +466,7 @@ class TestMemoryAndPerformanceStress:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 return await processor.process_batch(large_batch, 0)
@@ -489,7 +498,7 @@ class TestMemoryAndPerformanceStress:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 start_time = time.time()
@@ -525,7 +534,7 @@ class TestMemoryAndPerformanceStress:
                     "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
                 ) as mock_adapter_class:
                     mock_adapter = AsyncMock()
-                    mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                    mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                     mock_adapter_class.return_value = mock_adapter
 
                     start = time.time()
@@ -545,7 +554,7 @@ class TestMemoryAndPerformanceStress:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 start = time.time()
@@ -688,7 +697,7 @@ class TestResourceLimitsAndBoundaryConditions:
                 "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
+                mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
                 start_time = time.time()

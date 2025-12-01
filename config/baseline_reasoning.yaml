@@ -1,5 +1,5 @@
-# NOVA Baseline Evaluation Configuration
-# Performs unified multi-task analysis (captioning + diagnosis + localization) in single pass
+# NOVA Baseline Evaluation Configuration with Reasoning Enabled
+# Performs unified multi-task analysis (captioning + diagnosis + localization) in single pass with enhanced reasoning
 
 # Task is optional - unified processors handle all tasks (captioning, diagnosis, localization)
 
@@ -13,24 +13,24 @@ model:
 
 # Processing configuration
 batch_size: 2
-max_iterations: 3  # Process all batches
+max_iterations: 3  # Process entire dataset (negative number = no limit)
 request_delay: 3.0
 skip_existing: false
 
-# Agentic configuration (single-turn without reasoning)
+# Agentic configuration (single-turn with reasoning enabled)
 agentic:
   enabled: false
   use_tools: false
   max_turns: 10
-  reasoning_enabled: false  # Reasoning disabled for baseline
-  reasoning_effort: "medium"  # Default effort level
+  reasoning_enabled: true  # Enable reasoning for enhanced analysis
+  reasoning_effort: "high"  # High effort for comprehensive analysis
   enable_research_metrics: false
   enable_caching: true  # Enable prompt caching for performance
 
 # Paths configuration
 paths:
   data_dir: "./data/nova"
-  output_dir: "./runs/baseline"
+  output_dir: "./runs/baseline_reasoning"
 
 # Visualization configuration
 visualization:

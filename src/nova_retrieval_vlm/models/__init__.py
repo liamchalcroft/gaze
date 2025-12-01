@@ -2,7 +2,6 @@
 
 from .base import BaseAdapter
 from .openai_adapter import OpenAIAdapter
-from .openrouter_adapter import OpenRouterAdapter
 
 
 def get_model_client(model_name: str) -> OpenAIAdapter:
@@ -20,6 +19,5 @@ def get_model_client(model_name: str) -> OpenAIAdapter:
 __all__ = [
     "BaseAdapter",
     "OpenAIAdapter",
-    "OpenRouterAdapter",
     "get_model_client",
 ]

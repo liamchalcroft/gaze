@@ -5,6 +5,17 @@ from dataclasses import field
 from enum import Enum
 from pathlib import Path
 
+from loguru import logger
+
+
+class TaskType(Enum):
+    """Available task types for NOVA evaluation."""
+
+    LOCALIZATION = "localization"
+    CAPTION = "caption"
+    DIAGNOSIS = "diagnosis"
+    VISUALIZE = "visualize"
+
 
 @dataclass
 class ModelConfig:
@@ -14,7 +25,7 @@ class ModelConfig:
     max_retries: int = 3
     timeout: int = 60
     temperature: float = 0.7
-    max_tokens: int = 1024
+    max_tokens: int = 4096
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
@@ -56,15 +67,6 @@ class PathsConfig:
             Path(path_str).mkdir(parents=True, exist_ok=True)
 
 
-class TaskType(str, Enum):
-    """Supported task types."""
-
-    LOCALIZATION = "localization"
-    CAPTION = "caption"
-    DIAGNOSIS = "diagnosis"
-    VISUALIZE = "visualize"
-
-
 @dataclass
 class AgenticConfig:
     """Agentic processing configuration with enhanced research capabilities."""
@@ -74,7 +76,9 @@ class AgenticConfig:
     max_turns: int = 10
     confidence_threshold: float = 0.7
     reasoning_enabled: bool = False
+    reasoning_effort: str = "high"  # "high", "medium", "low", "minimal", "none"
     enable_research_metrics: bool = True
+    enable_caching: bool = True
     enabled_tools: list[str] = field(default_factory=list)
     disabled_tools: list[str] = field(default_factory=list)
     single_shot: bool = False
@@ -86,6 +90,11 @@ class AgenticConfig:
             raise ValueError("max_turns must be between 1 and 20")
         if not (0.0 <= self.confidence_threshold <= 1.0):
             raise ValueError("confidence_threshold must be between 0.0 and 1.0")
+        valid_efforts = {"high", "medium", "low", "minimal", "none"}
+        if self.reasoning_effort not in valid_efforts:
+            raise ValueError(
+                f"reasoning_effort must be one of {valid_efforts}, got '{self.reasoning_effort}'"
+            )
 
 
 @dataclass
@@ -110,7 +119,7 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
-    task: TaskType = TaskType.LOCALIZATION
+    task: TaskType | None = None  # Task is optional - unified processors handle all tasks
     batch_size: int = 4
     prompt_text: str = ""
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
@@ -135,6 +144,10 @@ class Config:
         # Validate task-specific configuration
         if self.task == TaskType.VISUALIZE and self.visualization.num_samples <= 0:
             raise ValueError("Visualization requires num_samples > 0")
+
+        # Task is optional for unified processing - if not specified, we use unified approach
+        if self.task is None:
+            logger.info("No task specified - using unified multi-task processing")
 
     @property
     def output_dir(self) -> str:

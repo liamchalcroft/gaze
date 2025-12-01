@@ -1,41 +1,39 @@
-# NOVA Retrieval VLM Configuration
+# Default NOVA Configuration
+# This is the base config that Hydra loads. Override values via command line or other config files.
 
-defaults:
-  - _self_
-
-# Task configuration - use enum values
-task: LOCALIZATION
-batch_size: 4
-skip_existing: true
-
-# Model configuration - updated to use Grok 4.1 as default
+# Model configuration
 model:
   name: "x-ai/grok-4.1-fast:free"
   max_retries: 3
   timeout: 60
   temperature: 0.7
-  max_tokens: 1024
+  max_tokens: 4096
 
-# Paths configuration
-paths:
-  data_dir: "./data/nova"
-  output_dir: "./runs"
+# Processing configuration
+batch_size: 2
+max_iterations: 5
+request_delay: 3.0
+skip_existing: true
 
 # Agentic configuration
 agentic:
   enabled: false
   use_tools: true
   max_turns: 10
+  confidence_threshold: 0.7
   reasoning_enabled: false
+  reasoning_effort: "high"
   enable_research_metrics: true
+  enable_caching: true
   enabled_tools: []
   disabled_tools: []
   single_shot: false
   use_retrieval: false
 
-# Processing settings
-max_iterations: 5
-request_delay: 3.0
+# Paths configuration
+paths:
+  data_dir: "./data/nova"
+  output_dir: "./runs"
 
 # Visualization configuration
 visualization:
@@ -44,7 +42,14 @@ visualization:
   trust_remote_code: false
   overlay: false
 
+# Task (optional - unified processors handle all tasks)
+task: null
+
+# Prompt text
+prompt_text: ""
+
 # Hydra settings
 hydra:
   run:
     dir: ${paths.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+

@@ -1,5 +1,5 @@
-# NOVA Agentic Evaluation Configuration
-# Multi-turn analysis with model-controlled continuation
+# NOVA Agentic (No Reasoning) Evaluation Configuration
+# Performs unified multi-task analysis with agentic processing but no reasoning
 
 # Model configuration
 model:
@@ -15,20 +15,20 @@ max_iterations: 3
 request_delay: 3.0
 skip_existing: false
 
-# Agentic configuration (true multi-turn analysis)
+# Agentic configuration (multi-turn with reasoning, no tools)
 agentic:
   enabled: true
-  use_tools: false  # No visual tools for pure multi-turn reasoning
-  max_turns: 10     # Allow multiple turns with 'continue' field control
-  reasoning_enabled: false  # Model reasoning disabled
-  reasoning_effort: "medium"
+  use_tools: false  # No visual tools
+  max_turns: 10
+  reasoning_enabled: true  # Reasoning enabled
+  reasoning_effort: "high"  # High effort for comprehensive analysis
   enable_research_metrics: false
-  enable_caching: true
+  enable_caching: true  # Enable prompt caching for performance
 
 # Paths configuration
 paths:
   data_dir: "./data/nova"
-  output_dir: "./runs/agentic"
+  output_dir: "./runs/agentic_reasoning"
 
 # Visualization configuration
 visualization:

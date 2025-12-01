@@ -15,7 +15,6 @@ from datasets import load_dataset
 from PIL import Image
 
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
-from nova_retrieval_vlm.models.openrouter_adapter import OpenRouterAdapter
 from nova_retrieval_vlm.utils.confidence_calibration_utils import load_calibration_data_from_files
 
 from .plotting import overlay_boxes
@@ -25,7 +24,7 @@ from .plotting import plot_ablation_comparison
 @st.cache_data(show_spinner=False)
 def load_nova_dataset() -> Any:
     """Load NOVA test split via Hugging Face."""
-    return load_dataset("Ano-2090/Nova", split="test", trust_remote_code=False)
+    return load_dataset("c-i-ber/Nova", split="train", trust_remote_code=False)
 
 
 async def predict_with_model(model_name: str, image: Image.Image, task: str) -> dict[str, Any]:
@@ -36,11 +35,13 @@ async def predict_with_model(model_name: str, image: Image.Image, task: str) -> 
         image_path = Path(temp_file.name)
 
     try:
-        # Create model adapter based on model name
+        # Create model adapter using OpenAIAdapter for all models
+        # OpenAIAdapter handles both OpenAI and OpenRouter models via base_url
         if model_name.startswith("openai/"):
             adapter = OpenAIAdapter(model_name=model_name.split("/", 1)[1])
         else:
-            adapter = OpenRouterAdapter(model_name=model_name)
+            # For OpenRouter models, use the full model name and default base_url
+            adapter = OpenAIAdapter(model_name=model_name)
 
         # Create task-specific prompt based on task type
         if task == "localization":
@@ -66,7 +67,7 @@ async def predict_with_model(model_name: str, image: Image.Image, task: str) -> 
         # Get model response
         response_text, generation_log = await adapter.generate(
             image_path=image_path,
-            passages=[],  # No retrieval for now - can be added later
+            _passages=[],  # No retrieval for now - can be added later
             system_prompt=system_prompt,
             max_tokens=512,
             temperature=0.1,

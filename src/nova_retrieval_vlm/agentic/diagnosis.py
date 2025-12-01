@@ -52,7 +52,11 @@ class AgenticDiagnosisProcessor(BaseProcessor):
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
             use_tools=use_tools,
+            use_web_search=use_tools,  # Diagnosis benefits from web search when tools are enabled
             max_turns=max_turns,
+            reasoning_enabled=config.reasoning_enabled,
+            reasoning_effort=config.reasoning_effort,
+            enable_caching=config.enable_caching,
         )
 
         logger.info(
@@ -71,7 +75,7 @@ class AgenticDiagnosisProcessor(BaseProcessor):
             # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
-                task="diagnosis",
+                _task="diagnosis",
                 metadata=metadata,
             )
 
@@ -84,7 +88,7 @@ class AgenticDiagnosisProcessor(BaseProcessor):
 
         return responses
 
-    # NOTE: Retrieval method removed - model now uses search_web tool for independent information retrieval
+    # NOTE: Retrieval method removed - model uses search_web tool instead
 
     def _convert_result(
         self,
@@ -167,18 +171,14 @@ class AgenticDiagnosisProcessor(BaseProcessor):
                 # Include differential diagnoses for top-5 evaluation
                 all_diagnoses = [diagnosis] + differential if differential else [diagnosis]
                 predicted_diagnoses.append(all_diagnoses)
-            except json.JSONDecodeError:
-                # Try to extract raw text as diagnosis
-                predicted_diagnoses.append([response.text.strip()])
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON response from model: {response.text}") from e
 
         # Parse ground truth
         ground_truth_diagnoses = []
         for gt in ground_truth:
-            try:
-                gt_parsed = json.loads(gt)
-                diagnosis = gt_parsed.get("diagnosis", gt)
-            except json.JSONDecodeError:
-                diagnosis = gt
+            gt_parsed = json.loads(gt)
+            diagnosis = gt_parsed.get("diagnosis", gt)
             ground_truth_diagnoses.append(diagnosis)
 
         # Use NOVA official evaluation (with GPT-4o semantic matching)

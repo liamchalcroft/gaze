@@ -181,6 +181,8 @@ dependencies = [
     "sentence-transformers>=5.1.0",
     "aiohttp>=3.12.13",
     "minijinja>=2.12.0",
+    "pyyaml>=6.0.2",
+    "pytest-asyncio>=0.23.8",
 ]
 name = "nova-retrieval-vlm"
 version = "0.1.0"

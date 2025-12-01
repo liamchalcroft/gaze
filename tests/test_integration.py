@@ -35,7 +35,6 @@ class TestEndToEndWorkflows:
                 paths=PathsConfig(
                     data_dir=temp_dir,
                     output_dir=temp_dir,
-                    index_dir=temp_dir,
                 ),
                 task="localization",
                 batch_size=2,

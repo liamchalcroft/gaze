@@ -7,8 +7,16 @@ import torch
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 
-def _convert_to_tensors(data: dict[str, Any]) -> dict[str, torch.Tensor]:
-    """Convert detection data to proper tensor format for torchmetrics."""
+def _convert_to_tensors(data: dict[str, Any] | list) -> dict[str, torch.Tensor]:
+    """Convert detection data to proper tensor format for torchmetrics.
+
+    Handles both dict format ({"boxes": [...], "scores": [...], "labels": [...]})
+    and list format (raw list of boxes).
+    """
+    # Handle list format (raw boxes without scores/labels)
+    if isinstance(data, list):
+        data = {"boxes": data, "scores": [], "labels": []}
+
     boxes = data.get("boxes", [])
     scores = data.get("scores", [])
     labels = data.get("labels", [])
@@ -75,41 +83,70 @@ def _compute_iou(box1: torch.Tensor, box2: torch.Tensor) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def _compute_acc50(preds_tensors: list[dict], refs_tensors: list[dict]) -> float:
-    """Compute detection accuracy at IoU 0.5 (per-sample hit rate)."""
+def _compute_acc_and_counts(
+    preds_tensors: list[dict], refs_tensors: list[dict], iou_threshold: float
+) -> tuple[float, int, int]:
+    """Compute detection accuracy and TP/FP counts at given IoU threshold.
+
+    Args:
+        preds_tensors: List of prediction dicts with 'boxes' tensor
+        refs_tensors: List of reference dicts with 'boxes' tensor
+        iou_threshold: IoU threshold for matching (e.g., 0.3 or 0.5)
+
+    Returns:
+        Tuple of (accuracy, true_positives, false_positives)
+    """
     hits = 0
     total = len(refs_tensors)
+    tp = 0  # True positives: predictions matched to ground truth
+    fp = 0  # False positives: predictions not matched to ground truth
 
     for pred, ref in zip(preds_tensors, refs_tensors, strict=False):
         pred_boxes = pred["boxes"]
         ref_boxes = ref["boxes"]
 
+        # Track which ground truth boxes have been matched
+        matched_refs = set()
+
         # If no ground truth boxes, count as hit if no predictions
         if len(ref_boxes) == 0:
             if len(pred_boxes) == 0:
                 hits += 1
+            else:
+                fp += len(pred_boxes)  # All predictions are false positives
             continue
 
-        # Check if any prediction matches any ground truth at IoU >= 0.5
+        # Check if any prediction matches any ground truth at IoU >= threshold
         sample_hit = False
-        for ref_box in ref_boxes:
-            for pred_box in pred_boxes:
-                if _compute_iou(pred_box, ref_box) >= 0.5:
-                    sample_hit = True
-                    break
-            if sample_hit:
-                break
+        for pred_box in pred_boxes:
+            best_iou = 0.0
+            best_ref_idx = -1
+            for ref_idx, ref_box in enumerate(ref_boxes):
+                if ref_idx in matched_refs:
+                    continue
+                iou = _compute_iou(pred_box, ref_box)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_ref_idx = ref_idx
+
+            if best_iou >= iou_threshold:
+                tp += 1
+                matched_refs.add(best_ref_idx)
+                sample_hit = True
+            else:
+                fp += 1
 
         if sample_hit:
             hits += 1
 
-    return hits / total if total > 0 else 0.0
+    accuracy = hits / total if total > 0 else 0.0
+    return accuracy, tp, fp
 
 
 def evaluate_detection(
     preds: Sequence[dict[str, Any]],
     refs: Sequence[dict[str, Any]],
-) -> dict[str, float]:
+) -> dict[str, float | int]:
     """
     Compute detection metrics following NOVA benchmark protocol.
 
@@ -118,23 +155,27 @@ def evaluate_detection(
     - mAP@0.5: Mean Average Precision at IoU threshold 0.5
     - mAP@[50:95]: Mean AP averaged across IoU thresholds 0.5 to 0.95 (step 0.05)
     - ACC50: Detection accuracy at IoU 0.5 (proportion of samples with at least one hit)
+    - TP30/FP30: True positive and false positive counts at IoU 0.3
 
     Args:
         preds: List of prediction dictionaries with 'boxes', 'scores', 'labels'
         refs: List of reference dictionaries with 'boxes', 'scores', 'labels'
 
     Returns:
-        Dictionary with keys 'map30', 'map50', 'map50_95', 'acc50'.
+        Dictionary with keys 'map30', 'map50', 'map50_95', 'acc50', 'tp30', 'fp30'.
     """
     if not preds or not refs:
-        return {"map30": 0.0, "map50": 0.0, "map50_95": 0.0, "acc50": 0.0}
+        return {"map30": 0.0, "map50": 0.0, "map50_95": 0.0, "acc50": 0.0, "tp30": 0, "fp30": 0}
 
     # Convert inputs to proper tensor format
     preds_tensors = [_convert_to_tensors(pred) for pred in preds]
     refs_tensors = [_convert_to_tensors(ref) for ref in refs]
 
-    # ACC50 (detection accuracy at IoU 0.5)
-    acc50 = _compute_acc50(preds_tensors, refs_tensors)
+    # ACC50 and counts at IoU 0.5
+    acc50, _, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, 0.5)
+
+    # ACC30 and TP30/FP30 (per NOVA protocol)
+    _, tp30, fp30 = _compute_acc_and_counts(preds_tensors, refs_tensors, 0.3)
 
     # mAP@30
     m30 = MeanAveragePrecision(iou_thresholds=[0.3])
@@ -155,4 +196,11 @@ def evaluate_detection(
     res5095 = m5095.compute()
     map50_95 = float(res5095["map"])
 
-    return {"map30": map30, "map50": map50, "map50_95": map50_95, "acc50": acc50}
+    return {
+        "map30": map30,
+        "map50": map50,
+        "map50_95": map50_95,
+        "acc50": acc50,
+        "tp30": tp30,
+        "fp30": fp30,
+    }

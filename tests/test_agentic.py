@@ -251,7 +251,7 @@ class TestAgenticProcessor:
 
             result = await processor.analyze(
                 image_path=temp_image,
-                task="localization",
+                _task="localization",
                 metadata={"modality": "MRI"},
             )
 
@@ -319,10 +319,11 @@ class TestCLIAgenticIntegration:
     def test_create_processor_standard(self):
         """Test creating standard processor."""
         from nova_retrieval_vlm.cli import create_processor
+        from nova_retrieval_vlm.config import AgenticConfig
         from nova_retrieval_vlm.config import Config
         from nova_retrieval_vlm.processors import LocalizationProcessor
 
-        config = Config(agentic={"enabled": False})
+        config = Config(agentic=AgenticConfig(enabled=False))
         processor = create_processor(config)
 
         assert isinstance(processor, LocalizationProcessor)
@@ -331,15 +332,16 @@ class TestCLIAgenticIntegration:
         """Test creating agentic processor when enabled."""
         from nova_retrieval_vlm.agentic import AgenticLocalizationProcessor
         from nova_retrieval_vlm.cli import create_processor
+        from nova_retrieval_vlm.config import AgenticConfig
         from nova_retrieval_vlm.config import Config
 
         config = Config(
-            agentic={
-                "enabled": True,
-                "use_visual_reasoning": True,
-                "use_tools": True,
-                "max_turns": 3,
-            }
+            agentic=AgenticConfig(
+                enabled=True,
+                reasoning_enabled=True,
+                use_tools=True,
+                max_turns=3,
+            )
         )
         processor = create_processor(config)
 

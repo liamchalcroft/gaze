@@ -145,7 +145,35 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
 
     modality_f1 = float(sum(mod_f1s) / len(mod_f1s) if mod_f1s else 0.0)
     clinical_f1 = float(sum(clin_f1s) / len(clin_f1s) if clin_f1s else 0.0)
-    binary_f1 = float(binary_correct / len(preds) if preds else 0.0)
+    binary_accuracy = float(binary_correct / len(preds) if preds else 0.0)
+
+    # Calculate binary F1 with TP/FP/FN (per NOVA protocol)
+    tp = sum(
+        1
+        for p, r in zip(preds, refs, strict=False)
+        if bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
+        and bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
+    )
+    fp = sum(
+        1
+        for p, r in zip(preds, refs, strict=False)
+        if bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
+        and not bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
+    )
+    fn = sum(
+        1
+        for p, r in zip(preds, refs, strict=False)
+        if not bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
+        and bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
+    )
+    precision_bin = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall_bin = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    binary_f1 = (
+        (2 * precision_bin * recall_bin / (precision_bin + recall_bin))
+        if (precision_bin + recall_bin) > 0
+        else 0.0
+    )
+
     return {
         "bleu": float(bleu.score) / 100.0,  # Normalize from 0-100 to 0-1
         "bert_f1": bert_f1_score / 100.0,  # Normalize from 0-100 to 0-1
@@ -153,5 +181,6 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         "meteor": meteor / 100.0,  # Normalize from 0-100 to 0-1
         "modality_f1": modality_f1,  # Already in 0-1 range
         "clinical_f1": clinical_f1,  # Already in 0-1 range
-        "binary_f1": binary_f1,  # Already in 0-1 range
+        "binary_accuracy": binary_accuracy,  # Accuracy of abnormal/normal classification
+        "binary_f1": binary_f1,  # F1 of abnormal/normal classification
     }

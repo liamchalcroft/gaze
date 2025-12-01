@@ -1,98 +1,92 @@
-# NOVA Evaluation Scripts
+# NOVA Scripts Directory
 
-Simplified scripts for running NOVA dataset evaluations and analyzing results for research papers.
+Essential scripts for NOVA dataset inference, evaluation, and result comparison.
 
-## Scripts Overview
+## Core Scripts
 
-### 1. `run_nova_evaluation.py`
-Runs NOVA dataset evaluation with specified configuration file.
-Performs unified multi-task analysis (captioning + diagnosis + localization) in one pass.
+### `inference.py` - Model Inference
+Generates per-subject predictions from NOVA dataset using specified configuration.
 
 ```bash
-# Run with specific configuration
-uv run python scripts/run_nova_evaluation.py --config config/baseline.yaml
+# Run inference with a configuration file
+uv run python scripts/inference.py --config config/baseline.yaml
 
-# With custom output directory
-uv run python scripts/run_nova_evaluation.py \
-    --config config/agentic.yaml \
-    --output-dir ./runs/experiment_1
+# Run with custom output directory
+uv run python scripts/inference.py --config config/agentic.yaml --output-dir ./results/my_run
+
+# Run with verbose logging
+uv run python scripts/inference.py --config config/baseline.yaml --verbose
 ```
 
-### 2. `analyze_results.py`
-Analyzes results from multiple evaluation runs and creates plots/tables for papers.
+### `evaluate.py` - Evaluation
+Evaluates per-subject predictions against NOVA dataset ground truth.
 
 ```bash
-# Analyze all results
-uv run python scripts/analyze_results.py --input-dir ./runs --output-dir ./paper_results
+# Evaluate results from inference
+uv run python scripts/evaluate.py --results-dir ./results/baseline_model --output ./eval_baseline
 
-# Generate model comparison
-uv run python scripts/analyze_results.py --input-dir ./runs --compare-models
+# Evaluate with detailed metrics
+uv run python scripts/evaluate.py --results-dir ./results/agentic_model --output ./eval_agentic --verbose
 ```
 
-**Outputs:**
-- `performance_comparison.png` - Performance plots
-- `results_table.tex` - LaTeX table for main results
-- `model_comparison_table.tex` - Model comparison table
-- `summary_stats.json` - Summary statistics
-- `metrics.csv` - Raw metrics data
-
-### 3. `eval_nova.sh` (Shell Wrapper)
-Convenient wrapper for common operations.
+### `comparison.py` - Result Comparison
+Aggregates metrics from multiple experimental runs and creates comparison plots/tables.
 
 ```bash
-# Run evaluation with config
-./scripts/eval_nova.sh config/baseline.yaml
+# Compare all results in a directory
+uv run python scripts/comparison.py --parent-dir ./results --output ./paper_results
 
-# Analyze results
-./scripts/eval_nova.sh analyze ./runs ./paper_results
-
-# Show help
-./scripts/eval_nova.sh help
+# Compare specific configurations
+uv run python scripts/comparison.py --parent-dir ./results --models baseline agentic baseline_reasoning
 ```
 
-### 4. `check_quality.sh`
-Runs code quality checks (ruff, pyright, pytest).
+## Typical Workflow
 
 ```bash
-./scripts/check_quality.sh
+# 1. Run inference with baseline config
+uv run python scripts/inference.py --config config/baseline.yaml
+
+# 2. Evaluate the results
+uv run python scripts/evaluate.py --results-dir ./results/baseline_* --output ./eval_baseline
+
+# 3. Repeat for other configurations...
+uv run python scripts/inference.py --config config/agentic.yaml
+uv run python scripts/evaluate.py --results-dir ./results/agentic_* --output ./eval_agentic
+
+# 4. Compare all results
+uv run python scripts/comparison.py --parent-dir ./eval_* --output ./paper_results
 ```
 
 ## Configuration Files
 
-### `config/baseline.yaml`
-Standard baseline evaluation without agentic processing.
+Configuration files are in `config/`:
+- `baseline.yaml` - Standard single-turn processing
+- `baseline_reasoning.yaml` - Single-turn with reasoning enabled
+- `agentic.yaml` - Agentic processing (multi-turn)
+- `agentic_reasoning.yaml` - Agentic with reasoning
+- `agentic_tools.yaml` - Agentic with visual tools
+- `agentic_tools_reasoning.yaml` - Full agentic pipeline
 
-### `config/agentic.yaml`
-Agentic evaluation with visual tools and multi-turn reasoning.
+## Dependencies
 
-## Usage Workflow
+- **Python**: 3.10+
+- **uv**: Package management (`uv sync` to install)
+- **API Keys**: `OPENROUTER_API_KEY` environment variable
+- **Data**: NOVA dataset access (HuggingFace)
 
-1. **Run evaluations:**
-   ```bash
-   ./scripts/eval_nova.sh config/baseline.yaml
-   ./scripts/eval_nova.sh config/agentic.yaml
-   ```
+## Output Structure
 
-2. **Analyze results:**
-   ```bash
-   ./scripts/eval_nova.sh analyze
-   ```
+```
+results/
+├── baseline_model_name/
+│   └── per_subject/
+│       ├── subject_0000/
+│       │   ├── predictions.json
+│       │   └── summary.json
+│       └── ...
 
-3. **Use generated outputs:**
-   - Include LaTeX tables in paper
-   - Use plots in presentations
-   - Reference summary statistics
-
-## Key Features
-
-- **Unified Analysis**: All evaluations perform captioning + diagnosis + localization in one pass
-- **Configuration-Driven**: Easy to experiment with different settings
-- **Paper-Ready**: Generates LaTeX tables and publication-quality plots
-- **Simplified Interface**: Only essential functionality, no complexity
-
-## Notes
-
-- Default model: `x-ai/grok-4.1-fast:free`
-- Results are saved with timestamps
-- Agentic mode uses smaller batch sizes for processing efficiency
-- All scripts handle errors gracefully and provide informative output
+eval_baseline/
+├── evaluation_metrics.json
+├── per_task_metrics.json
+└── detailed_analysis.json
+```

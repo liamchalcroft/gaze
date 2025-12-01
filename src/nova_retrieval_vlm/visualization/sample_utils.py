@@ -26,8 +26,8 @@ def visualize_samples(
     """
     print("Loading NOVA test split from Hugging Face...")
     ds = load_dataset(
-        "Ano-2090/Nova",
-        split="test",
+        "c-i-ber/Nova",
+        split="train",
         cache_dir=cache_dir,
         trust_remote_code=trust_remote_code,
     )
