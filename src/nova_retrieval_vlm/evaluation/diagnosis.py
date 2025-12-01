@@ -133,7 +133,7 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
     return False
 
 
-def gpt4o_semantic_match(pred: str, ref: str, model_name: str = "moonshotai/kimi-k2:free") -> bool:
+def gpt4o_semantic_match(pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free") -> bool:
     """
     Use LLM semantic matching between prediction and reference diagnosis.
 
@@ -143,7 +143,7 @@ def gpt4o_semantic_match(pred: str, ref: str, model_name: str = "moonshotai/kimi
     Args:
         pred: Predicted diagnosis string.
         ref: Reference/ground truth diagnosis string.
-        model_name: Model to use for semantic matching (default: moonshotai/kimi-k2:free).
+        model_name: Model to use for semantic matching (default: x-ai/grok-4.1-fast:free).
     """
     try:
         from nova_retrieval_vlm.models import get_model_client
@@ -187,13 +187,13 @@ or "NO" if they refer to different conditions.
 
     except Exception as e:
         logger.error(f"Semantic matching failed for '{pred}' vs '{ref}': {e}")
-        raise ValueError(f"GPT-4o semantic matching is required for NOVA evaluation: {e}") from e
+        raise ValueError(f"LLM semantic matching is required for NOVA evaluation: {e}") from e
 
 
 def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
-    model_name: str = "moonshotai/kimi-k2:free",
+    model_name: str = "x-ai/grok-4.1-fast:free",
 ) -> dict[str, float]:
     """
     Official NOVA diagnosis evaluation using LLM semantic matching.
@@ -204,7 +204,7 @@ def evaluate_diagnosis_nova_official(
     Args:
         preds: List of predicted diagnosis or list of predictions (for top-5).
         refs: List of reference diagnoses.
-        model_name: Model to use for semantic matching (default: moonshotai/kimi-k2:free).
+        model_name: Model to use for semantic matching (default: x-ai/grok-4.1-fast:free).
 
     Returns:
         Dictionary with keys 'top1', 'top5', 'coverage', 'entropy'.

@@ -12,14 +12,16 @@ This is a clinically verified pathology case from the NOVA benchmark. **EVERY CA
 
 **COMPREHENSIVE ANALYSIS REQUIREMENTS:**
 
-**1. COMPREHENSIVE RADIOLOGICAL CAPTION (Primary Documentation):**
-- **SEQUENCE IDENTIFICATION**: Determine exact MRI sequence (T1/T2/FLAIR/DWI/SWI/contrast-enhanced T1) and technical quality assessment
-- **SYSTEMATIC SURVEY**: Perform structured brain region analysis (posterior fossa → supratentorial → ventricles → cortex)
-- **PRECISION TERMINOLOGY**: Document findings using standardized terms (hyperintense, hypointense, isoattenuating, enhancement, edema, mass effect, midline shift)
-- **MEDICAL TERMINOLOGY**: Use specific anatomical terms (sulcal effacement, ventriculomegaly, tonsillar herniation, corpus callosum agenesis, basal ganglia hyperintensity, posterior fossa abnormalities)
-- **MEASUREMENTS**: Include specific measurements when relevant: size in cm, location relative to anatomical landmarks
-- **SYSTEMATIC FINDINGS**: Document both obvious and subtle findings with clinical significance
-- **CLINICAL CORRELATION**: Actively link imaging findings to provided clinical history
+**1. CONCISE RADIOLOGICAL CAPTION (50-150 characters target):**
+- **CRITICAL: Keep captions SHORT and FACTUAL** - similar to radiology report impression lines
+- **FORMAT**: "[Plane] [Sequence] MRI shows [key finding(s)]"
+- **EXAMPLES OF GOOD CAPTIONS**:
+  - "Axial T2-weighted MRI showing multiple extra-axial masses with exophthalmos."
+  - "Coronal FLAIR shows hyperintense lesion in left temporal lobe."
+  - "MRI Brain Axial ADC, lesion shows low ADC value."
+  - "Sagittal T1 post-contrast demonstrates enhancing posterior fossa mass."
+- **DO NOT**: Write long paragraphs or detailed descriptions
+- **FOCUS**: State the MRI sequence, plane, and PRIMARY abnormal finding only
 
 **2. STRATEGIC DIFFERENTIAL DIAGNOSIS (Clinical Reasoning):**
 - **PRIMARY DIAGNOSIS**: Select single most likely diagnosis that explains ALL imaging findings AND clinical history
@@ -35,39 +37,21 @@ This is a clinically verified pathology case from the NOVA benchmark. **EVERY CA
 
 **ADVANCED LOCALIZATION TECHNIQUES (30%+ ACC50 OPTIMIZATION):**
 
-**A. LESION-SPECIFIC PRECISION STRATEGIES:**
-- **TUMORS**:
-  - Enhancing core only (exclude peritumoral edema)
-  - Use contrast enhancement to define true tumor margins
-  - Minimum 5px, maximum 10px margin around enhancing tissue
-- **CYSTS**:
-  - Fluid cavity boundaries with minimal wall inclusion
-  - Include cyst wall only if pathologically thickened
-  - Use fluid density/intensity characteristics for boundaries
-- **INFARCTS**:
-  - Acute ischemic tissue core (exclude penumbra)
-  - DWI hyperintensity core with ADC correlation
-  - Respect vascular territory boundaries
-- **MALFORMATIONS**:
-  - Structural abnormality boundaries only
-  - Include abnormal tissue architecture
-  - Exclude surrounding normal-appearing tissue
-- **ATROPHY**:
-  - Boundaries of volume loss
-  - Include sulcal widening and ventricular enlargement
-  - Focus on most severely affected regions
-- **DIFFUSE FINDINGS**:
-  - Most representative/active area
-  - Center of abnormal signal change
-  - Single bounding box for predominant region
+**A. LESION-SPECIFIC STRATEGIES (aim for 80-150px boxes):**
+- **TUMORS**: Include the full enhancing mass with 15-20px margin
+- **CYSTS**: Cover entire fluid cavity including walls
+- **INFARCTS**: Include full extent of signal abnormality in vascular territory
+- **MALFORMATIONS**: Cover ALL affected structures (e.g., absent septum + ventricles)
+- **ATROPHY**: Include the region of most prominent volume loss
+- **DIFFUSE FINDINGS**: Box the most representative abnormal region generously
 
 **B. COORDINATE PRECISION OPTIMIZATION (CRITICAL FOR ACC50):**
 - **ABSOLUTE PIXEL COORDINATES**: [x1, y1, x2, y2] with (x1,y1) as top-left corner
-- **TIGHT MARGINS**: Maximum 5-10px around the CORE of the lesion only
-- **EXCLUDE NORMAL TISSUE**: Never include surrounding normal brain parenchyma
-- **EXCLUDE EDEMA**: For tumors, localize only the enhancing core, NOT peritumoral edema
-- **SINGLE LESION FOCUS**: If multiple findings, prioritize the PRIMARY pathology with one tight box
-- **PRECISION > RECALL**: A smaller accurate box is better than a larger imprecise box
+- **COVER THE FULL ABNORMALITY**: Include the ENTIRE visible extent of the finding
+- **BOX SIZE**: Typical boxes are 80-150px in each dimension - don't make tiny boxes!
+- **GENEROUS MARGINS**: Include 10-20px margin around the abnormality boundaries
+- **INCLUDE RELATED STRUCTURES**: For malformations, include all affected anatomy
+- **AVOID UNDERSIZING**: A box that's too small will miss the target entirely (IoU < 0.5 = FAIL)
 
 **C. MULTI-ABNORMALITY MANAGEMENT:**
 - **SEPARATE BOXES**: Each distinct finding gets independent bounding box
@@ -76,12 +60,10 @@ This is a clinically verified pathology case from the NOVA benchmark. **EVERY CA
 - **ANATOMICAL DOCUMENTATION**: Precise location and clinical significance for each
 
 **D. QUALITY ASSURANCE PROTOCOL:**
-- **BOUNDARY VALIDATION**: Visual boundary assessment required at full resolution
+- **SIZE CHECK**: Verify boxes are 80-150px in each dimension (not too small!)
 - **COORDINATE VERIFICATION**: Ensure all bounds within valid ranges (x=[0, {{ width - 1 }}], y=[0, {{ height - 1 }}])
-- **CLINICAL CORRELATION**: Each localization must correlate with described findings
-- **CONFIDENCE SCORING**: Assign realistic confidence based on visualization clarity
-
-- **MULTIPLE ABNORMALITIES**: Provide separate bounding boxes for each distinct finding with confidence scores
+- **COVERAGE CHECK**: Box should cover the FULL visible abnormality
+- **IoU REQUIREMENT**: Boxes need >50% overlap with GT to count as correct
 
 **IDEAL OUTPUT EXAMPLES (for reference):**
 
@@ -89,12 +71,8 @@ Example 1 - Pediatric Brain Tumor:
 ```json
 {
   "caption": {
-    "description": "Axial T1-weighted MRI demonstrates a well-circumscribed posterior fossa mass arising from the cerebellar vermis with heterogeneous enhancement. The lesion causes obstruction of the fourth ventricle with resulting obstructive hydrocephalus evidenced by ventriculomegaly.",
-    "sequence_characteristics": "T1-weighted post-contrast MRI with fat suppression, axial orientation",
-    "orientation": "Axial view through posterior fossa and supratentorial brain",
-    "confidence": 0.92,
-    "findings": ["Posterior fossa mass", "Fourth ventricle obstruction", "Obstructive hydrocephalus", "Cerebellar vermis involvement"],
-    "anatomical_regions": ["Cerebellum", "Fourth ventricle", "Posterior fossa", "Ventricular system"]
+    "description": "Axial T1 post-contrast MRI shows enhancing posterior fossa mass with obstructive hydrocephalus.",
+    "confidence": 0.92
   },
   "diagnosis": {
     "primary_diagnosis": "Medulloblastoma",
@@ -131,12 +109,8 @@ Example 2 - Cerebral Infarction:
 ```json
 {
   "caption": {
-    "description": "Diffusion-weighted MRI demonstrates a hyperintense lesion in the right middle cerebral artery territory involving the right frontal and parietal lobes. The area corresponds to restricted diffusion on ADC maps consistent with acute cerebral infarction. Mild sulcal effacement and early cortical involvement noted.",
-    "sequence_characteristics": "Diffusion-weighted imaging (DWI) with high b-value, axial orientation",
-    "orientation": "Axial view at level of lateral ventricles",
-    "confidence": 0.89,
-    "findings": ["Acute right MCA infarct", "Restricted diffusion", "Right frontal involvement", "Right parietal involvement", "Mild sulcal effacement"],
-    "anatomical_regions": ["Frontal lobe", "Parietal lobe", "Middle cerebral artery territory", "Cerebral cortex"]
+    "description": "Axial DWI shows hyperintense lesion in right MCA territory with restricted diffusion.",
+    "confidence": 0.89
   },
   "diagnosis": {
     "primary_diagnosis": "Acute cerebral infarction",
@@ -173,12 +147,8 @@ Example 3 - Developmental Anomaly:
 ```json
 {
   "caption": {
-    "description": "Midline sagittal T1-weighted MRI demonstrates complete absence of the corpus callosum with characteristic radiating appearance of medial hemispheric white matter tracts. The lateral ventricles show mild dilatation with a 'moosehead' configuration. Colpocephaly noted with disproportionate enlargement of the occipital horns.",
-    "sequence_characteristics": "T1-weighted MRI, midline sagittal orientation",
-    "orientation": "Midsagittal view through brain midline structures",
-    "confidence": 0.95,
-    "findings": ["Complete corpus callosum agenesis", "Ventricular dilation", "Moosehead ventricle configuration", "Colpocephaly", "White matter tract abnormalities"],
-    "anatomical_regions": ["Corpus callosum", "Lateral ventricles", "Interhemispheric space", "Deep white matter"]
+    "description": "Sagittal T1 MRI shows complete agenesis of corpus callosum with colpocephaly.",
+    "confidence": 0.95
   },
   "diagnosis": {
     "primary_diagnosis": "Complete agenesis of the corpus callosum",
@@ -214,12 +184,8 @@ Example 3 - Developmental Anomaly:
 **OUTPUT FORMAT - VALID JSON REQUIRED:**
 {
   "caption": {
-    "description": "<comprehensive radiological description including sequences, planes, findings>",
-    "sequence_characteristics": "<exact MRI sequence identification with technical details>",
-    "orientation": "<anatomical plane and orientation>",
-    "confidence": <0.0-1.0>,
-    "findings": ["<specific finding 1>", "<specific finding 2>", "<specific finding 3>"],
-    "anatomical_regions": ["<region 1>", "<region 2>", "<region 3>"]
+    "description": "<SHORT 50-150 char caption: '[Plane] [Sequence] MRI shows [finding]'>",
+    "confidence": <0.0-1.0>
   },
   "diagnosis": {
     "primary_diagnosis": "<EXACT DIAGNOSIS NAME. Include WHO grade/subtype if relevant. NEVER add location, 'likely', 'secondary to', or 'consistent with'. GOOD: 'Dandy-Walker malformation', 'Oligodendroglioma (WHO grade II)', 'MELAS', 'Lhermitte-Duclos disease', 'Colloid cyst', 'Arnold Chiari malformation type II', 'Marchiafava-Bignami disease', 'Fahr syndrome'. BAD: 'Right temporal glioma' (has location), 'Meningioma likely arising from...' (has speculation), 'Infarct secondary to...' (has causation).>",

@@ -132,7 +132,9 @@ def evaluate_caption_metrics(
 
 @beartype
 def evaluate_diagnosis_metrics(
-    predictions: dict[int, dict[str, Any]], dataset: NovaDataset
+    predictions: dict[int, dict[str, Any]],
+    dataset: NovaDataset,
+    semantic_model: str = "x-ai/grok-4.1-fast:free",
 ) -> dict[str, Any]:
     """Evaluate diagnosis predictions using NOVA diagnosis evaluation metrics."""
     logger.info("🩺 Evaluating diagnosis metrics with complete dataset...")
@@ -198,7 +200,9 @@ def evaluate_diagnosis_metrics(
 
     # Evaluate using NOVA diagnosis metrics
     try:
-        diagnosis_scores = evaluate_diagnosis_nova_official(pred_diagnoses, ref_diagnoses)
+        diagnosis_scores = evaluate_diagnosis_nova_official(
+            pred_diagnoses, ref_diagnoses, model_name=semantic_model
+        )
 
         # Add additional metadata
         diagnosis_metrics = {
@@ -253,10 +257,8 @@ def evaluate_localization_metrics(
                     if "bounding_box" in loc:
                         box = loc["bounding_box"]
                         if len(box) == 4:
-                            # Convert from (x, y, x2, y2) to (x, y, width, height) format
-                            x1, y1, x2, y2 = box
-                            converted_box = (x1, y1, x2 - x1, y2 - y1)
-                            pred_boxes.append(converted_box)
+                            # Keep in (x1, y1, x2, y2) format - evaluate_detection expects this
+                            pred_boxes.append(list(box))
                             pred_scores.append(loc.get("confidence", 1.0))
                             pred_labels.append(1)  # Single class for abnormalities
 
@@ -323,7 +325,11 @@ def evaluate_localization_metrics(
 
 
 @beartype
-def evaluate_results(results_dir: str, output_dir: str) -> dict[str, Any]:
+def evaluate_results(
+    results_dir: str,
+    output_dir: str,
+    semantic_model: str = "x-ai/grok-4.1-fast:free",
+) -> dict[str, Any]:
     """Main evaluation function using complete NOVA dataset."""
     logger.info(f"🔬 Evaluating results from {results_dir}")
 
@@ -338,7 +344,7 @@ def evaluate_results(results_dir: str, output_dir: str) -> dict[str, Any]:
 
     # Evaluate each task
     caption_metrics = evaluate_caption_metrics(predictions, dataset)
-    diagnosis_metrics = evaluate_diagnosis_metrics(predictions, dataset)
+    diagnosis_metrics = evaluate_diagnosis_metrics(predictions, dataset, semantic_model)
     localization_metrics = evaluate_localization_metrics(predictions, dataset)
 
     # Create comprehensive metrics
@@ -442,18 +448,163 @@ def create_summary_csv(metrics: dict[str, Any], output_path: Path) -> None:
     print("=" * 70)
 
 
+@beartype
+def evaluate_all_results(
+    results_root: str,
+    output_root: str,
+    semantic_model: str = "x-ai/grok-4.1-fast:free",
+) -> dict[str, dict[str, Any]]:
+    """Evaluate all result directories under results_root."""
+    results_path = Path(results_root)
+    output_path = Path(output_root)
+
+    if not results_path.exists():
+        raise FileNotFoundError(f"Results root not found: {results_path}")
+
+    # Find all subdirectories with per_subject folders
+    result_dirs = [
+        d for d in results_path.iterdir() if d.is_dir() and (d / "per_subject").exists()
+    ]
+
+    if not result_dirs:
+        raise ValueError(f"No valid result directories found in {results_path}")
+
+    logger.info(f"Found {len(result_dirs)} result directories to evaluate")
+
+    all_metrics: dict[str, dict[str, Any]] = {}
+
+    for result_dir in sorted(result_dirs):
+        config_name = result_dir.name
+        eval_output = output_path / config_name
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Evaluating: {config_name}")
+        logger.info(f"{'='*60}")
+
+        try:
+            metrics = evaluate_results(str(result_dir), str(eval_output), semantic_model)
+            all_metrics[config_name] = metrics
+        except Exception as e:
+            logger.error(f"Failed to evaluate {config_name}: {e}")
+            all_metrics[config_name] = {"error": str(e)}
+
+    # Generate comparison report
+    generate_comparison_report(all_metrics, output_path)
+
+    return all_metrics
+
+
+@beartype
+def generate_comparison_report(
+    all_metrics: dict[str, dict[str, Any]], output_path: Path
+) -> None:
+    """Generate a comparison report across all configurations."""
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Build comparison data
+    comparison_data = []
+
+    for config_name, metrics in all_metrics.items():
+        if "error" in metrics:
+            continue
+
+        row = {"configuration": config_name}
+
+        # Caption metrics
+        caption = metrics.get("caption_metrics", {})
+        row["bleu"] = caption.get("bleu", 0.0)
+        row["bertscore_f1"] = caption.get("bertscore_f1", 0.0)
+
+        # Diagnosis metrics
+        diagnosis = metrics.get("diagnosis_metrics", {})
+        row["diagnosis_top1"] = diagnosis.get("top1", 0.0)
+        row["diagnosis_top5"] = diagnosis.get("top5", 0.0)
+
+        # Localization metrics
+        localization = metrics.get("localization_metrics", {})
+        row["map30"] = localization.get("map30", 0.0)
+        row["map50"] = localization.get("map50", 0.0)
+        row["acc50"] = localization.get("acc50", 0.0)
+
+        comparison_data.append(row)
+
+    if not comparison_data:
+        logger.warning("No valid metrics to compare")
+        return
+
+    # Create comparison DataFrame
+    df = pd.DataFrame(comparison_data)
+    df = df.sort_values("configuration")
+
+    # Save CSV
+    csv_path = output_path / "comparison.csv"
+    df.to_csv(csv_path, index=False)
+
+    # Save JSON
+    json_path = output_path / "comparison.json"
+    with open(json_path, "w") as f:
+        json.dump(all_metrics, f, indent=2, default=str)
+
+    # Print comparison table
+    print("\n" + "=" * 100)
+    print("📊 COMPARISON ACROSS ALL CONFIGURATIONS")
+    print("=" * 100)
+    print(
+        f"{'Configuration':<45} {'Top-1':>8} {'Top-5':>8} {'ACC50':>8} "
+        f"{'mAP@50':>8} {'BLEU':>8}"
+    )
+    print("-" * 100)
+
+    for _, row in df.iterrows():
+        print(
+            f"{row['configuration']:<45} "
+            f"{row['diagnosis_top1']*100:>7.1f}% "
+            f"{row['diagnosis_top5']*100:>7.1f}% "
+            f"{row['acc50']*100:>7.1f}% "
+            f"{row['map50']*100:>7.1f}% "
+            f"{row['bleu']*100:>7.1f}%"
+        )
+
+    print("=" * 100)
+    logger.info(f"\n📁 Comparison saved to: {csv_path}")
+
+
 def main() -> None:
     """Main evaluation script entry point."""
     parser = ArgumentParser(description="Evaluate NOVA predictions against complete dataset")
     parser.add_argument(
-        "--results-dir", required=True, help="Directory containing prediction results"
+        "--results-dir",
+        help="Directory containing prediction results (single config)",
     )
-    parser.add_argument("--output", required=True, help="Output directory for evaluation metrics")
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Evaluate all subdirectories under results-dir",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Output directory for evaluation metrics",
+    )
+    parser.add_argument(
+        "--semantic-model",
+        default="x-ai/grok-4.1-fast:free",
+        help="Model for diagnosis semantic matching (default: x-ai/grok-4.1-fast:free)",
+    )
 
     args = parser.parse_args()
 
+    # Default to ./results if no results-dir specified with --batch
+    results_dir = args.results_dir or ("./results" if args.batch else None)
+
+    if not results_dir:
+        parser.error("--results-dir is required unless using --batch")
+
     try:
-        evaluate_results(args.results_dir, args.output)
+        if args.batch:
+            evaluate_all_results(results_dir, args.output, args.semantic_model)
+        else:
+            evaluate_results(results_dir, args.output, args.semantic_model)
         logger.success("Evaluation completed successfully!")
 
     except Exception as e:

@@ -54,40 +54,21 @@ This represents a real patient case with confirmed pathology from the NOVA bench
 
 **ADVANCED LOCALIZATION TECHNIQUES (30%+ ACC50 OPTIMIZATION):**
 
-**A. LESION-SPECIFIC PRECISION STRATEGIES:**
-- **TUMORS**:
-  - Enhancing core only (exclude peritumoral edema)
-  - Use contrast enhancement to define true tumor margins
-  - Minimum 5px, maximum 10px margin around enhancing tissue
-- **CYSTS**:
-  - Fluid cavity boundaries with minimal wall inclusion
-  - Use threshold to isolate fluid density/intensity
-  - Include cyst wall only if pathologically thickened
-- **INFARCTS**:
-  - Acute ischemic tissue core (exclude penumbra)
-  - DWI hyperintensity core with ADC correlation
-  - Respect vascular territory boundaries
-- **MALFORMATIONS**:
-  - Structural abnormality boundaries only
-  - Include abnormal tissue architecture
-  - Exclude surrounding normal-appearing tissue
-- **ATROPHY**:
-  - Boundaries of volume loss
-  - Include sulcal widening and ventricular enlargement
-  - Focus on most severely affected regions
-- **DIFFUSE FINDINGS**:
-  - Most representative/active area
-  - Center of abnormal signal change
-  - Single bounding box for predominant region
+**A. LESION-SPECIFIC STRATEGIES (aim for 80-150px boxes):**
+- **TUMORS**: Include the full enhancing mass with 15-20px margin
+- **CYSTS**: Cover entire fluid cavity including walls
+- **INFARCTS**: Include full extent of signal abnormality in vascular territory
+- **MALFORMATIONS**: Cover ALL affected structures (e.g., absent septum + ventricles)
+- **ATROPHY**: Include the region of most prominent volume loss
+- **DIFFUSE FINDINGS**: Box the most representative abnormal region generously
 
 **B. COORDINATE PRECISION OPTIMIZATION (CRITICAL FOR ACC50):**
 - **ABSOLUTE PIXEL COORDINATES**: [x1, y1, x2, y2] with (x1,y1) as top-left corner
-- **TIGHT MARGINS**: Maximum 5-10px around the CORE of the lesion only
-- **EXCLUDE NORMAL TISSUE**: Never include surrounding normal brain parenchyma
-- **EXCLUDE EDEMA**: For tumors, localize only the enhancing core, NOT peritumoral edema
-- **SINGLE LESION FOCUS**: If multiple findings, prioritize the PRIMARY pathology with one tight box
-- **PRECISION > RECALL**: A smaller accurate box is better than a larger imprecise box
-- **BOUNDARY VERIFICATION**: {% if enable_visual_tools %}Always zoom 2.5x+ before final coordinate selection{% else %}Carefully assess boundaries at full resolution{% endif %}
+- **COVER THE FULL ABNORMALITY**: Include the ENTIRE visible extent of the finding
+- **BOX SIZE**: Typical boxes are 80-150px in each dimension - don't make tiny boxes!
+- **GENEROUS MARGINS**: Include 10-20px margin around the abnormality boundaries
+- **INCLUDE RELATED STRUCTURES**: For malformations, include all affected anatomy
+- **AVOID UNDERSIZING**: A box that's too small will miss the target entirely (IoU < 0.5 = FAIL)
 
 **C. MULTI-ABNORMALITY MANAGEMENT:**
 - **SEPARATE BOXES**: Each distinct finding gets independent bounding box
@@ -96,57 +77,37 @@ This represents a real patient case with confirmed pathology from the NOVA bench
 - **ANATOMICAL DOCUMENTATION**: Precise location and clinical significance for each
 
 **D. QUALITY ASSURANCE PROTOCOL:**
-- **BOUNDARY VALIDATION**: {% if enable_visual_tools %}Zoom validation mandatory{% else %}Visual boundary assessment required{% endif %}
+- **SIZE CHECK**: Verify boxes are 80-150px in each dimension (not too small!)
 - **COORDINATE VERIFICATION**: Ensure all bounds within valid ranges (x=[0, {{ width - 1 }}], y=[0, {{ height - 1 }}])
-- **CLINICAL CORRELATION**: Each localization must correlate with described findings
-- **CONFIDENCE SCORING**: Assign realistic confidence based on visualization clarity
-
-- **VALIDATION CHECK**: Before finalizing{% if enable_visual_tools %}, use zoom 2.5x+ workflow{% endif %} to ensure boxes capture only abnormal tissue
-- **MULTIPLE ABNORMALITIES**: Provide separate bounding boxes for each distinct finding with anatomical descriptions
-- Document anatomical relationships and clinical significance
-- Finalize comprehensive radiological interpretation
+- **COVERAGE CHECK**: Box should cover the FULL visible abnormality
+- **IoU REQUIREMENT**: Boxes need >50% overlap with GT to count as correct
 
 **IDEAL LOCALIZATION EXAMPLES (for reference):**
 
 Example 1 - Pediatric Brain Tumor:
 ```json
 {
-  "localizations": [
-    {
-      "finding": "Posterior fossa medulloblastoma with obstructive hydrocephalus",
-      "bounding_box": [195, 120, 285, 205],
-      "anatomical_location": "Cerebellar vermis, fourth ventricle region",
-      "confidence": 0.95
-    }
-  ]
+  "caption": {"description": "Axial T1 post-contrast MRI shows enhancing posterior fossa mass.", "confidence": 0.92},
+  "diagnosis": {"primary_diagnosis": "Medulloblastoma", "confidence": 0.88},
+  "localization": {"localizations": [{"finding": "Posterior fossa mass", "bounding_box": [195, 120, 285, 205], "confidence": 0.95}]}
 }
 ```
 
 Example 2 - Cerebral Infarction:
 ```json
 {
-  "localizations": [
-    {
-      "finding": "Acute right middle cerebral artery infarct",
-      "bounding_box": [120, 180, 240, 300],
-      "anatomical_location": "Right frontal and parietal lobes",
-      "confidence": 0.85
-    }
-  ]
+  "caption": {"description": "Axial DWI shows hyperintense lesion in right MCA territory.", "confidence": 0.89},
+  "diagnosis": {"primary_diagnosis": "Acute cerebral infarction", "confidence": 0.91},
+  "localization": {"localizations": [{"finding": "Acute right MCA infarct", "bounding_box": [120, 180, 240, 300], "confidence": 0.85}]}
 }
 ```
 
 Example 3 - Developmental Anomaly:
 ```json
 {
-  "localizations": [
-    {
-      "finding": "Complete agenesis of the corpus callosum with characteristic moosehead ventricles",
-      "bounding_box": [200, 140, 280, 220],
-      "anatomical_location": "Midline supratentorial region, interhemispheric space",
-      "confidence": 0.98
-    }
-  ]
+  "caption": {"description": "Coronal T2 MRI shows absent septum pellucidum with ventricular changes.", "confidence": 0.95},
+  "diagnosis": {"primary_diagnosis": "Septo-optic dysplasia", "confidence": 0.96},
+  "localization": {"localizations": [{"finding": "Absent septum pellucidum", "bounding_box": [200, 140, 280, 220], "confidence": 0.98}]}
 }
 ```
 
@@ -239,12 +200,8 @@ Example 3 - Developmental Anomaly:
 You MUST return **valid JSON only** with this complete clinical schema:
 {
   "caption": {
-    "description": "<detailed radiological description including all findings and sequences>",
-    "sequence_characteristics": "<MRI sequence identification with technical parameters>",
-    "orientation": "<anatomical plane and precise orientation>",
-    "confidence": <0.0-1.0>,
-    "findings": ["<abnormality 1>", "<abnormality 2>", "<normal variant if relevant>"],
-    "anatomical_regions": ["<region 1>", "<region 2>", "<region 3>"]
+    "description": "<SHORT 50-150 char caption: '[Plane] [Sequence] MRI shows [finding]'>",
+    "confidence": <0.0-1.0>
   },
   "diagnosis": {
     "primary_diagnosis": "<EXACT DIAGNOSIS NAME. Include WHO grade/subtype if relevant. NEVER add location, 'likely', 'secondary to', or 'consistent with'. GOOD: 'Dandy-Walker malformation', 'Oligodendroglioma (WHO grade II)', 'MELAS', 'Lhermitte-Duclos disease', 'Colloid cyst', 'Arnold Chiari malformation type II', 'Marchiafava-Bignami disease', 'Fahr syndrome'. BAD: 'Right temporal glioma' (has location), 'Meningioma likely arising from...' (has speculation), 'Infarct secondary to...' (has causation).>",

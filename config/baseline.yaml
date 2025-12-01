@@ -13,7 +13,7 @@ model:
 
 # Processing configuration
 batch_size: 2
-max_iterations: 3  # Process all batches
+max_iterations: 15  # Process all batches
 request_delay: 3.0
 skip_existing: false
 

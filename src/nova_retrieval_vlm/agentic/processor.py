@@ -69,7 +69,7 @@ class AgenticProcessor:
     - Structured JSON output for caption, diagnosis, localization
     """
 
-    MAX_TURNS = 5
+    MAX_TURNS = 20
     CONFIDENCE_THRESHOLD = 0.7
 
     def __init__(
@@ -199,8 +199,9 @@ class AgenticProcessor:
             # Get tool schemas for this turn
             tool_schemas = tool_registry.get_tool_schemas() if self.use_tools else None
 
-            # Use structured outputs for consistent JSON parsing
-            response_format = NOVA_UNIFIED_SCHEMA
+            # IMPORTANT: Can't use both tools and response_format simultaneously
+            # Use structured output only when NOT using tools
+            response_format = None if tool_schemas else NOVA_UNIFIED_SCHEMA
 
             # Generate response with tool calling support
             response_text, tool_calls, gen_log = await self._model_adapter.generate_chat(
@@ -208,7 +209,7 @@ class AgenticProcessor:
                 max_tokens=8192,
                 temperature=0.0,
                 tools=tool_schemas,
-                response_format=response_format,  # Use structured outputs when no tools
+                response_format=response_format,
             )
 
             total_tokens += gen_log.tokens if gen_log else 0
@@ -221,25 +222,36 @@ class AgenticProcessor:
             )
             turns.append(turn)
 
-            # Add assistant message to conversation for next turn
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": response_text,
-                }
-            )
+            # Add assistant message to conversation - MUST include tool_calls if present
+            assistant_message: dict[str, Any] = {"role": "assistant"}
+            if response_text:
+                assistant_message["content"] = response_text
+            if tool_calls:
+                # Format tool calls for OpenAI API format
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": tc.get("id", f"call_{i}"),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name", ""),
+                            "arguments": tc.get("arguments", "{}"),
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ]
+            messages.append(assistant_message)
 
             # Check if model wants to use tools
             if tool_calls and self.use_tools and turn_idx < self.max_turns - 1:
                 logger.info(f"Model requested {len(tool_calls)} tool calls")
 
-                # Execute tools
+                # Execute tools and collect results
                 tool_results = []
                 for tool_call in tool_calls:
                     tool_name = tool_call.get("name", "")
                     tool_args_str = tool_call.get("arguments", "{}")
 
-                    # Parse arguments from string (json imported at top of file)
+                    # Parse arguments from string
                     tool_args = {}
                     if isinstance(tool_args_str, str):
                         try:
@@ -250,48 +262,51 @@ class AgenticProcessor:
                         tool_args = tool_args_str
 
                     logger.debug(f"Executing tool: {tool_name} with args: {tool_args}")
-                    result = tool_registry.execute(tool_name, **tool_args)
+                    result = await tool_registry.execute(tool_name, **tool_args)
                     tool_results.append(result)
 
-                # Add tool results to conversation
+                # Add tool results to conversation with proper format
                 for i, result in enumerate(tool_results):
-                    tool_content = f"Tool {result.tool_name}: {result.description}"
-                    if result.error:
-                        tool_content += f" Error: {result.error}"
+                    tool_call_id = tool_calls[i].get("id", f"call_{i}")
+
+                    # Build tool result content - include image if produced
+                    if result.image_base64:
+                        # For tools that produce images, include image in result
+                        tool_content: str | list[dict[str, Any]] = [
+                            {
+                                "type": "text",
+                                "text": f"{result.description}",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{result.image_base64}"
+                                },
+                            },
+                        ]
+                    else:
+                        # Text-only result (e.g., web search)
+                        tool_content = result.description
+                        if result.error:
+                            tool_content = f"{tool_content}\nError: {result.error}"
+                        if result.metadata.get("formatted_results"):
+                            tool_content = f"{tool_content}\n{result.metadata['formatted_results']}"
 
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_calls[i].get("id", f"tool_{len(messages)}"),
+                            "tool_call_id": tool_call_id,
                             "content": tool_content,
                         }
                     )
 
-                # Create tool result turn
+                # Create tool result turn for logging
                 tool_turn = Turn(
                     role="tool_result",
                     content=self._format_tool_results(tool_results),
                     tool_results=tool_results,
                 )
                 turns.append(tool_turn)
-
-                # Update image if tools produced a new one
-                if tool_results and any(r.image_base64 for r in tool_results):
-                    latest_image_result = next(r for r in tool_results if r.image_base64)
-                    # Update the image in conversation for next turn
-                    if (
-                        len(messages) > 1
-                        and isinstance(messages[1], dict)
-                        and "content" in messages[1]
-                        and isinstance(messages[1]["content"], list)
-                        and len(messages[1]["content"]) > 1
-                        and isinstance(messages[1]["content"][1], dict)
-                        and "image_url" in messages[1]["content"][1]
-                        and isinstance(messages[1]["content"][1]["image_url"], dict)
-                    ):
-                        messages[1]["content"][1]["image_url"]["url"] = (
-                            f"data:image/jpeg;base64,{latest_image_result.image_base64}"
-                        )
 
                 continue
 

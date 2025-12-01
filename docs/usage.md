@@ -183,7 +183,7 @@ retrieval:
 
 task: "diagnosis"
 use_retrieval: true
-max_iterations: 3
+max_iterations: 15
 ```
 
 Use with:

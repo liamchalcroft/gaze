@@ -7,6 +7,7 @@ flipping, rotation, and visual retrieval (planned).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from collections.abc import Callable
@@ -19,7 +20,7 @@ from beartype import beartype
 from loguru import logger
 from PIL import Image
 
-from nova_retrieval_vlm.retrieval.web_search import search_medical_literature_sync
+from nova_retrieval_vlm.retrieval.web_search import search_medical_literature
 from nova_retrieval_vlm.visual_reasoning.image_ops import adjust_contrast
 from nova_retrieval_vlm.visual_reasoning.image_ops import apply_intensity_threshold
 from nova_retrieval_vlm.visual_reasoning.image_ops import crop_image
@@ -232,9 +233,27 @@ class ToolRegistry:
 
     @beartype
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Get OpenAI-compatible tool schemas for all registered tools."""
+        """Get OpenAI-compatible tool schemas for all registered tools.
+
+        Returns schemas in OpenAI function calling format with strict mode support.
+        """
         schemas = []
         for tool in self._tools.values():
+            # Build parameter properties with proper types
+            properties = {}
+            for param_name, param_def in tool.parameters.items():
+                prop: dict[str, Any] = {"type": param_def.get("type", "string")}
+                if "description" in param_def:
+                    prop["description"] = param_def["description"]
+                if "enum" in param_def:
+                    prop["enum"] = param_def["enum"]
+                if "default" in param_def:
+                    prop["default"] = param_def["default"]
+                # Handle array types
+                if param_def.get("type") == "array" and "items" in param_def:
+                    prop["items"] = param_def["items"]
+                properties[param_name] = prop
+
             schema = {
                 "type": "function",
                 "function": {
@@ -242,8 +261,9 @@ class ToolRegistry:
                     "description": tool.description,
                     "parameters": {
                         "type": "object",
-                        "properties": tool.parameters,
+                        "properties": properties,
                         "required": list(tool.parameters.keys()),
+                        "additionalProperties": False,
                     },
                 },
             }
@@ -251,7 +271,7 @@ class ToolRegistry:
         return schemas
 
     @beartype
-    def execute(self, tool_name: str, **kwargs: Any) -> ToolResult:
+    async def execute(self, tool_name: str, **kwargs: Any) -> ToolResult:
         """Execute a tool by name with given arguments."""
         if tool_name not in self._tools:
             return ToolResult(
@@ -272,7 +292,11 @@ class ToolRegistry:
                 error="No image has been set for tool operations",
             )
 
-        result = self._tools[tool_name].execute(**kwargs)
+        tool_func = self._tools[tool_name].execute
+        if asyncio.iscoroutinefunction(tool_func):
+            result = await tool_func(**kwargs)
+        else:
+            result = tool_func(**kwargs)
         self._tool_history.append(result)
         return result
 
@@ -516,13 +540,13 @@ class ToolRegistry:
             metadata={"original_size": self._current_image.size},
         )
 
-    def _execute_search_web(self, query: str, search_type: str = "general") -> ToolResult:
+    async def _execute_search_web(self, query: str, search_type: str = "general") -> ToolResult:
         """Search PubMed for medical literature with enhanced reliability scoring."""
         try:
             logger.info(f"Searching PubMed for: '{query}' (type: {search_type})")
 
-            # Perform synchronous medical literature search
-            search_results = search_medical_literature_sync(
+            # Perform async medical literature search
+            search_results = await search_medical_literature(
                 query=query,
                 max_results=5,
                 search_type=search_type,

@@ -112,8 +112,18 @@ def run_inference(config_path: str | Path, output_dir: str | Path | None = None)
         f"model.max_tokens={config.get('model', {}).get('max_tokens', 4096)}",
         f"model.temperature={config.get('model', {}).get('temperature', 0.7)}",
         f"batch_size={config.get('batch_size', 4)}",
+        f"max_iterations={config.get('max_iterations', 50)}",
+        f"request_delay={config.get('request_delay', 3.0)}",
         f"skip_existing={str(config.get('skip_existing', False)).lower()}",
     ]
+
+    # Add visualization overrides
+    if "visualization" in config:
+        viz_config = config["visualization"]
+        for key, value in viz_config.items():
+            if key == "out_dir" and value is None:
+                continue  # Skip null out_dir
+            overrides.append(f"visualization.{key}={value}")
 
     # Add model-specific overrides
     for key, value in config.get("model", {}).items():
