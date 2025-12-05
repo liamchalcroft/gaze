@@ -6,6 +6,7 @@ import json
 from abc import ABC
 from abc import abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
 
 from beartype import beartype
@@ -16,11 +17,20 @@ from pydantic import Field
 from pydantic import field_validator
 
 from nova_retrieval_vlm.types import BatchData
+from nova_retrieval_vlm.types import CaptionMetrics
+from nova_retrieval_vlm.types import DetectionMetrics
+from nova_retrieval_vlm.types import DiagnosisMetrics
 from nova_retrieval_vlm.types import EvaluationMetrics
 from nova_retrieval_vlm.types import JSONParseError
 from nova_retrieval_vlm.types import MetadataDict
 from nova_retrieval_vlm.types import ModelResponse
 from nova_retrieval_vlm.types import parse_json_response
+
+if TYPE_CHECKING:
+    from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
+
+# Union type for all possible metrics return types
+TaskMetrics = EvaluationMetrics | CaptionMetrics | DetectionMetrics | DiagnosisMetrics
 
 
 class ProcessorConfig(BaseModel):
@@ -86,8 +96,6 @@ class BaseProcessor(ABC):
     def __init__(self, config: ProcessorConfig) -> None:
         self.config = config
         self.logger = logger.bind(task=config.task_name)
-        # Import here to avoid circular dependency, type annotation for clarity
-        from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
         self._adapter: OpenAIAdapter | None = None  # Lazy-initialized adapter
 
     @property
@@ -290,7 +298,7 @@ class BaseProcessor(ABC):
     @beartype
     def evaluate_responses(
         self, responses: list[ModelResponse], ground_truth: list[str]
-    ) -> EvaluationMetrics:
+    ) -> TaskMetrics:
         """Evaluate model responses against ground truth."""
         ...
 

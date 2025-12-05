@@ -42,7 +42,10 @@ class NovaDataset:
         self.transform = transform
 
         # Load HF dataset (images only)
-        self.hf_dataset = load_dataset("c-i-ber/Nova", split="train")
+        hf_ds = load_dataset("c-i-ber/Nova", split="train")
+        # With split parameter, load_dataset returns a Dataset, not a dict
+        assert isinstance(hf_ds, HFDataset), f"Expected Dataset, got {type(hf_ds).__name__}"
+        self.hf_dataset: HFDataset = hf_ds
 
         # Load CSV ground truth and metadata from explicit path
         gt_path = ground_truth_dir if ground_truth_dir else data_dir
@@ -53,16 +56,19 @@ class NovaDataset:
 
         logger.info(f"Loaded {len(self.hf_dataset)} samples from NOVA complete dataset")
 
-    def _create_hf_to_gt_mapping(self):
+    def _create_hf_to_gt_mapping(self) -> None:
         """Create mapping from HF dataset indices to ground truth samples."""
         # Use the checksums from HF dataset to map to ground truth
         checksums = self.hf_dataset.info.download_checksums
+        if checksums is None:
+            logger.warning("No download checksums available for mapping")
+            self.hf_to_gt_index: dict[int, int | None] = {}
+            return
 
         self.hf_to_gt_index = {}
         # Build O(1) lookup dict instead of using list.index() which is O(n)
-        gt_filename_to_idx = {
-            name: idx for idx, name in enumerate(self.ground_truth._ground_truth.keys())
-        }
+        gt_filenames = self.ground_truth.get_filenames()
+        gt_filename_to_idx = {name: idx for idx, name in enumerate(gt_filenames)}
 
         for hf_index, (filepath, _info) in enumerate(checksums.items()):
             filename = filepath.split("/")[-1]
@@ -130,7 +136,9 @@ class NovaDataset:
         # No ground truth available - fail explicitly
         raise KeyError(f"No ground truth found for HF index {idx}")
 
-    def get_dataloader(self, batch_size: int = 8, shuffle: bool = False) -> DataLoader:
+    def get_dataloader(
+        self, batch_size: int = 8, shuffle: bool = False
+    ) -> DataLoader[dict[str, Any]]:
         """Create a DataLoader for the complete dataset.
 
         Args:
@@ -168,7 +176,9 @@ class NovaDataset:
                 logger.debug(f"  {i + 1}: {loc}")
 
 
-def get_dataloader(batch_size: int, data_dir: str, use_transforms: bool = False) -> DataLoader:
+def get_dataloader(
+    batch_size: int, data_dir: str, use_transforms: bool = False
+) -> DataLoader[dict[str, Any]]:
     """Create a DataLoader for the NOVA dataset.
 
     Args:

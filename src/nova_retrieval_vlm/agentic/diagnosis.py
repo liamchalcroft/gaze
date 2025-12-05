@@ -163,7 +163,7 @@ class AgenticDiagnosisProcessor(BaseProcessor):
         )
 
         web_searches = sum(
-            1 for t in result.turns if any(tc["name"] == "search_web" for tc in t.tool_calls if "name" in tc)
+            1 for t in result.turns if any(tc.name == "search_web" for tc in t.tool_calls)
         )
         if web_searches > 0:
             logger.debug(f"  Web searches: {web_searches} performed")

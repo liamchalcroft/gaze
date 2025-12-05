@@ -45,7 +45,7 @@ class ParallelBatchProcessor:
 
     @beartype
     def process_batches_parallel(
-        self, batch_processor_func: Callable, batches: list[Any], **kwargs
+        self, batch_processor_func: Callable[..., Any], batches: list[Any], **kwargs: Any
     ) -> list[Any]:
         """
         Process multiple batches in parallel.
@@ -116,8 +116,8 @@ class ParallelBatchProcessor:
 
 @beartype
 def parallel_batch_wrapper(
-    original_process_func: Callable, parallel_config: dict[str, Any] | None = None
-) -> Callable:
+    original_process_func: Callable[..., Any], parallel_config: dict[str, Any] | None = None
+) -> Callable[..., Any]:
     """
     Decorator to add parallel processing to existing batch processing functions.
 

@@ -227,8 +227,9 @@ class OpenISearchEngine(ImageSearchEngine):
                 )
                 results.append(result)
 
-            except (KeyError, TypeError) as e:
-                logger.warning(f"Failed to parse Open-i result: {e}")
+            except KeyError as e:
+                # Missing expected field in API response - skip this result
+                logger.debug(f"Skipping Open-i result with missing field: {e}")
                 continue
 
         return results
@@ -307,6 +308,7 @@ class MedicalImageSearchManager:
         timeout: int = 30,
         cache_duration: int = 300,
         download_dir: Path | None = None,
+        rate_limit_delay: float = 0.5,  # seconds between engine calls
     ):
         """
         Initialize medical image search manager.
@@ -317,9 +319,11 @@ class MedicalImageSearchManager:
             timeout: Request timeout in seconds
             cache_duration: Cache duration in seconds
             download_dir: Directory for downloaded images (default: temp dir)
+            rate_limit_delay: Delay between search engine calls in seconds
         """
         self.max_results_per_engine = max_results_per_engine
         self.cache_duration = cache_duration
+        self.rate_limit_delay = rate_limit_delay
         self._cache: dict[str, tuple[float, list[ImageSearchResult]]] = {}
         self.download_dir = download_dir or Path(tempfile.gettempdir()) / "nova_images"
         self.download_dir.mkdir(parents=True, exist_ok=True)
@@ -328,11 +332,15 @@ class MedicalImageSearchManager:
         self.engines: list[ImageSearchEngine] = []
         engines = engines or ["openi"]
 
+        supported_engines = {"openi"}
         for engine in engines:
             if engine == "openi":
                 self.engines.append(OpenISearchEngine(timeout=timeout))
-            else:
-                logger.warning(f"Unknown image search engine: {engine}")
+            elif engine not in supported_engines:
+                raise ValueError(
+                    f"Unknown image search engine: '{engine}'. "
+                    f"Supported engines: {', '.join(sorted(supported_engines))}"
+                )
 
         if not self.engines:
             raise ValueError("No valid image search engines configured")
@@ -416,11 +424,13 @@ class MedicalImageSearchManager:
         all_results: list[ImageSearchResult] = []
         errors: list[ImageSearchError] = []
 
-        for engine in self.engines:
+        for i, engine in enumerate(self.engines):
             try:
                 results = await engine.search(enhanced_query, self.max_results_per_engine)
                 all_results.extend(results)
-                await asyncio.sleep(0.5)  # Rate limiting
+                # Rate limit between engines (skip after last engine)
+                if i < len(self.engines) - 1:
+                    await asyncio.sleep(self.rate_limit_delay)
             except ImageSearchError as e:
                 errors.append(e)
                 logger.error(f"Image search engine {engine.name} failed: {e}")
@@ -467,17 +477,19 @@ class MedicalImageSearchManager:
         Returns:
             Path to downloaded image, or None if download failed
         """
+        # Try to get extension from URL first
+        extension = self._get_extension_from_url(result.image_url)
+
         # Create filename from URL hash (md5 is fine for caching, not security)
         # Use 20 chars for lower collision probability in large image collections
         url_hash = hashlib.md5(result.image_url.encode(), usedforsecurity=False).hexdigest()[:20]
-        extension = self._get_extension(result.image_url)
-        filename = f"{url_hash}{extension}"
-        filepath = self.download_dir / filename
 
-        # Check if already downloaded
-        if filepath.exists():
-            logger.debug(f"Image already cached: {filepath}")
-            return filepath
+        # If we got extension from URL, check cache first
+        if extension:
+            filepath = self.download_dir / f"{url_hash}{extension}"
+            if filepath.exists():
+                logger.debug(f"Image already cached: {filepath}")
+                return filepath
 
         # Download image
         try:
@@ -492,13 +504,24 @@ class MedicalImageSearchManager:
                     logger.warning(f"Failed to download image: HTTP {response.status}")
                     return None
 
-                content = await response.read()
-
                 # Validate it's actually an image
                 content_type = response.headers.get("Content-Type", "")
                 if not content_type.startswith("image/"):
                     logger.warning(f"Response is not an image: {content_type}")
                     return None
+
+                content = await response.read()
+
+                # Get extension from content-type if not determined from URL
+                if extension is None:
+                    extension = self._get_extension_from_content_type(content_type)
+
+                filepath = self.download_dir / f"{url_hash}{extension}"
+
+                # Check cache again (might have been downloaded while we were fetching)
+                if filepath.exists():
+                    logger.debug(f"Image already cached: {filepath}")
+                    return filepath
 
                 # Save to disk
                 filepath.write_bytes(content)
@@ -509,13 +532,26 @@ class MedicalImageSearchManager:
             logger.error(f"Failed to download image: {e}")
             return None
 
-    def _get_extension(self, url: str) -> str:
-        """Get file extension from URL."""
+    def _get_extension_from_url(self, url: str) -> str | None:
+        """Get file extension from URL, or None if not determinable."""
         url_lower = url.lower()
         for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
             if ext in url_lower:
                 return ext
-        return ".jpg"  # Default
+        return None
+
+    def _get_extension_from_content_type(self, content_type: str) -> str:
+        """Get file extension from HTTP Content-Type header."""
+        content_type_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/bmp": ".bmp",
+            "image/webp": ".webp",
+        }
+        # Extract main type (ignore parameters like charset)
+        main_type = content_type.split(";")[0].strip().lower()
+        return content_type_map.get(main_type, ".jpg")
 
     def format_for_llm(self, results: list[ImageSearchResult]) -> str:
         """Format results for LLM consumption."""

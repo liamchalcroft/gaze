@@ -52,7 +52,7 @@ class BatchContext:  # noqa: D101 – simple data container
 # ---------------------------------------------------------------------------
 
 
-def normalize_localization_result(result: dict) -> None:
+def normalize_localization_result(result: dict[str, Any]) -> None:
     """Normalize localization result to standard format with boxes/labels/scores keys.
 
     Handles conversion from model output format (localizations) to evaluation format.
@@ -81,7 +81,7 @@ def normalize_localization_result(result: dict) -> None:
         result["scores"] = [1.0] * boxes_len
 
 
-def save_prediction(img_folder: Path, result: dict) -> None:  # noqa: D401
+def save_prediction(img_folder: Path, result: dict[str, Any]) -> None:  # noqa: D401
     pred_file = img_folder / "pred.jsonl"
     with pred_file.open("w") as fw:
         fw.write(json.dumps(result) + "\n")
@@ -209,11 +209,11 @@ def compute_evaluation_metrics(img_folder: Path, task: str) -> None:  # noqa: D4
 
 def postprocess_batch_result(
     ctx: BatchContext,
-    result: dict,
+    result: dict[str, Any],
     task: str,
-    hf_ds,
-    preds: list,
-):
+    hf_ds: Any,
+    preds: list[dict[str, Any]],
+) -> None:
     """One-liner to perform all common tail-steps for a batch."""
 
     normalize_localization_result(result)

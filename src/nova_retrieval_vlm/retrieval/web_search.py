@@ -190,6 +190,9 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
 
+        # Rate limiting delay between API calls (seconds)
+        self._rate_limit_delay = 0.5
+
     @staticmethod
     def _get_required_email() -> str:
         """Get required NCBI email from environment.
@@ -208,9 +211,6 @@ class PubMedSearchEngine(SearchEngine):
                 "See: https://www.ncbi.nlm.nih.gov/books/NBK25497/"
             )
         return email
-
-    def _get_headers(self) -> dict[str, str]:
-        return super()._get_headers()  # API key is already set in self.headers
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Search PubMed with enhanced metadata extraction."""
@@ -262,8 +262,8 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             fetch_params["api_key"] = self.api_key
 
-        # Rate limiting
-        await asyncio.sleep(0.5)
+        # Rate limiting to avoid overwhelming NCBI API
+        await asyncio.sleep(self._rate_limit_delay)
 
         session = await self._get_session()
         async with session.get(fetch_url, params=fetch_params) as response:
@@ -355,14 +355,17 @@ class PubMedSearchEngine(SearchEngine):
         return snippet.strip()
 
     def _extract_medical_entities(self, text: str) -> list[str]:
-        """Extract medical entities from text."""
-        # Common medical terms and patterns
+        """Extract medical entities from text.
+
+        Looks for common medical terms related to neuro-oncology imaging.
+        """
+        # Lowercase patterns to match against lowercased text
         medical_patterns = [
             r"\b(?:glioblastoma|meningioma|metastasis|lymphoma|astrocytoma|ependymoma)\b",
             r"\b(?:hyperintensity|hypointensity|enhancement|edema|hemorrhage)\b",
-            r"\b(?:MRI|CT|PET|SPECT|X-ray|ultrasound)\b",
+            r"\b(?:mri|ct|pet|spect|x-ray|ultrasound)\b",
             r"\b(?:cerebral|cerebellar|brainstem|cortex|ventricle|meninges)\b",
-            r"\b(?:contrast|gadolinium|FLAIR|T1|T2|DWI)\b",
+            r"\b(?:contrast|gadolinium|flair|t1|t2|dwi)\b",
             r"\b(?:radiology|neurology|neurosurgery|pathology)\b",
         ]
 
@@ -370,7 +373,7 @@ class PubMedSearchEngine(SearchEngine):
         text_lower = text.lower()
 
         for pattern in medical_patterns:
-            matches = re.findall(pattern, text_lower, re.IGNORECASE)
+            matches = re.findall(pattern, text_lower)
             entities.update(matches)
 
         return sorted(entities)
@@ -389,6 +392,7 @@ class WebSearchManager:
         timeout: int = 30,
         max_total_results: int = 10,
         cache_duration: int = 300,  # 5 minutes
+        rate_limit_delay: float = 1.0,  # seconds between engine calls
     ):
         """
         Initialize web search manager.
@@ -399,6 +403,7 @@ class WebSearchManager:
             timeout: Request timeout in seconds
             max_total_results: Maximum total results to return
             cache_duration: Cache duration in seconds
+            rate_limit_delay: Delay between search engine calls in seconds
 
         Raises:
             ValueError: If no valid engines are specified
@@ -406,6 +411,7 @@ class WebSearchManager:
         self.max_results_per_engine = max_results_per_engine
         self.max_total_results = max_total_results
         self.cache_duration = cache_duration
+        self.rate_limit_delay = rate_limit_delay
         self._cache: dict[str, tuple[float, list[SearchResult]]] = {}
 
         # Initialize search engines
@@ -498,11 +504,13 @@ class WebSearchManager:
         # Search across all engines
         all_results = []
         errors: list[SearchError] = []
-        for engine in self.engines:
+        for i, engine in enumerate(self.engines):
             try:
                 results = await engine.search(search_query, self.max_results_per_engine)
                 all_results.extend(results)
-                await asyncio.sleep(1)  # Rate limiting
+                # Rate limit between engines (skip after last engine)
+                if i < len(self.engines) - 1:
+                    await asyncio.sleep(self.rate_limit_delay)
             except SearchError as e:
                 errors.append(e)
                 logger.error(f"Engine {engine.name} failed: {e}")

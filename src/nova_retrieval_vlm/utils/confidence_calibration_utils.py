@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from beartype import beartype
 from loguru import logger
@@ -26,8 +27,8 @@ DEFAULT_MIN_CONFIDENCE = 0.7  # Default threshold for filtering reliable predict
 
 @beartype
 def calculate_reliability_diagram_data(
-    confidences: list[float] | np.ndarray,
-    correct: list[bool] | np.ndarray,
+    confidences: list[float] | npt.NDArray[np.floating[Any]],
+    correct: list[bool] | npt.NDArray[np.bool_],
     n_bins: int = DEFAULT_N_BINS,
 ) -> dict[str, Any]:
     """Calculate reliability diagram data for confidence calibration analysis.
@@ -89,9 +90,9 @@ def calculate_reliability_diagram_data(
 
 @beartype
 def analyze_confidence_levels(
-    confidences: list[float] | np.ndarray,
+    confidences: list[float] | npt.NDArray[np.floating[Any]],
     confidence_levels: list[str],
-    correct: list[bool] | np.ndarray,
+    correct: list[bool] | npt.NDArray[np.bool_],
     level_order: list[str] | None = None,
 ) -> dict[str, Any]:
     """Analyze performance by confidence level categories.
@@ -109,19 +110,19 @@ def analyze_confidence_levels(
         level_order = ["definite", "probable", "possible", "uncertain"]
 
     # Convert to numpy arrays
-    confidences = np.array(confidences)
-    confidence_levels = np.array(confidence_levels)
-    correct = np.array(correct).astype(bool)
+    conf_array = np.array(confidences)
+    levels_array = np.array(confidence_levels)
+    correct_array = np.array(correct).astype(bool)
 
-    results = {}
+    results: dict[str, Any] = {}
 
     for level in level_order:
-        level_mask = confidence_levels == level
+        level_mask = levels_array == level
         if not np.any(level_mask):
             continue
 
-        level_confidences = confidences[level_mask]
-        level_correct = correct[level_mask]
+        level_confidences = conf_array[level_mask]
+        level_correct = correct_array[level_mask]
 
         if len(level_confidences) == 0:
             continue
@@ -143,8 +144,8 @@ def analyze_confidence_levels(
         }
 
     # Overall statistics
-    overall_accuracy = correct.mean()
-    overall_avg_confidence = confidences.mean()
+    overall_accuracy = correct_array.mean()
+    overall_avg_confidence = conf_array.mean()
 
     results["overall"] = {
         "total_count": len(confidences),
@@ -158,9 +159,9 @@ def analyze_confidence_levels(
 
 @beartype
 def analyze_reliability_flags(
-    reliable_flags: list[bool] | np.ndarray,
-    confidences: list[float] | np.ndarray,
-    correct: list[bool] | np.ndarray,
+    reliable_flags: list[bool] | npt.NDArray[np.bool_],
+    confidences: list[float] | npt.NDArray[np.floating[Any]],
+    correct: list[bool] | npt.NDArray[np.bool_],
 ) -> dict[str, Any]:
     """Analyze reliability flag performance and discrimination.
 
@@ -355,13 +356,16 @@ def create_calibration_summary(
     Returns:
         Comprehensive calibration analysis summary
     """
-    summary = {
-        "configurations": {},
-        "comparisons": {},
-        "overall_stats": {
-            "total_configurations": len(calibration_data),
-            "total_samples": sum(len(data["confidences"]) for data in calibration_data.values()),
-        },
+    configurations: dict[str, dict[str, Any]] = {}
+    comparisons: dict[str, list[dict[str, Any]]] = {}
+    overall_stats: dict[str, int] = {
+        "total_configurations": len(calibration_data),
+        "total_samples": sum(len(data["confidences"]) for data in calibration_data.values()),
+    }
+    summary: dict[str, Any] = {
+        "configurations": configurations,
+        "comparisons": comparisons,
+        "overall_stats": overall_stats,
     }
 
     # Analyze each configuration
@@ -425,7 +429,7 @@ def create_calibration_summary(
                     )
                     config_summary["reliability_flag_analysis"] = flag_analysis
 
-        summary["configurations"][config_name] = config_summary
+        configurations[config_name] = config_summary
 
     # Create comparisons if ground truth is available
     if ground_truth and len(calibration_data) > 1:
@@ -434,12 +438,12 @@ def create_calibration_summary(
             comparison_df = compare_calibration_across_configs(
                 {
                     config: data["calibration_metrics"]
-                    for config, data in summary["configurations"].items()
+                    for config, data in configurations.items()
                     if "calibration_metrics" in data
                 },
                 metric,
             )
-            summary["comparisons"][metric] = comparison_df.to_dict("records")
+            comparisons[metric] = comparison_df.to_dict("records")
 
     return summary
 

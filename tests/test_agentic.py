@@ -176,21 +176,26 @@ class TestToolRegistry:
 
     @pytest.mark.asyncio
     async def test_execute_unknown_tool(self, temp_image):
-        """Test executing unknown tool returns error."""
-        registry = ToolRegistry(temp_image)
-        result = await registry.execute("unknown_tool")
+        """Test executing unknown tool raises UnknownToolError."""
+        from nova_retrieval_vlm.agentic.tools import UnknownToolError
 
-        assert not result.success
-        assert "unknown_tool" in result.error
+        registry = ToolRegistry(temp_image)
+        with pytest.raises(UnknownToolError) as exc_info:
+            await registry.execute("unknown_tool")
+
+        assert exc_info.value.tool_name == "unknown_tool"
+        assert "unknown_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_execute_without_image(self):
-        """Test executing tool without image returns error."""
-        registry = ToolRegistry()
-        result = await registry.execute("zoom", factor=2.0)
+        """Test executing tool without image raises ToolExecutionError."""
+        from nova_retrieval_vlm.agentic.tools import ToolExecutionError
 
-        assert not result.success
-        assert "No image" in result.description or "No image" in result.error
+        registry = ToolRegistry()
+        with pytest.raises(ToolExecutionError) as exc_info:
+            await registry.execute("zoom", factor=2.0)
+
+        assert "requires an image" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_tool_history(self, temp_image):

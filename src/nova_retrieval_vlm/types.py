@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import torch
 from beartype import beartype
 from jaxtyping import Bool
@@ -47,11 +48,12 @@ MultiModalFeatures = Float[torch.Tensor, "batch modalities features"]
 
 # NumPy array types for image processing
 # Note: jaxtyping uses np.ndarray directly, shape checking is via the string annotation
-ImageArray = Float[np.ndarray, "height width channels"]
-GrayscaleArray = Float[np.ndarray, "height width"]
-FeatureArray = Float[np.ndarray, "features"]
-MaskArray = Bool[np.ndarray, "height width"]
-IntensityArray = UInt8[np.ndarray, "height width"]
+# Using npt.NDArray for pyright compatibility
+ImageArray = Float[npt.NDArray[np.floating[Any]], "height width channels"]
+GrayscaleArray = Float[npt.NDArray[np.floating[Any]], "height width"]
+FeatureArray = Float[npt.NDArray[np.floating[Any]], "features"]
+MaskArray = Bool[npt.NDArray[np.bool_], "height width"]
+IntensityArray = UInt8[npt.NDArray[np.uint8], "height width"]
 
 
 def tensor_validated(func: Any) -> Any:

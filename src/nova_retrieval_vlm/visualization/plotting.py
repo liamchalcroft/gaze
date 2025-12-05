@@ -6,6 +6,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import seaborn as sns
 from loguru import logger
@@ -125,8 +126,8 @@ def plot_overlays(
 
 
 def plot_reliability_diagram(
-    confidences: list[float] | np.ndarray,
-    correct: list[bool] | np.ndarray,
+    confidences: list[float] | npt.NDArray[np.floating[Any]],
+    correct: list[bool] | npt.NDArray[np.bool_],
     output_path: Path,
     title: str = "Confidence Calibration",
     n_bins: int = 10,
@@ -275,7 +276,7 @@ def plot_confidence_level_analysis(
         return
 
     # Create the plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
     # Bar plot comparing accuracy vs confidence
     x = np.arange(len(levels))

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from beartype import beartype
 from loguru import logger
@@ -64,8 +65,8 @@ class ConfidenceIntervalResult:
 
 @beartype
 def calculate_effect_size(
-    group1: list[float] | np.ndarray,
-    group2: list[float] | np.ndarray,
+    group1: list[float] | npt.NDArray[np.floating[Any]],
+    group2: list[float] | npt.NDArray[np.floating[Any]],
     effect_type: str = "cohens_d",
 ) -> EffectSizeResult:
     """Calculate effect size between two groups.
@@ -137,8 +138,8 @@ def calculate_effect_size(
 
 @beartype
 def perform_statistical_test(
-    group1: list[float] | np.ndarray,
-    group2: list[float] | np.ndarray,
+    group1: list[float] | npt.NDArray[np.floating[Any]],
+    group2: list[float] | npt.NDArray[np.floating[Any]],
     test_type: str = "ttest",
     alpha: float = 0.05,
     alternative: str = "two-sided",
@@ -170,24 +171,30 @@ def perform_statistical_test(
 
     n1, n2 = len(group1), len(group2)
 
+    statistic: float
+    p_value: float
+
     if test_type == "ttest":
-        statistic, p_value = stats.ttest_ind(group1, group2, alternative=alternative)
+        result = stats.ttest_ind(group1, group2, alternative=alternative)
+        statistic, p_value = float(result.statistic), float(result.pvalue)
         test_name = "Student's t-test"
     elif test_type == "mannwhitney":
-        statistic, p_value = stats.mannwhitneyu(group1, group2, alternative=alternative)
+        result = stats.mannwhitneyu(group1, group2, alternative=alternative)
+        statistic, p_value = float(result.statistic), float(result.pvalue)
         test_name = "Mann-Whitney U"
     elif test_type == "wilcoxon":
         if n1 != n2:
             raise ValueError("Wilcoxon test requires paired data of equal length")
-        statistic, p_value = stats.wilcoxon(group1, group2, alternative=alternative)
+        result = stats.wilcoxon(group1, group2, alternative=alternative)
+        statistic, p_value = float(result.statistic), float(result.pvalue)
         test_name = "Wilcoxon signed-rank"
     else:
         raise ValueError(f"Unknown test type: {test_type}")
 
     return StatisticalTestResult(
         test_name=test_name,
-        statistic=float(statistic),
-        p_value=float(p_value),
+        statistic=statistic,
+        p_value=p_value,
         significant=p_value < alpha,
         n1=n1,
         n2=n2,
@@ -223,15 +230,17 @@ def analyze_ablation_configurations(
         raise KeyError(f"Metric '{metric}' not found in baseline configuration '{baseline_config}'")
     baseline_values = [baseline_data[metric]]
 
-    analysis_results = {
+    summary: dict[str, int] = {
+        "total_configurations": len(results),
+        "significant_improvements": 0,
+        "significant_degradations": 0,
+    }
+    comparisons: dict[str, dict[str, Any]] = {}
+    analysis_results: dict[str, Any] = {
         "baseline_config": baseline_config,
         "baseline_value": baseline_values[0] if baseline_values else 0,
-        "comparisons": {},
-        "summary": {
-            "total_configurations": len(results),
-            "significant_improvements": 0,
-            "significant_degradations": 0,
-        },
+        "comparisons": comparisons,
+        "summary": summary,
     }
 
     for config_name, config_data in results.items():
@@ -264,14 +273,14 @@ def analyze_ablation_configurations(
         comparison_result.update(asdict(test_result))
         comparison_result.update(asdict(effect_result))
 
-        analysis_results["comparisons"][config_name] = comparison_result
+        comparisons[config_name] = comparison_result
 
         # Update summary
         if test_result.significant:
             if difference > 0:
-                analysis_results["summary"]["significant_improvements"] += 1
+                summary["significant_improvements"] += 1
             else:
-                analysis_results["summary"]["significant_degradations"] += 1
+                summary["significant_degradations"] += 1
 
     return analysis_results
 
@@ -326,7 +335,7 @@ def create_statistical_summary_table(
 
 @beartype
 def calculate_confidence_intervals(
-    values: list[float] | np.ndarray,
+    values: list[float] | npt.NDArray[np.floating[Any]],
     confidence_level: float = 0.95,
 ) -> ConfidenceIntervalResult:
     """Calculate confidence intervals for a set of values.
@@ -487,18 +496,16 @@ def calculate_statistical_power(
     effect_size: float,
     sample_size: int,
     alpha: float = 0.05,
-    power: float = 0.8,
 ) -> float:
-    """Calculate achieved statistical power or required sample size.
+    """Calculate achieved statistical power.
 
     Args:
         effect_size: Effect size (Cohen's d)
         sample_size: Sample size per group
         alpha: Significance level
-        power: Desired power
 
     Returns:
-        Statistical power if sample_size provided
+        Statistical power for the given parameters
     """
     # Use normal approximation for power calculation
     z_alpha = stats.norm.ppf(1 - alpha / 2)
@@ -507,9 +514,9 @@ def calculate_statistical_power(
     ncp = effect_size * np.sqrt(sample_size / 2)
 
     # Calculate power
-    power = 1 - stats.norm.cdf(z_alpha - ncp) + stats.norm.cdf(-z_alpha - ncp)
+    achieved_power = 1 - stats.norm.cdf(z_alpha - ncp) + stats.norm.cdf(-z_alpha - ncp)
 
-    return float(power)
+    return float(achieved_power)
 
 
 @beartype
@@ -528,19 +535,19 @@ def perform_multiple_comparison_correction(
     Returns:
         List of corrected significance results
     """
-    p_values = np.array(p_values)
+    p_array = np.array(p_values)
 
     if method == "bonferroni":
         # Bonferroni correction
-        corrected_alpha = alpha / len(p_values)
-        significant = p_values < corrected_alpha
+        corrected_alpha = alpha / len(p_array)
+        significant = p_array < corrected_alpha
         return significant.tolist()
 
     elif method == "fdr_bh":
-        # Benjamini-Hochberg FDR correction
-        from statsmodels.stats.multitest import multipletests
+        # Benjamini-Hochberg FDR correction (requires optional statsmodels)
+        from statsmodels.stats.multitest import multipletests  # noqa: I001  # pyright: ignore[reportMissingImports]
 
-        rejected, p_corrected, _, _ = multipletests(p_values, alpha=alpha, method="fdr_bh")
+        rejected, _, _, _ = multipletests(p_array, alpha=alpha, method="fdr_bh")
         return rejected.tolist()
 
     else:

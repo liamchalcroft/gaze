@@ -12,6 +12,7 @@ from nova_retrieval_vlm.evaluation.detection import evaluate_detection
 from nova_retrieval_vlm.schemas import NOVA_UNIFIED_SCHEMA
 from nova_retrieval_vlm.types import BatchData
 from nova_retrieval_vlm.types import DetectionMetrics
+from nova_retrieval_vlm.types import JSONParseError
 from nova_retrieval_vlm.types import ModelResponse
 from nova_retrieval_vlm.visual_reasoning.image_ops import adjust_contrast
 

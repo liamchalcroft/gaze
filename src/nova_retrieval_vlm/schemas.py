@@ -157,8 +157,19 @@ NOVA_UNIFIED_SCHEMA = {
                     },
                     "required": ["localizations", "image_dimensions", "coordinate_system"],
                 },
+                "continue": {
+                    "type": "boolean",
+                    "description": (
+                        "Set to true if more analysis is needed (e.g., need to use tools). "
+                        "Set to false when analysis is complete and final."
+                    ),
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Chain-of-thought reasoning explaining the analysis process.",
+                },
             },
-            "required": ["caption", "diagnosis", "localization"],
+            "required": ["caption", "diagnosis", "localization", "continue"],
             "additionalProperties": False,
         },
     },

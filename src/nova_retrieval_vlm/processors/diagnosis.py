@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from beartype import beartype
 
@@ -46,11 +47,11 @@ class DiagnosisProcessor(BaseProcessor):
     @beartype
     def _extract_diagnosis_response(
         self,
-        response_json: dict,
+        response_json: dict[str, Any],
         image_path: str | Path,
         batch_idx: int,
         sample_idx: int,
-        metadata: dict,
+        metadata: dict[str, Any],
     ) -> ModelResponse:
         """Extract diagnosis-specific fields from parsed JSON response.
 

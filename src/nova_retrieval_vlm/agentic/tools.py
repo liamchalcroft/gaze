@@ -40,16 +40,38 @@ class ToolExecutionError(Exception):
     """Raised when a tool execution fails due to invalid state."""
 
 
+class UnknownToolError(Exception):
+    """Raised when an unknown tool is requested."""
+
+    def __init__(self, tool_name: str, available_tools: list[str]):
+        self.tool_name = tool_name
+        self.available_tools = available_tools
+        super().__init__(
+            f"Unknown tool '{tool_name}'. Available tools: {', '.join(sorted(available_tools))}"
+        )
+
+
 @dataclass
 class ToolResult:
     """Result of executing a visual tool."""
 
-    success: bool
     tool_name: str
     description: str
-    image_base64: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    image_base64: str | None = None
+    image_mime_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def success(self) -> bool:
+        """Tool succeeded if no error occurred."""
+        return self.error is None
+
+    def get_image_data_url(self) -> str | None:
+        """Get data URL for image if present."""
+        if self.image_base64 and self.image_mime_type:
+            return f"data:{self.image_mime_type};base64,{self.image_base64}"
+        return None
 
 
 @dataclass
@@ -63,12 +85,43 @@ class VisualTool:
     requires_image: bool = True
 
 
+@dataclass
+class EncodedImage:
+    """Base64-encoded image with MIME type."""
+
+    data: str
+    mime_type: str
+
+    def to_data_url(self) -> str:
+        """Convert to data URL format for OpenAI API."""
+        return f"data:{self.mime_type};base64,{self.data}"
+
+
 @beartype
-def image_to_base64(image: Image.Image, quality: int = 85) -> str:
-    """Convert PIL Image to base64 JPEG string."""
+def encode_image(image: Image.Image, quality: int = 85) -> EncodedImage:
+    """Encode PIL Image to base64 with correct MIME type.
+
+    Args:
+        image: PIL Image to convert
+        quality: JPEG quality (1-100)
+
+    Returns:
+        EncodedImage with base64 data and correct MIME type
+    """
     with io.BytesIO() as buffer:
-        image.convert("RGB").save(buffer, format="JPEG", quality=quality)
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        # Preserve grayscale mode for medical images (L, I, F modes)
+        if image.mode in ("L", "I", "F"):
+            image.save(buffer, format="PNG", optimize=True)
+            mime_type = "image/png"
+        elif image.mode == "RGB":
+            image.save(buffer, format="JPEG", quality=quality)
+            mime_type = "image/jpeg"
+        else:
+            # RGBA, P, etc. - convert to RGB for JPEG
+            image.convert("RGB").save(buffer, format="JPEG", quality=quality)
+            mime_type = "image/jpeg"
+        data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        return EncodedImage(data=data, mime_type=mime_type)
 
 
 class ToolRegistry:
@@ -110,6 +163,10 @@ class ToolRegistry:
         exc_tb: Any,
     ) -> None:
         """Async context manager exit with cleanup."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Async close and release all resources."""
         self.close()
 
     @beartype
@@ -395,25 +452,31 @@ class ToolRegistry:
 
     @beartype
     async def execute(self, tool_name: str, **kwargs: Any) -> ToolResult:
-        """Execute a tool by name with given arguments."""
+        """Execute a tool by name with given arguments.
+
+        Args:
+            tool_name: Name of the tool to execute
+            **kwargs: Tool-specific arguments
+
+        Returns:
+            ToolResult with execution outcome
+
+        Raises:
+            UnknownToolError: If tool_name is not registered
+            ToolExecutionError: If tool requires image but none is loaded
+        """
         if tool_name not in self._tools:
-            return ToolResult(
-                success=False,
-                tool_name=tool_name,
-                description=f"Unknown tool: {tool_name}",
-                error=f"Tool '{tool_name}' not found in registry",
-            )
+            raise UnknownToolError(tool_name, list(self._tools.keys()))
 
         tool = self._tools[tool_name]
 
         if tool.requires_image:
             await self._ensure_image_loaded()
+            # _ensure_image_loaded guarantees image is loaded if _image_path is set
+            # If no image path was provided, we must fail
             if self._current_image is None:
-                return ToolResult(
-                    success=False,
-                    tool_name=tool_name,
-                    description="No image loaded",
-                    error="No image has been set for tool operations",
+                raise ToolExecutionError(
+                    f"Tool '{tool_name}' requires an image, but no image path was provided"
                 )
 
         result = await tool.execute(**kwargs)
@@ -441,25 +504,25 @@ class ToolRegistry:
 
     @beartype
     async def _execute_zoom(self, factor: float) -> ToolResult:
-        """Execute zoom tool."""
-        if not 0.5 <= factor <= 4.0:
+        """Execute zoom tool. Delegates validation to image_ops."""
+        try:
+            with self._update_image() as img:
+                original_size = img.size
+                self._current_image = zoom_image(img, factor)
+        except ValueError as e:
             return ToolResult(
-                success=False,
                 tool_name="zoom",
-                description=f"Invalid zoom factor: {factor:.2f}",
-                error=f"Zoom factor must be between 0.5 and 4.0, got {factor:.2f}",
+                description=f"Invalid zoom factor: {factor}",
+                error=str(e),
             )
 
-        with self._update_image() as img:
-            original_size = img.size
-            self._current_image = zoom_image(img, factor)
-
         new_size = self._current_image.size
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="zoom",
             description=f"Zoomed {factor:.1f}x: {original_size} -> {new_size} px",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={
                 "factor": factor,
                 "original_size": original_size,
@@ -469,44 +532,35 @@ class ToolRegistry:
 
     @beartype
     async def _execute_crop(self, box: list[float]) -> ToolResult:
-        """Execute crop tool."""
+        """Execute crop tool. Delegates validation to image_ops."""
         if len(box) != 4:
             return ToolResult(
-                success=False,
                 tool_name="crop",
                 description=f"Invalid crop box: expected 4 values, got {len(box)}",
                 error=f"Crop requires [x1, y1, x2, y2], got {len(box)} values",
             )
 
         x1, y1, x2, y2 = box
-        if not all(0 <= coord <= 1 for coord in box):
+        try:
+            with self._update_image() as img:
+                original_size = img.size
+                self._current_image = crop_image(img, (x1, y1, x2, y2))
+        except ValueError as e:
             return ToolResult(
-                success=False,
                 tool_name="crop",
-                description=f"Crop coordinates out of range: {box}",
-                error="All coordinates must be between 0 and 1",
+                description=f"Invalid crop region: {box}",
+                error=str(e),
             )
-
-        if x2 <= x1 or y2 <= y1:
-            return ToolResult(
-                success=False,
-                tool_name="crop",
-                description=f"Invalid crop region: [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}]",
-                error="Crop coordinates must satisfy x2 > x1 and y2 > y1",
-            )
-
-        with self._update_image() as img:
-            original_size = img.size
-            self._current_image = crop_image(img, (x1, y1, x2, y2))
 
         new_size = self._current_image.size
         area_percentage = (x2 - x1) * (y2 - y1) * 100
+        encoded = encode_image(self._current_image)
 
         return ToolResult(
-            success=True,
             tool_name="crop",
             description=f"Cropped to [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}] ({area_percentage:.1f}%)",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={
                 "box": box,
                 "original_size": original_size,
@@ -517,63 +571,47 @@ class ToolRegistry:
 
     @beartype
     async def _execute_contrast(self, factor: float) -> ToolResult:
-        """Execute contrast adjustment tool."""
-        if not 0.5 <= factor <= 3.0:
+        """Execute contrast adjustment tool. Delegates validation to image_ops."""
+        try:
+            with self._update_image() as img:
+                original_size = img.size
+                self._current_image = adjust_contrast(img, factor)
+        except ValueError as e:
             return ToolResult(
-                success=False,
                 tool_name="adjust_contrast",
-                description=f"Invalid contrast factor: {factor:.2f}",
-                error=f"Contrast factor must be between 0.5 and 3.0, got {factor:.2f}",
+                description=f"Invalid contrast factor: {factor}",
+                error=str(e),
             )
 
-        with self._update_image() as img:
-            original_size = img.size
-            self._current_image = adjust_contrast(img, factor)
-
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="adjust_contrast",
             description=f"Adjusted contrast by factor {factor:.1f}x",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={"factor": factor, "size": original_size},
         )
 
     @beartype
     async def _execute_threshold(self, lower: int, upper: int) -> ToolResult:
-        """Execute intensity threshold tool."""
-        if not 0 <= lower <= 254:
+        """Execute intensity threshold tool. Delegates validation to image_ops."""
+        try:
+            with self._update_image() as img:
+                original_size = img.size
+                self._current_image = apply_intensity_threshold(img, lower, upper)
+        except ValueError as e:
             return ToolResult(
-                success=False,
                 tool_name="threshold",
-                description=f"Invalid lower bound: {lower}",
-                error=f"Lower bound must be between 0 and 254, got {lower}",
+                description=f"Invalid threshold range: [{lower}, {upper}]",
+                error=str(e),
             )
 
-        if not 1 <= upper <= 255:
-            return ToolResult(
-                success=False,
-                tool_name="threshold",
-                description=f"Invalid upper bound: {upper}",
-                error=f"Upper bound must be between 1 and 255, got {upper}",
-            )
-
-        if lower >= upper:
-            return ToolResult(
-                success=False,
-                tool_name="threshold",
-                description=f"Invalid range: [{lower}, {upper}]",
-                error=f"Lower bound ({lower}) must be less than upper bound ({upper})",
-            )
-
-        with self._update_image() as img:
-            original_size = img.size
-            self._current_image = apply_intensity_threshold(img, lower, upper)
-
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="threshold",
             description=f"Applied threshold [{lower}, {upper}]",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={"lower": lower, "upper": upper, "size": original_size},
         )
 
@@ -583,11 +621,12 @@ class ToolRegistry:
         with self._update_image() as img:
             self._current_image = flip_horizontal(img)
 
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="flip_horizontal",
             description="Flipped image horizontally",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={"size": self._current_image.size},
         )
 
@@ -597,11 +636,12 @@ class ToolRegistry:
         with self._update_image() as img:
             self._current_image = flip_vertical(img)
 
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="flip_vertical",
             description="Flipped image vertically",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={"size": self._current_image.size},
         )
 
@@ -613,11 +653,12 @@ class ToolRegistry:
             self._current_image = rotate_90(img, clockwise=clockwise)
 
         direction = "clockwise" if clockwise else "counter-clockwise"
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="rotate",
             description=f"Rotated 90° {direction}",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={
                 "clockwise": clockwise,
                 "original_size": original_size,
@@ -630,7 +671,6 @@ class ToolRegistry:
         """Reset to original image."""
         if self._image_path is None:
             return ToolResult(
-                success=False,
                 tool_name="reset",
                 description="No original image path",
                 error="Cannot reset - no original image path stored",
@@ -641,11 +681,12 @@ class ToolRegistry:
         with Image.open(self._image_path) as img:
             self._current_image = img.copy()
 
+        encoded = encode_image(self._current_image)
         return ToolResult(
-            success=True,
             tool_name="reset",
             description="Reset to original image",
-            image_base64=image_to_base64(self._current_image),
+            image_base64=encoded.data,
+            image_mime_type=encoded.mime_type,
             metadata={"size": self._current_image.size},
         )
 
@@ -662,7 +703,6 @@ class ToolRegistry:
             )
         except SearchError as e:
             return ToolResult(
-                success=False,
                 tool_name="search_web",
                 description=f"PubMed search failed for '{query}'",
                 error=str(e),
@@ -671,7 +711,6 @@ class ToolRegistry:
 
         if not search_results:
             return ToolResult(
-                success=True,
                 tool_name="search_web",
                 description=f"No results found for '{query}'",
                 metadata={"query": query, "search_type": search_type, "results_count": 0},
@@ -708,7 +747,6 @@ class ToolRegistry:
         avg_reliability = total_reliability / len(search_results)
 
         return ToolResult(
-            success=True,
             tool_name="search_web",
             description=f"Found {len(search_results)} PubMed articles",
             metadata={
@@ -741,7 +779,6 @@ class ToolRegistry:
             )
         except ImageSearchError as e:
             return ToolResult(
-                success=False,
                 tool_name="search_images",
                 description=f"Image search failed for '{query}'",
                 error=str(e),
@@ -750,7 +787,6 @@ class ToolRegistry:
 
         if not search_results:
             return ToolResult(
-                success=True,
                 tool_name="search_images",
                 description=f"No images found for '{query}'",
                 metadata={
@@ -788,7 +824,6 @@ class ToolRegistry:
         formatted_summary = "\n## Reference Medical Images\n\n" + "\n\n".join(formatted_results)
 
         return ToolResult(
-            success=True,
             tool_name="search_images",
             description=f"Found {len(search_results)} reference images",
             metadata={

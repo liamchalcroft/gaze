@@ -2,6 +2,7 @@ import json
 import random
 from pathlib import Path
 
+from datasets import Dataset
 from datasets import load_dataset
 from PIL import Image
 from PIL import ImageDraw
@@ -31,6 +32,8 @@ def visualize_samples(
         cache_dir=cache_dir,
         trust_remote_code=trust_remote_code,
     )
+    # load_dataset with split returns a Dataset (not IterableDataset)
+    assert isinstance(ds, Dataset), f"Expected Dataset, got {type(ds).__name__}"
     total = len(ds)
     count = min(num_samples, total)
     print(f"Selecting {count}/{total} samples.")

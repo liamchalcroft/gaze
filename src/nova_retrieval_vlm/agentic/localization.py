@@ -47,7 +47,6 @@ class AgenticLocalizationProcessor(BaseProcessor):
         super().__init__(config)
         self.use_tools = use_tools
         self.max_turns = max_turns
-        self.task_name = config.task_name
 
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
@@ -149,7 +148,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
                 "web_searches_used": sum(
                     1
                     for t in result.turns
-                    if any(tc.get("name") == "search_web" for tc in t.tool_calls)
+                    if any(tc.name == "search_web" for tc in t.tool_calls)
                 ),
             },
         )
