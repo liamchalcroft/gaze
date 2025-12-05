@@ -4,10 +4,19 @@ from collections.abc import Sequence
 from typing import Any
 
 import torch
+from beartype import beartype
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
+# NOVA benchmark IoU thresholds
+IOU_THRESHOLD_LOOSE = 0.3  # Permissive threshold for partial matches
+IOU_THRESHOLD_STANDARD = 0.5  # Standard COCO-style threshold
+IOU_THRESHOLD_RANGE_START = 50  # Start of mAP@[50:95] range (as percentage)
+IOU_THRESHOLD_RANGE_END = 100  # End of mAP@[50:95] range (as percentage)
+IOU_THRESHOLD_RANGE_STEP = 5  # Step size for mAP@[50:95] range
 
-def _convert_to_tensors(data: dict[str, Any] | list) -> dict[str, torch.Tensor]:
+
+@beartype
+def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, torch.Tensor]:
     """Convert detection data to proper tensor format for torchmetrics.
 
     Handles both dict format ({"boxes": [...], "scores": [...], "labels": [...]})
@@ -68,6 +77,7 @@ def _convert_to_tensors(data: dict[str, Any] | list) -> dict[str, torch.Tensor]:
     }
 
 
+@beartype
 def _compute_iou(box1: torch.Tensor, box2: torch.Tensor) -> float:
     """Compute IoU between two boxes in [x1, y1, x2, y2] format."""
     x1 = max(box1[0].item(), box2[0].item())
@@ -83,8 +93,11 @@ def _compute_iou(box1: torch.Tensor, box2: torch.Tensor) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+@beartype
 def _compute_acc_and_counts(
-    preds_tensors: list[dict], refs_tensors: list[dict], iou_threshold: float
+    preds_tensors: list[dict[str, torch.Tensor]],
+    refs_tensors: list[dict[str, torch.Tensor]],
+    iou_threshold: float,
 ) -> tuple[float, int, int]:
     """Compute detection accuracy and TP/FP counts at given IoU threshold.
 
@@ -101,7 +114,7 @@ def _compute_acc_and_counts(
     tp = 0  # True positives: predictions matched to ground truth
     fp = 0  # False positives: predictions not matched to ground truth
 
-    for pred, ref in zip(preds_tensors, refs_tensors, strict=False):
+    for pred, ref in zip(preds_tensors, refs_tensors, strict=True):
         pred_boxes = pred["boxes"]
         ref_boxes = ref["boxes"]
 
@@ -143,9 +156,10 @@ def _compute_acc_and_counts(
     return accuracy, tp, fp
 
 
+@beartype
 def evaluate_detection(
-    preds: Sequence[dict[str, Any]],
-    refs: Sequence[dict[str, Any]],
+    preds: Sequence[dict[str, Any] | list[list[float]]],
+    refs: Sequence[dict[str, Any] | list[list[float]]],
 ) -> dict[str, float | int]:
     """
     Compute detection metrics following NOVA benchmark protocol.
@@ -158,39 +172,50 @@ def evaluate_detection(
     - TP30/FP30: True positive and false positive counts at IoU 0.3
 
     Args:
-        preds: List of prediction dictionaries with 'boxes', 'scores', 'labels'
-        refs: List of reference dictionaries with 'boxes', 'scores', 'labels'
+        preds: List of prediction dicts with 'boxes', 'scores', 'labels', or raw box lists
+        refs: List of reference dicts with 'boxes', 'scores', 'labels', or raw box lists
 
     Returns:
         Dictionary with keys 'map30', 'map50', 'map50_95', 'acc50', 'tp30', 'fp30'.
+
+    Raises:
+        ValueError: If preds and refs have different lengths or are empty.
     """
-    if not preds or not refs:
-        return {"map30": 0.0, "map50": 0.0, "map50_95": 0.0, "acc50": 0.0, "tp30": 0, "fp30": 0}
+    if not preds:
+        raise ValueError("Cannot evaluate empty predictions list")
+    if not refs:
+        raise ValueError("Cannot evaluate empty references list")
+
+    if len(preds) != len(refs):
+        raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {len(refs)}")
 
     # Convert inputs to proper tensor format
     preds_tensors = [_convert_to_tensors(pred) for pred in preds]
     refs_tensors = [_convert_to_tensors(ref) for ref in refs]
 
-    # ACC50 and counts at IoU 0.5
-    acc50, _, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, 0.5)
+    # ACC50 and counts at standard threshold
+    acc50, _, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_STANDARD)
 
-    # ACC30 and TP30/FP30 (per NOVA protocol)
-    _, tp30, fp30 = _compute_acc_and_counts(preds_tensors, refs_tensors, 0.3)
+    # TP30/FP30 at loose threshold (per NOVA protocol)
+    _, tp30, fp30 = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_LOOSE)
 
-    # mAP@30
-    m30 = MeanAveragePrecision(iou_thresholds=[0.3])
+    # mAP at loose threshold
+    m30 = MeanAveragePrecision(iou_thresholds=[IOU_THRESHOLD_LOOSE])
     m30.update(preds_tensors, refs_tensors)
     res30 = m30.compute()
     map30 = float(res30["map"])
 
-    # mAP@50
-    m50 = MeanAveragePrecision(iou_thresholds=[0.5])
+    # mAP at standard threshold
+    m50 = MeanAveragePrecision(iou_thresholds=[IOU_THRESHOLD_STANDARD])
     m50.update(preds_tensors, refs_tensors)
     res50 = m50.compute()
     map50 = float(res50["map"])
 
     # mAP@[50:95] per NOVA protocol
-    ious = [th / 100 for th in range(50, 100, 5)]
+    ious = [
+        th / 100
+        for th in range(IOU_THRESHOLD_RANGE_START, IOU_THRESHOLD_RANGE_END, IOU_THRESHOLD_RANGE_STEP)
+    ]
     m5095 = MeanAveragePrecision(iou_thresholds=ious)
     m5095.update(preds_tensors, refs_tensors)
     res5095 = m5095.compute()

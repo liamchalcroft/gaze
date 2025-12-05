@@ -25,11 +25,17 @@ logger = logging.getLogger(__name__)
 class NovaDataset:
     """Complete NOVA dataset with images, metadata, and ground truth."""
 
-    def __init__(self, data_dir: str = "./data/nova", transform: Compose | None = None):
+    def __init__(
+        self,
+        data_dir: str = "./data/nova",
+        ground_truth_dir: str | None = None,
+        transform: Compose | None = None,
+    ):
         """Initialize complete NOVA dataset.
 
         Args:
             data_dir: Path to cache or download dataset
+            ground_truth_dir: Path to ground truth CSVs (default: data_dir)
             transform: torchvision transforms to apply to images
         """
         self.data_dir = data_dir
@@ -38,8 +44,9 @@ class NovaDataset:
         # Load HF dataset (images only)
         self.hf_dataset = load_dataset("c-i-ber/Nova", split="train")
 
-        # Load CSV ground truth and metadata
-        self.ground_truth = NovaGroundTruth("~/Nova")
+        # Load CSV ground truth and metadata from explicit path
+        gt_path = ground_truth_dir if ground_truth_dir else data_dir
+        self.ground_truth = NovaGroundTruth(gt_path)
 
         # Create HF index to ground truth mapping
         self._create_hf_to_gt_mapping()
@@ -52,16 +59,15 @@ class NovaDataset:
         checksums = self.hf_dataset.info.download_checksums
 
         self.hf_to_gt_index = {}
-        gt_filenames = list(self.ground_truth._ground_truth.keys())
+        # Build O(1) lookup dict instead of using list.index() which is O(n)
+        gt_filename_to_idx = {
+            name: idx for idx, name in enumerate(self.ground_truth._ground_truth.keys())
+        }
 
-        for hf_index, (filepath, info) in enumerate(checksums.items()):
+        for hf_index, (filepath, _info) in enumerate(checksums.items()):
             filename = filepath.split("/")[-1]
-            if filename in gt_filenames:
-                gt_index = gt_filenames.index(filename)
-                self.hf_to_gt_index[hf_index] = gt_index
-            else:
-                # Fallback - this should not happen if datasets match
-                self.hf_to_gt_index[hf_index] = None
+            gt_index = gt_filename_to_idx.get(filename)
+            self.hf_to_gt_index[hf_index] = gt_index  # None if not found
 
         logger.info(
             f"Created mapping for {len([x for x in self.hf_to_gt_index.values() if x is not None])} samples"
@@ -118,59 +124,11 @@ class NovaDataset:
                     },
                     "hf_index": idx,
                     "gt_index": gt_index,
+                    "has_ground_truth": True,
                 }
-            else:
-                # Fallback for missing ground truth
-                return {
-                    "image": image,
-                    "metadata": {
-                        "image_id": idx,
-                        "filename": f"case_{idx:04d}.png",
-                        "case_id": f"case_{idx:04d}",
-                        "scan_id": "001",
-                        "clinical_history": "",
-                        "final_diagnosis": "",
-                        "caption": "",
-                        "localizations": [],
-                    },
-                    "ground_truth": {
-                        "filename": f"case_{idx:04d}.png",
-                        "case_id": f"case_{idx:04d}",
-                        "scan_id": "001",
-                        "caption": "",
-                        "clinical_history": "",
-                        "final_diagnosis": "",
-                        "localizations": [],
-                    },
-                    "hf_index": idx,
-                    "gt_index": None,
-                }
-        else:
-            # No ground truth mapping available
-            return {
-                "image": image,
-                "metadata": {
-                    "image_id": idx,
-                    "filename": f"case_{idx:04d}.png",
-                    "case_id": f"case_{idx:04d}",
-                    "scan_id": "001",
-                    "clinical_history": "",
-                    "final_diagnosis": "",
-                    "caption": "",
-                    "localizations": [],
-                },
-                "ground_truth": {
-                    "filename": f"case_{idx:04d}.png",
-                    "case_id": f"case_{idx:04d}",
-                    "scan_id": "001",
-                    "caption": "",
-                    "clinical_history": "",
-                    "final_diagnosis": "",
-                    "localizations": [],
-                },
-                "hf_index": idx,
-                "gt_index": None,
-            }
+
+        # No ground truth available - fail explicitly
+        raise KeyError(f"No ground truth found for HF index {idx}")
 
     def get_dataloader(self, batch_size: int = 8, shuffle: bool = False) -> DataLoader:
         """Create a DataLoader for the complete dataset.
@@ -193,21 +151,21 @@ class NovaDataset:
         """Debug a sample to show complete structure."""
         sample = self[idx]
 
-        print(f"DEBUG: Sample {idx}")
-        print("=" * 50)
-        print(f"HF Index: {sample['hf_index']}")
-        print(f"GT Index: {sample['gt_index']}")
-        print(f"Filename: {sample['metadata']['filename']}")
-        print(f"Case ID: {sample['metadata']['case_id']}")
-        print(f"Scan ID: {sample['metadata']['scan_id']}")
-        print(f"Image shape: {sample['image'].size}")
-        print(f"Clinical History: {sample['metadata']['clinical_history'][:200]}...")
-        print(f"Final Diagnosis: {sample['metadata']['final_diagnosis']}")
-        print(f"Caption: {sample['metadata']['caption'][:200]}...")
-        print(f"Localizations: {len(sample['metadata']['localizations'])}")
+        logger.debug(f"DEBUG: Sample {idx}")
+        logger.debug("=" * 50)
+        logger.debug(f"HF Index: {sample['hf_index']}")
+        logger.debug(f"GT Index: {sample['gt_index']}")
+        logger.debug(f"Filename: {sample['metadata']['filename']}")
+        logger.debug(f"Case ID: {sample['metadata']['case_id']}")
+        logger.debug(f"Scan ID: {sample['metadata']['scan_id']}")
+        logger.debug(f"Image shape: {sample['image'].size}")
+        logger.debug(f"Clinical History: {sample['metadata']['clinical_history'][:200]}...")
+        logger.debug(f"Final Diagnosis: {sample['metadata']['final_diagnosis']}")
+        logger.debug(f"Caption: {sample['metadata']['caption'][:200]}...")
+        logger.debug(f"Localizations: {len(sample['metadata']['localizations'])}")
         if sample["metadata"]["localizations"]:
             for i, loc in enumerate(sample["metadata"]["localizations"][:2]):
-                print(f"  {i + 1}: {loc}")
+                logger.debug(f"  {i + 1}: {loc}")
 
 
 def get_dataloader(batch_size: int, data_dir: str, use_transforms: bool = False) -> DataLoader:

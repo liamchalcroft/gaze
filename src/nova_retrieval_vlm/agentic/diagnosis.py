@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from beartype import beartype
 from loguru import logger
@@ -17,8 +16,9 @@ from nova_retrieval_vlm.agentic.processor import AgenticProcessor
 from nova_retrieval_vlm.agentic.processor import AgenticResult
 from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
 from nova_retrieval_vlm.processors.base import BaseProcessor
+from nova_retrieval_vlm.processors.base import ProcessorConfig
 from nova_retrieval_vlm.types import BatchData
-from nova_retrieval_vlm.types import EvaluationMetrics
+from nova_retrieval_vlm.types import DiagnosisMetrics
 from nova_retrieval_vlm.types import ModelResponse
 
 
@@ -29,15 +29,15 @@ class AgenticDiagnosisProcessor(BaseProcessor):
     - Tool calling for interactive analysis (zoom, crop, contrast, flip, rotate)
     - Retrieval augmentation (medical guidelines, similar cases)
     - Multi-turn refinement for differential diagnosis
-    - Visual comparison with retrieved examples (planned)
     """
 
+    @beartype
     def __init__(
         self,
-        config: Any,
+        config: ProcessorConfig,
         use_tools: bool = True,
         max_turns: int = 10,
-    ):
+    ) -> None:
         """Initialize agentic diagnosis processor.
 
         Args:
@@ -69,13 +69,12 @@ class AgenticDiagnosisProcessor(BaseProcessor):
         """Process diagnosis batch with fully agentic analysis."""
         responses = []
 
-        for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
+        for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=True)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
 
             # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
-                _task="diagnosis",
                 metadata=metadata,
             )
 
@@ -88,24 +87,35 @@ class AgenticDiagnosisProcessor(BaseProcessor):
 
         return responses
 
-    # NOTE: Retrieval method removed - model uses search_web tool instead
-
+    @beartype
     def _convert_result(
         self,
         result: AgenticResult,
-        image_path: Path,
+        image_path: str | Path,
         batch_idx: int,
         sample_idx: int,
     ) -> ModelResponse:
-        """Convert AgenticResult to ModelResponse."""
+        """Convert AgenticResult to ModelResponse.
+
+        Raises:
+            KeyError: If required 'diagnosis' field is missing from response.
+        """
         response = result.final_response
 
-        # Extract diagnosis information
-        diagnosis = response.get("diagnosis", "")
+        # Validate required field - fail fast on missing diagnosis
+        if "diagnosis" not in response:
+            raise KeyError("Missing required 'diagnosis' in agentic response")
+
+        diagnosis = response["diagnosis"]
+        # Optional fields - documented in NOVA agentic schema:
+        # - confidence: Model-provided confidence, falls back to AgenticResult.confidence
+        # - findings: List of clinical findings, defaults to empty
+        # - differential: List of differential diagnoses for top-5 eval, defaults to empty
+        # - reasoning: Chain-of-thought reasoning text, defaults to empty
         confidence = response.get("confidence", result.confidence)
-        findings = response.get("findings", [])
-        differential = response.get("differential", [])
-        reasoning = response.get("reasoning", "")
+        findings: list[str] = response.get("findings", [])
+        differential: list[str] = response.get("differential", [])
+        reasoning: str = response.get("reasoning", "")
 
         # Build structured response text
         response_text = {
@@ -136,13 +146,16 @@ class AgenticDiagnosisProcessor(BaseProcessor):
             },
         )
 
+    @beartype
     def _log_analysis(self, result: AgenticResult, sample_idx: int) -> None:
         """Log analysis details for debugging."""
-        diagnosis = result.final_response.get("diagnosis", "N/A")
+        # Diagnosis is guaranteed to exist - validated in _convert_result
+        diagnosis = result.final_response["diagnosis"]
+        diagnosis_preview = diagnosis[:50] if len(diagnosis) > 50 else diagnosis
         tool_count = sum(len(t.tool_calls) for t in result.turns)
         logger.info(
             f"Sample {sample_idx}: "
-            f"diagnosis='{diagnosis[:50]}...', "
+            f"diagnosis='{diagnosis_preview}...', "
             f"confidence={result.confidence:.2f}, "
             f"turns={len(result.turns)}, "
             f"tools={tool_count}, "
@@ -150,7 +163,7 @@ class AgenticDiagnosisProcessor(BaseProcessor):
         )
 
         web_searches = sum(
-            1 for t in result.turns if any(tc.get("name") == "search_web" for tc in t.tool_calls)
+            1 for t in result.turns if any(tc["name"] == "search_web" for tc in t.tool_calls if "name" in tc)
         )
         if web_searches > 0:
             logger.debug(f"  Web searches: {web_searches} performed")
@@ -158,41 +171,49 @@ class AgenticDiagnosisProcessor(BaseProcessor):
     @beartype
     def evaluate_responses(
         self, responses: list[ModelResponse], ground_truth: list[str]
-    ) -> EvaluationMetrics:
-        """Evaluate diagnosis responses using NOVA protocol."""
+    ) -> DiagnosisMetrics:
+        """Evaluate diagnosis responses using NOVA protocol.
+
+        Raises:
+            ValueError: If JSON parsing fails for any response.
+            json.JSONDecodeError: If ground truth JSON is malformed.
+        """
         # Extract predicted diagnoses
         predicted_diagnoses = []
         for response in responses:
             try:
                 parsed = json.loads(response.text)
-                diagnosis = parsed.get("diagnosis", "")
-                differential = parsed.get("differential", [])
-
-                # Include differential diagnoses for top-5 evaluation
-                all_diagnoses = [diagnosis] + differential if differential else [diagnosis]
-                predicted_diagnoses.append(all_diagnoses)
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response from model: {response.text}") from e
 
-        # Parse ground truth
+            if "diagnosis" not in parsed:
+                raise ValueError(f"Missing 'diagnosis' in parsed response: {parsed}")
+
+            diagnosis = parsed["diagnosis"]
+            # differential is optional - used for top-5 evaluation
+            differential = parsed.get("differential", [])
+
+            # Include differential diagnoses for top-5 evaluation
+            all_diagnoses = [diagnosis] + differential if differential else [diagnosis]
+            predicted_diagnoses.append(all_diagnoses)
+
+        # Parse ground truth - fail fast on malformed data
         ground_truth_diagnoses = []
         for gt in ground_truth:
             gt_parsed = json.loads(gt)
-            diagnosis = gt_parsed.get("diagnosis", gt)
-            ground_truth_diagnoses.append(diagnosis)
+            if "diagnosis" not in gt_parsed:
+                raise ValueError(f"Missing 'diagnosis' in ground truth: {gt}")
+            ground_truth_diagnoses.append(gt_parsed["diagnosis"])
 
-        # Use NOVA official evaluation (with GPT-4o semantic matching)
-        # Note: For testing, we use exact matching to avoid API costs
+        # Use NOVA official evaluation (with LLM semantic matching per NOVA protocol)
         results = evaluate_diagnosis_nova_official(
             preds=predicted_diagnoses,
             refs=ground_truth_diagnoses,
-            use_gpt4o_matching=False,  # Use exact matching by default
         )
 
-        return EvaluationMetrics(
-            accuracy=results.get("top1", 0.0),
-            precision=results.get("top5"),  # Top-5 as secondary metric
-            recall=results.get("coverage"),
-            f1_score=None,
-            auc_roc=results.get("entropy"),
+        return DiagnosisMetrics(
+            top1=results["top1"],
+            top5=results["top5"],
+            coverage=results["coverage"],
+            entropy=results["entropy"],
         )

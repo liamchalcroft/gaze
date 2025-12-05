@@ -19,6 +19,7 @@ from jaxtyping import Int
 from jaxtyping import UInt8
 from jaxtyping import jaxtyped
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 
 # Vision tensor types with jaxtyping shape specifications
@@ -45,11 +46,12 @@ MedicalImageBatch = Float[torch.Tensor, "batch 1 height width"]
 MultiModalFeatures = Float[torch.Tensor, "batch modalities features"]
 
 # NumPy array types for image processing
-ImageArray = Float[np.ndarray[Any, Any], "height width channels"]
-GrayscaleArray = Float[np.ndarray[Any, Any], "height width"]
-FeatureArray = Float[np.ndarray[Any, Any], "features"]
-MaskArray = Bool[np.ndarray[Any, Any], "height width"]
-IntensityArray = UInt8[np.ndarray[Any, Any], "height width"]
+# Note: jaxtyping uses np.ndarray directly, shape checking is via the string annotation
+ImageArray = Float[np.ndarray, "height width channels"]
+GrayscaleArray = Float[np.ndarray, "height width"]
+FeatureArray = Float[np.ndarray, "features"]
+MaskArray = Bool[np.ndarray, "height width"]
+IntensityArray = UInt8[np.ndarray, "height width"]
 
 
 def tensor_validated(func: Any) -> Any:
@@ -63,7 +65,6 @@ ModelPath = str | Path
 
 # Core data structures
 MetadataDict = dict[str, Any]
-ConfigDict = dict[str, Any]
 
 # Medical imaging specific
 DicomMetadata = dict[str, str | int | float]
@@ -71,13 +72,57 @@ NiftiMetadata = dict[str, str | int | float | list[float]]
 
 
 class EvaluationMetrics(BaseModel):
-    """Evaluation metrics for model performance."""
+    """Base evaluation metrics - prefer task-specific metrics classes."""
 
     accuracy: float = Field(ge=0.0, le=1.0)
     precision: float | None = Field(None, ge=0.0, le=1.0)
     recall: float | None = Field(None, ge=0.0, le=1.0)
     f1_score: float | None = Field(None, ge=0.0, le=1.0)
     auc_roc: float | None = Field(None, ge=0.0, le=1.0)
+
+
+class CaptionMetrics(BaseModel):
+    """Evaluation metrics for caption generation tasks.
+
+    All metrics are normalized to 0-1 range.
+    """
+
+    bleu: float = Field(ge=0.0, le=1.0, description="BLEU score (primary metric)")
+    bert_f1: float = Field(ge=0.0, le=1.0, description="BERTScore F1")
+    meteor: float = Field(ge=0.0, le=1.0, description="METEOR score")
+    modality_f1: float = Field(ge=0.0, le=1.0, description="Modality keyword F1")
+    clinical_f1: float = Field(ge=0.0, le=1.0, description="Clinical keyword F1")
+    binary_accuracy: float = Field(ge=0.0, le=1.0, description="Normal/abnormal accuracy")
+    binary_f1: float = Field(ge=0.0, le=1.0, description="Normal/abnormal F1")
+    radgraph_f1: float | None = Field(
+        None, ge=0.0, le=1.0, description="RadGraph F1 (optional dependency)"
+    )
+
+
+class DetectionMetrics(BaseModel):
+    """Evaluation metrics for object detection/localization tasks.
+
+    Follows NOVA benchmark protocol with multiple IoU thresholds.
+    """
+
+    map30: float = Field(ge=0.0, le=1.0, description="mAP at IoU threshold 0.3")
+    map50: float = Field(ge=0.0, le=1.0, description="mAP at IoU threshold 0.5 (primary)")
+    map50_95: float = Field(ge=0.0, le=1.0, description="mAP averaged across IoU 0.5-0.95")
+    acc50: float = Field(ge=0.0, le=1.0, description="Detection accuracy at IoU 0.5")
+    tp30: int = Field(ge=0, description="True positives at IoU 0.3")
+    fp30: int = Field(ge=0, description="False positives at IoU 0.3")
+
+
+class DiagnosisMetrics(BaseModel):
+    """Evaluation metrics for diagnosis classification tasks.
+
+    Follows NOVA benchmark protocol with LLM semantic matching.
+    """
+
+    top1: float = Field(ge=0.0, le=1.0, description="Top-1 accuracy (primary)")
+    top5: float = Field(ge=0.0, le=1.0, description="Top-5 accuracy")
+    coverage: float = Field(ge=0.0, description="Unique predictions / unique references")
+    entropy: float = Field(ge=0.0, description="Shannon entropy of prediction distribution")
 
 
 class ModelResponse(BaseModel):
@@ -110,44 +155,34 @@ class BatchData(BaseModel):
 class APIRequest(BaseModel):
     """Base class for API requests with comprehensive validation."""
 
+    model_config = ConfigDict(ser_json_bytes="utf8")
+
     request_id: str = Field(description="Unique identifier for the request")
     timestamp: float = Field(description="Request timestamp")
-
-    class Config:
-        """Pydantic configuration."""
-
-        json_encoders = {Path: str}
 
 
 class VisionAnalysisRequest(APIRequest):
     """Request for vision-language model analysis."""
 
-    image_path: ImagePath = Field(description="Path to the image file")
-    task_type: str = Field(
-        description="Type of analysis task", pattern="^(localization|caption|diagnosis|detection)$"
-    )
-    system_prompt: str | None = Field(None, description="Optional system prompt override")
-    use_retrieval: bool = Field(False, description="Whether to use retrieval augmentation")
-    retrieval_passages: list[str] = Field(
-        default_factory=list, description="Pre-retrieved passages"
-    )
-    metadata: MetadataDict = Field(default_factory=dict, description="Additional metadata")
-
-    class Config(APIRequest.Config):
-        """Enhanced configuration."""
-
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "request_id": "req_123456",
                 "timestamp": 1609459200.0,
                 "image_path": "/path/to/image.jpg",
                 "task_type": "diagnosis",
                 "system_prompt": None,
-                "use_retrieval": True,
-                "retrieval_passages": ["Medical context passage..."],
                 "metadata": {"patient_id": "P001"},
             }
         }
+    )
+
+    image_path: ImagePath = Field(description="Path to the image file")
+    task_type: str = Field(
+        description="Type of analysis task", pattern="^(localization|caption|diagnosis|detection)$"
+    )
+    system_prompt: str | None = Field(None, description="Optional system prompt override")
+    metadata: MetadataDict = Field(default_factory=dict, description="Additional metadata")
 
 
 class VisionAnalysisResponse(BaseModel):
@@ -158,11 +193,6 @@ class VisionAnalysisResponse(BaseModel):
     generation_log: dict[str, Any] | None = Field(None, description="Generation metadata")
     processing_time: float = Field(ge=0.0, description="Total processing time in seconds")
     error: str | None = Field(None, description="Error message if analysis failed")
-
-    class Config:
-        """Pydantic configuration."""
-
-        json_encoders = {Path: str}
 
 
 class BatchAnalysisRequest(APIRequest):
@@ -179,7 +209,7 @@ class BatchAnalysisResponse(BaseModel):
 
     request_id: str = Field(description="Matching request identifier")
     results: list[VisionAnalysisResponse] = Field(description="Individual analysis results")
-    batch_summary: dict = Field(description="Summary statistics for the batch")
+    batch_summary: dict[str, Any] = Field(description="Summary statistics for the batch")
     total_processing_time: float = Field(ge=0.0, description="Total batch processing time")
 
     def success_rate(self) -> float:
@@ -193,53 +223,81 @@ class BatchAnalysisResponse(BaseModel):
 class JSONParseError(Exception):
     """Raised when JSON parsing fails definitively."""
 
-    def __init__(self, original_content: str, error: str) -> None:
+    def __init__(
+        self, original_content: str, error: str, attempts: int | None = None
+    ) -> None:
         self.original_content = original_content
         self.error = error
-        super().__init__(f"Failed to parse JSON: {error}")
+        self.attempts = attempts
+        msg = f"Failed to parse JSON: {error}"
+        if attempts is not None:
+            msg += f" (after {attempts} attempts)"
+        super().__init__(msg)
 
 
 class ModelError(Exception):
     """Base exception for model-related errors."""
 
-    pass
+    def __init__(self, message: str, model_name: str | None = None) -> None:
+        super().__init__(message)
+        self.model_name = model_name
 
 
 class APIError(ModelError):
     """Raised when API calls fail."""
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        model_name: str | None = None,
+        status_code: int | None = None,
+        response_body: str | None = None,
+    ) -> None:
+        super().__init__(message, model_name)
+        self.status_code = status_code
+        self.response_body = response_body
 
 
 class ValidationError(ModelError):
     """Raised when input validation fails."""
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        field_name: str | None = None,
+        invalid_value: object = None,
+    ) -> None:
+        super().__init__(message)
+        self.field_name = field_name
+        self.invalid_value = invalid_value
 
 
 class ConfigurationError(Exception):
     """Raised when configuration is invalid."""
 
-    pass
+    def __init__(self, message: str, config_key: str | None = None) -> None:
+        super().__init__(message)
+        self.config_key = config_key
 
 
 @beartype
-def parse_json_response(payload: str) -> dict[str, Any]:
-    """Parse JSON response from model with minimal preprocessing.
+def strip_markdown_fences(text: str) -> str:
+    """Remove markdown code fences from text.
+
+    Handles:
+    - ```json ... ``` blocks
+    - ``` ... ``` blocks
+    - Single backtick wrapping
 
     Args:
-        payload: Raw response string from model
+        text: Text potentially wrapped in markdown fences
 
     Returns:
-        Parsed dictionary
-
-    Raises:
-        JSONParseError: If parsing fails after basic cleanup
+        Text with fences removed
     """
-    # Minimal cleanup - remove markdown fences and common prefixes
-    cleaned = payload.strip()
+    cleaned = text.strip()
 
-    # Remove markdown fences
+    # Remove triple-backtick fences
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:]
     elif cleaned.startswith("```"):
@@ -251,25 +309,84 @@ def parse_json_response(payload: str) -> dict[str, Any]:
     if cleaned.startswith("`") and cleaned.endswith("`"):
         cleaned = cleaned[1:-1]
 
-    # Remove common prefixes
-    prefixes = ["answer:", "json:", "result:", "here is the json:", "output:"]
-    cleaned_lower = cleaned.lower().strip()
-    for prefix in prefixes:
-        if cleaned_lower.startswith(prefix):
-            cleaned = cleaned[len(prefix) :].strip()
-            break
+    return cleaned.strip()
 
-    # Try to extract JSON from text that contains other content
-    cleaned = cleaned.strip()
-    if not cleaned.startswith("{") and "{" in cleaned:
-        # Find the first { and extract from there
-        json_start = cleaned.find("{")
-        cleaned = cleaned[json_start:]
+
+# Common prefixes that models add before JSON output
+JSON_PREFIXES = frozenset(["answer:", "json:", "result:", "here is the json:", "output:"])
+
+
+@beartype
+def strip_json_prefixes(text: str) -> str:
+    """Remove common prefixes that models add before JSON.
+
+    Args:
+        text: Text potentially starting with a prefix
+
+    Returns:
+        Text with prefix removed
+    """
+    cleaned_lower = text.lower().strip()
+    for prefix in JSON_PREFIXES:
+        if cleaned_lower.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+@beartype
+def extract_json_object(text: str) -> str:
+    """Extract JSON object from text that may contain other content.
+
+    Finds the first '{' and extracts from there.
+
+    Args:
+        text: Text containing a JSON object
+
+    Returns:
+        Extracted JSON string starting from first '{'
+
+    Raises:
+        JSONParseError: If no JSON object found in text
+    """
+    text = text.strip()
+    if text.startswith("{"):
+        return text
+
+    json_start = text.find("{")
+    if json_start == -1:
+        raise JSONParseError(text, "No JSON object found in response")
+
+    return text[json_start:]
+
+
+@beartype
+def parse_json_response(payload: str) -> dict[str, Any]:
+    """Parse JSON response from model with explicit preprocessing steps.
+
+    Preprocessing pipeline:
+    1. Strip markdown fences (```json, ```, single backticks)
+    2. Strip common prefixes ("answer:", "json:", etc.)
+    3. Extract JSON object (find first '{')
+    4. Parse JSON
+
+    Args:
+        payload: Raw response string from model
+
+    Returns:
+        Parsed dictionary
+
+    Raises:
+        JSONParseError: If parsing fails after preprocessing
+    """
+    # Explicit preprocessing pipeline
+    cleaned = strip_markdown_fences(payload)
+    cleaned = strip_json_prefixes(cleaned)
+    cleaned = extract_json_object(cleaned)
 
     try:
         result = json.loads(cleaned)
         if not isinstance(result, dict):
-            raise JSONParseError(payload, f"Expected dict, got {type(result)}")
+            raise JSONParseError(payload, f"Expected dict, got {type(result).__name__}")
         return result
     except json.JSONDecodeError as e:
         raise JSONParseError(payload, f"JSON decode error: {e}") from e

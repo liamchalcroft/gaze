@@ -1,13 +1,14 @@
-# NOVA Retrieval VLM
+# NOVA VLM
 
-A research framework for benchmarking vision-language models on medical imaging tasks using the NOVA brain-MRI dataset. This system compares baseline models against retrieval-augmented approaches across localization, captioning, and diagnosis tasks.
+A research framework for benchmarking vision-language models on medical imaging tasks using the NOVA brain-MRI dataset. It evaluates models on localization, captioning, and diagnosis tasks using agentic multi-turn reasoning with visual tools and web search.
 
 ## Overview
 
-The NOVA Retrieval VLM framework enables systematic evaluation of vision-language models on medical imaging tasks. It provides tools for:
+The NOVA VLM framework enables systematic evaluation of vision-language models on medical imaging tasks. It provides tools for:
 
 - **Multi-model evaluation**: Support for OpenAI models and 100+ models via OpenRouter
-- **Retrieval augmentation**: BM25, dense vector, and hybrid retrieval from medical guidelines  
+- **Agentic processing**: Multi-turn reasoning with visual tools (zoom, crop, contrast, threshold)
+- **Web search integration**: Real-time PubMed search for medical literature
 - **Comprehensive metrics**: Automated evaluation for all NOVA benchmark tasks
 - **Batch processing**: Efficient async processing with rate limiting and retry logic
 - **Interactive analysis**: Streamlit GUI and visualization tools
@@ -29,9 +30,7 @@ graph TD
     B --> B2[config.py - Configuration management]
     B --> B3[models/ - Model adapters]
     B --> B4[evaluation/ - Task metrics]
-    B --> B5[retrieval/ - Retrieval systems]
-    B --> B6[knowledge_base/ - Index building]
-    B --> B7[processors/ - Task processors]
+    B --> B5[processors/ - Task processors]
     B --> B8[prompts/ - Jinja2 templates]
     B --> B9[visualization/ - GUI & plotting]
     B --> B10[types.py - Type definitions]
@@ -58,7 +57,6 @@ graph TD
 | `paper/` | Research paper LaTeX source |
 | `data/` | NOVA dataset storage |
 | `runs/` | Experiment outputs and results |
-| `indexes/` | Retrieval system indexes |
 | `notebooks/` | Analysis and exploration notebooks |
 
 ## Installation
@@ -96,13 +94,10 @@ graph TD
    OUTPUT_DIR=./runs
    ```
 
-4. **Download dataset and build indexes:**
+4. **Download dataset:**
    ```bash
    # Download NOVA dataset from https://huggingface.co/datasets/c-i-ber/Nova
    python scripts/download_nova.py --data-dir $DATA_DIR
-
-   # Build retrieval indexes
-   python scripts/build_index.py
    ```
 
 ## Usage
@@ -136,30 +131,27 @@ python -m nova_retrieval_vlm.cli \
   paths.output_dir=runs/diagnosis
 ```
 
-#### Retrieval-Augmented Tasks
+#### Agentic Processing
 
 ```bash
-# Localization with BM25 retrieval
+# Agentic localization with visual tools
 python -m nova_retrieval_vlm.cli \
   task=localization \
-  use_retrieval=true \
-  retrieval.type=bm25 \
-  retrieval.top_k=5 \
+  agentic.enabled=true \
+  agentic.use_tools=true \
   model.name=openai/gpt-4o
 
-# Caption with hybrid retrieval
+# Agentic diagnosis with multi-turn reasoning
 python -m nova_retrieval_vlm.cli \
-  task=caption \
-  use_retrieval=true \
-  retrieval.type=hybrid \
-  retrieval.top_k=3 \
+  task=diagnosis \
+  agentic.enabled=true \
+  agentic.max_turns=5 \
   model.name=anthropic/claude-3.5-sonnet
 
-# Multi-turn diagnosis with retrieval
+# Multi-turn analysis
 python -m nova_retrieval_vlm.cli \
   task=diagnosis \
   approach=multiturn \
-  use_retrieval=true \
   model.name=openai/gpt-4o
 ```
 
@@ -210,11 +202,11 @@ python -m nova_retrieval_vlm.cli \
   model.max_tokens=2048 \
   model.timeout=120
 
-# Retrieval settings  
+# Agentic settings
 python -m nova_retrieval_vlm.cli \
-  retrieval.type=hybrid \
-  retrieval.top_k=5 \
-  retrieval.hybrid_ratio=0.7
+  agentic.enabled=true \
+  agentic.use_tools=true \
+  agentic.max_turns=5
 
 # Processing settings
 python -m nova_retrieval_vlm.cli \
@@ -233,12 +225,12 @@ model:
   name: "openai/gpt-4o"
   temperature: 0.1
 
-retrieval:
-  type: "hybrid"
-  top_k: 3
+agentic:
+  enabled: true
+  use_tools: true
+  max_turns: 5
 
 task: "diagnosis"
-use_retrieval: true
 batch_size: 2
 ```
 

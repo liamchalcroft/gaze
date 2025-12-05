@@ -6,6 +6,9 @@ consistent parsing and validation with structured outputs.
 
 from __future__ import annotations
 
+from typing import Any
+from typing import cast
+
 # NOVA Unified Response Schema for all three tasks
 NOVA_UNIFIED_SCHEMA = {
     "type": "json_schema",
@@ -21,11 +24,11 @@ NOVA_UNIFIED_SCHEMA = {
                     "properties": {
                         "description": {
                             "type": "string",
-                            "description": "Detailed radiological description of all visible structures and findings",
+                            "description": "Radiological description of visible structures",
                         },
                         "sequence_characteristics": {
                             "type": "string",
-                            "description": "Identified imaging sequence (T1W, T2W, FLAIR, DWI, etc.)",
+                            "description": "Imaging sequence (T1W, T2W, FLAIR, DWI, etc.)",
                         },
                         "orientation": {
                             "type": "string",
@@ -57,7 +60,7 @@ NOVA_UNIFIED_SCHEMA = {
                 },
                 "diagnosis": {
                     "type": "object",
-                    "description": "Primary and differential diagnoses with clinical recommendations",
+                    "description": "Primary and differential diagnoses",
                     "properties": {
                         "primary_diagnosis": {
                             "type": "string",
@@ -108,14 +111,14 @@ NOVA_UNIFIED_SCHEMA = {
                                 "properties": {
                                     "finding": {
                                         "type": "string",
-                                        "description": "Description of the abnormality being localized",
+                                        "description": "Description of the abnormality",
                                     },
                                     "bounding_box": {
                                         "type": "array",
                                         "items": {"type": "number"},
                                         "minItems": 4,
                                         "maxItems": 4,
-                                        "description": "Bounding box coordinates [x1, y1, x2, y2] in absolute pixels",
+                                        "description": "Box coordinates [x1, y1, x2, y2] in pixels",
                                     },
                                     "anatomical_location": {
                                         "type": "string",
@@ -161,30 +164,32 @@ NOVA_UNIFIED_SCHEMA = {
     },
 }
 
+# Extract sub-schemas with proper typing for individual task use
+_json_schema = cast(dict[str, Any], NOVA_UNIFIED_SCHEMA["json_schema"])
+_unified_schema = cast(dict[str, Any], _json_schema["schema"])
+_properties = cast(dict[str, dict[str, Any]], _unified_schema["properties"])
+
+# Helper to construct a complete individual task schema
+def _make_task_schema(name: str, task_key: str) -> dict[str, Any]:
+    """Create a complete JSON Schema wrapper for an individual task."""
+    task_schema = _properties[task_key]
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "description": task_schema.get("description", ""),
+                "properties": task_schema.get("properties", {}),
+                "required": task_schema.get("required", []),
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 # Individual task schemas for when only one task is needed
-CAPTION_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "nova_caption_response",
-        "strict": True,
-        "schema": NOVA_UNIFIED_SCHEMA["json_schema"]["schema"]["properties"]["caption"],
-    },
-}
-
-DIAGNOSIS_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "nova_diagnosis_response",
-        "strict": True,
-        "schema": NOVA_UNIFIED_SCHEMA["json_schema"]["schema"]["properties"]["diagnosis"],
-    },
-}
-
-LOCALIZATION_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "nova_localization_response",
-        "strict": True,
-        "schema": NOVA_UNIFIED_SCHEMA["json_schema"]["schema"]["properties"]["localization"],
-    },
-}
+CAPTION_SCHEMA = _make_task_schema("nova_caption_response", "caption")
+DIAGNOSIS_SCHEMA = _make_task_schema("nova_diagnosis_response", "diagnosis")
+LOCALIZATION_SCHEMA = _make_task_schema("nova_localization_response", "localization")

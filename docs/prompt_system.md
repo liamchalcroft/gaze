@@ -14,7 +14,6 @@ src/nova_retrieval_vlm/prompts/system/
 ├── baseline.jinja       # Baseline analysis mode
 ├── multiturn.jinja      # Multi-turn reasoning mode
 ├── visual.jinja         # Visual operations mode
-├── retrieval.jinja      # Retrieval-augmented mode
 ├── web_search.jinja     # Web search integration mode
 └── comprehensive.jinja  # Comprehensive mode (all capabilities)
 ```
@@ -47,7 +46,6 @@ Child templates override blocks with mode-specific instructions.
   - Step-by-step reasoning process
   - Evidence gathering and hypothesis formation
   - Confidence calibration
-  - Retrieval integration (optional)
 
 ### 3. Visual Mode (`visual`)
 - **Purpose**: Visual operations and web search integration
@@ -60,18 +58,7 @@ Child templates override blocks with mode-specific instructions.
   - Multi-modal reasoning
   - Iterative visual analysis
 
-### 4. Retrieval Mode (`retrieval`)
-- **Purpose**: Evidence-based analysis with medical knowledge retrieval
-- **Use Case**: Cases requiring guideline and research integration
-- **Template**: `system/retrieval.jinja`
-- **CLI Usage**: `approach=baseline use_retrieval=true`
-- **Features**:
-  - Medical knowledge retrieval
-  - Clinical guideline integration
-  - Evidence-based conclusions
-  - Source evaluation
-
-### 5. Web Search Mode (`web_search`)
+### 4. Web Search Mode (`web_search`)
 - **Purpose**: Real-time medical information access
 - **Use Case**: Cases requiring current medical information
 - **Template**: `system/web_search.jinja`
@@ -82,13 +69,13 @@ Child templates override blocks with mode-specific instructions.
   - Source authority assessment
   - Current guideline access
 
-### 6. Comprehensive Mode (`comprehensive`)
+### 5. Comprehensive Mode (`comprehensive`)
 - **Purpose**: All capabilities combined
 - **Use Case**: Most complex cases requiring all available tools
 - **Template**: `system/comprehensive.jinja`
 - **CLI Usage**: `approach=visual_multiturn` (with all features enabled)
 - **Features**:
-  - All visual, retrieval, and web search capabilities
+  - All visual and web search capabilities
   - Multi-turn reasoning
   - Evidence synthesis
   - Clinical correlation
@@ -123,8 +110,8 @@ system_prompt = get_system_prompt("multiturn")
 # Baseline analysis
 python -m nova_retrieval_vlm.cli task=caption approach=baseline
 
-# Multi-turn analysis with retrieval
-python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn use_retrieval=true
+# Multi-turn analysis
+python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
 
 # Visual multi-turn with web search
 python -m nova_retrieval_vlm.cli task=localization approach=visual_multiturn visual_rounds=3
@@ -141,7 +128,7 @@ from nova_retrieval_vlm.prompts.prompt_loader import (
 from nova_retrieval_vlm.prompts.system_prompts import get_system_prompt
 
 # Available modes
-modes = ["baseline", "multiturn", "visual", "retrieval", "web_search", "comprehensive"]
+modes = ["baseline", "multiturn", "visual", "web_search", "comprehensive"]
 
 # Get mode from template name
 mode = get_mode_from_template("multiturn/step1.jinja")  # Returns "multiturn"
@@ -162,7 +149,6 @@ prompt = load_prompt(
 
 System prompts support context variables that can be passed to customize behavior:
 
-- `use_retrieval`: Enable/disable retrieval-specific instructions
 - `custom_setting`: Any custom variable for template logic
 
 ### Template Customization
@@ -187,7 +173,6 @@ To customize system prompts:
 **Mode Detection**: Template naming conventions:
 - `multiturn/` prefix → "multiturn" mode
 - `visual_multiturn/` prefix → "visual" mode
-- `retrieval_` prefix → "retrieval" mode
 - `baseline/` prefix → "baseline" mode
 
 **Debugging**: Enable debug logging:

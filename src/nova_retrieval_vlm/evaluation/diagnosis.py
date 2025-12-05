@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import math
+import re
 from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
+from beartype import beartype
 from loguru import logger
 
 
+@beartype
 def normalize_diagnosis_string(diag: str) -> str:
     """
     Normalize diagnosis strings for better matching.
@@ -33,7 +37,6 @@ def normalize_diagnosis_string(diag: str) -> str:
     abbreviations = {
         "sod": "septo-optic dysplasia",
         "acc": "agenesis of corpus callosum",
-        "hydrocephalus": "hydrocephalus",
         "cpa": "cerebellopontine angle",
         "avm": "arteriovenous malformation",
         "pnet": "primitive neuroectodermal tumor",
@@ -63,6 +66,7 @@ def normalize_diagnosis_string(diag: str) -> str:
     return normalized.strip()
 
 
+@beartype
 def exact_diagnosis_match(pred: str, ref: str) -> bool:
     """
     Perform enhanced exact matching for medical diagnoses.
@@ -96,7 +100,7 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
         # Vascular conditions
         (r"\bcerebral infarction\b", r"\bstroke\b"),
         (r"\bischemic stroke\b", r"\bcerebral infarction\b"),
-        (r"\brain hemorrhage\b", r"\bintracerebral hemorrhage\b"),
+        (r"\bbrain hemorrhage\b", r"\bintracerebral hemorrhage\b"),
         (r"\bsubarachnoid hemorrhage\b", r"\bsah\b"),
         # Cyst patterns
         (r"\barachnoid cyst\b", r"\bcyst\b"),
@@ -109,8 +113,6 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
         (r"\bcontusion\b", r"\bbrain injury\b"),
         (r"\bshearing injury\b", r"\bdiffuse axonal injury\b"),
     ]
-
-    import re
 
     # Check semantic patterns
     for pred_pattern, ref_pattern in semantic_patterns:
@@ -133,23 +135,29 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
     return False
 
 
-def gpt4o_semantic_match(pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free") -> bool:
+@beartype
+async def llm_semantic_match_async(
+    pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free"
+) -> bool:
     """
-    Use LLM semantic matching between prediction and reference diagnosis.
+    Use LLM semantic matching between prediction and reference diagnosis (async).
 
-    This follows the official NOVA evaluation protocol for diagnosis task:
-    "GPT-4o is used to perform semantic matching between predictions and ground truth labels"
+    This follows the NOVA evaluation protocol for diagnosis task which uses LLM-based
+    semantic matching. The default uses a cost-efficient SOTA model via OpenRouter,
+    but any capable model (e.g., GPT-4o, Claude) can be substituted.
 
     Args:
         pred: Predicted diagnosis string.
         ref: Reference/ground truth diagnosis string.
-        model_name: Model to use for semantic matching (default: x-ai/grok-4.1-fast:free).
-    """
-    try:
-        from nova_retrieval_vlm.models import get_model_client
+        model_name: Model to use for semantic matching. Default uses the best
+            available free model on OpenRouter for cost efficiency.
 
-        # Create the semantic matching prompt
-        prompt = f"""You are a medical expert evaluating diagnostic predictions.
+    Raises:
+        ValueError: If LLM API call fails (semantic matching is required for NOVA evaluation).
+    """
+    from nova_retrieval_vlm.models import get_model_client
+
+    prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
 Your task is to determine if two diagnostic labels refer to the same medical condition,
 even if expressed differently.
@@ -168,28 +176,42 @@ Respond with ONLY "YES" if they refer to the same medical condition,
 or "NO" if they refer to different conditions.
 """
 
-        # Get model client and make the comparison
-        import asyncio
-
-        client = get_model_client(model_name)
-
-        # Use the adapter's generate_text method for text-only requests
-        async def make_request():
-            response, _ = await client.generate_text(
-                prompt_text=prompt,
-                system_prompt="You are a medical expert. Respond only with YES or NO.",
-            )
-            return response
-
-        # Run async function in sync context
-        result = asyncio.run(make_request()).strip().upper()
-        return result == "YES"
-
-    except Exception as e:
-        logger.error(f"Semantic matching failed for '{pred}' vs '{ref}': {e}")
-        raise ValueError(f"LLM semantic matching is required for NOVA evaluation: {e}") from e
+    client = get_model_client(model_name)
+    response, _ = await client.generate_text(
+        prompt_text=prompt,
+        system_prompt="You are a medical expert. Respond only with YES or NO.",
+    )
+    return response.strip().upper() == "YES"
 
 
+@beartype
+def llm_semantic_match(pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free") -> bool:
+    """
+    Synchronous wrapper for LLM semantic matching.
+
+    Note: This function cannot be called from within an async context.
+    Use llm_semantic_match_async directly when in async context.
+
+    Raises:
+        RuntimeError: If called from within an async context
+    """
+    # Check if we're in an async context without string-matching exceptions
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running event loop - safe to use asyncio.run()
+        loop = None
+
+    if loop is not None:
+        raise RuntimeError(
+            "llm_semantic_match cannot be called from an async context. "
+            "Use llm_semantic_match_async instead."
+        )
+
+    return asyncio.run(llm_semantic_match_async(pred, ref, model_name))
+
+
+@beartype
 def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
@@ -198,42 +220,53 @@ def evaluate_diagnosis_nova_official(
     """
     Official NOVA diagnosis evaluation using LLM semantic matching.
 
-    This implements the exact protocol described in the NOVA paper:
-    "GPT-4o is used to perform semantic matching between predictions and ground truth labels"
+    This implements the NOVA evaluation protocol which uses LLM-based semantic
+    matching between predictions and ground truth labels. The default model
+    uses a cost-efficient SOTA model via OpenRouter.
 
     Args:
         preds: List of predicted diagnosis or list of predictions (for top-5).
         refs: List of reference diagnoses.
-        model_name: Model to use for semantic matching (default: x-ai/grok-4.1-fast:free).
+        model_name: Model to use for semantic matching. Default uses the best
+            available free model on OpenRouter for cost efficiency.
 
     Returns:
         Dictionary with keys 'top1', 'top5', 'coverage', 'entropy'.
+
+    Raises:
+        ValueError: If preds and refs have different lengths.
     """
     n = len(refs)
     if n == 0:
         return {"top1": 0.0, "top5": 0.0, "coverage": 0.0, "entropy": 0.0}
+
+    if len(preds) != n:
+        raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {n}")
 
     # Track semantic and exact matches
     top1_count = 0
     top5_count = 0
     all_preds = []
 
-    for i, (p, r) in enumerate(zip(preds, refs, strict=False)):
-        if i % 10 == 0:  # Progress indicator
-            pass
+    for i, (p, r) in enumerate(zip(preds, refs, strict=True)):
+        if i % 10 == 0 and i > 0:
+            logger.debug(f"Processed {i}/{n} diagnosis comparisons")
 
         if isinstance(p, list):
             # Handle list predictions (top-5)
             top1_pred = p[0] if p else None
 
-            # Top-1 evaluation - use semantic matching for all cases
-            if top1_pred and gpt4o_semantic_match(str(top1_pred), str(r), model_name):
+            # Top-1 evaluation - use fast exact match first, then LLM semantic matching
+            if top1_pred and (exact_diagnosis_match(str(top1_pred), str(r)) or llm_semantic_match(str(top1_pred), str(r), model_name)):
                 top1_count += 1
 
-            # Top-5 evaluation - use semantic matching for all cases
+            # Top-5 evaluation - use fast exact match first, then LLM for remaining
             top5_match = False
             for pred in p:
-                if gpt4o_semantic_match(str(pred), str(r), model_name):
+                if exact_diagnosis_match(str(pred), str(r)):
+                    top5_match = True
+                    break
+                if llm_semantic_match(str(pred), str(r), model_name):
                     top5_match = True
                     break
 
@@ -242,8 +275,8 @@ def evaluate_diagnosis_nova_official(
 
             all_preds.extend(p)
         else:
-            # Handle single predictions - use semantic matching for all cases
-            if gpt4o_semantic_match(str(p), str(r), model_name):
+            # Handle single predictions - use fast exact match first, then LLM
+            if exact_diagnosis_match(str(p), str(r)) or llm_semantic_match(str(p), str(r), model_name):
                 top1_count += 1
                 top5_count += 1
 
@@ -260,13 +293,14 @@ def evaluate_diagnosis_nova_official(
     uniq_refs = len({str(r).strip().lower() for r in refs})
     results["coverage"] = uniq_preds / uniq_refs if uniq_refs > 0 else 0.0
 
-    # Entropy of prediction distribution
+    # Entropy of prediction distribution (Shannon entropy in bits)
     pred_counts = Counter(str(p).strip().lower() for p in all_preds)
     entropy = 0.0
     total_preds = len(all_preds)
     for count in pred_counts.values():
+        # p_i is always > 0 since count >= 1, no epsilon needed
         p_i = count / total_preds
-        entropy -= p_i * math.log(p_i + 1e-12, 2)
+        entropy -= p_i * math.log2(p_i)
 
     results["entropy"] = entropy
 

@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import nest_asyncio
 import pandas as pd
 import streamlit as st
+from beartype import beartype
 from datasets import load_dataset
 from PIL import Image
 
@@ -20,6 +22,10 @@ from nova_retrieval_vlm.utils.confidence_calibration_utils import load_calibrati
 from .plotting import overlay_boxes
 from .plotting import plot_ablation_comparison
 
+# Allow nested event loops for Streamlit compatibility
+# Must be called after imports but before any async code runs
+nest_asyncio.apply()
+
 
 @st.cache_data(show_spinner=False)
 def load_nova_dataset() -> Any:
@@ -27,6 +33,7 @@ def load_nova_dataset() -> Any:
     return load_dataset("c-i-ber/Nova", split="train", trust_remote_code=False)
 
 
+@beartype
 async def predict_with_model(model_name: str, image: Image.Image, task: str) -> dict[str, Any]:
     """Real prediction function using proper model adapters."""
     # Save image to temporary file for model adapters
@@ -46,8 +53,8 @@ async def predict_with_model(model_name: str, image: Image.Image, task: str) -> 
         # Create task-specific prompt based on task type
         if task == "localization":
             system_prompt = (
-                "Analyze this medical image and locate any abnormalities or regions of interest. "
-                "Return your response as JSON with 'boxes' (list of [x, y, width, height] coordinates) "
+                "Analyze this medical image and locate abnormalities or regions of interest. "
+                "Return JSON with 'boxes' (list of [x, y, width, height] coordinates) "
                 "and 'reasoning'."
             )
         elif task == "caption":
@@ -74,33 +81,29 @@ async def predict_with_model(model_name: str, image: Image.Image, task: str) -> 
         )
 
         # Parse JSON response
+        from nova_retrieval_vlm.types import JSONParseError
+
         try:
             result = json.loads(response_text)
-            result["model_name"] = model_name
-            result["generation_log"] = {
-                "tokens": generation_log.tokens,
-                "cost": generation_log.cost,
-                "timestamp": generation_log.timestamp,
-            }
-            return result
-        except json.JSONDecodeError:
-            # If not JSON, return as text response
-            return {
-                "text": response_text,
-                "reasoning": f"Response from {model_name}",
-                "model_name": model_name,
-                "generation_log": {
-                    "tokens": generation_log.tokens,
-                    "cost": generation_log.cost,
-                    "timestamp": generation_log.timestamp,
-                },
-            }
+        except json.JSONDecodeError as e:
+            raise JSONParseError(
+                response_text, f"Model response is not valid JSON: {e}"
+            ) from e
+
+        result["model_name"] = model_name
+        result["generation_log"] = {
+            "tokens": generation_log.tokens,
+            "cost": generation_log.cost,
+            "timestamp": generation_log.timestamp,
+        }
+        return result
 
     finally:
         # Clean up temporary file
         image_path.unlink(missing_ok=True)
 
 
+@beartype
 def render_prediction(result: dict[str, Any], image_path: Path, task: str) -> None:
     """Render prediction outputs based on task."""
     if task == "localization":
@@ -188,6 +191,7 @@ def render_ablation_dashboard() -> None:
         render_raw_data_dashboard(ablation_data)
 
 
+@beartype
 def render_performance_dashboard(eval_metrics: dict[str, Any]) -> None:
     """Render performance comparison dashboard."""
     st.subheader("Performance Comparison")
@@ -223,6 +227,7 @@ def render_performance_dashboard(eval_metrics: dict[str, Any]) -> None:
         )
 
 
+@beartype
 def render_calibration_dashboard(calibration_data: dict[str, Any]) -> None:
     """Render confidence calibration dashboard."""
     st.subheader("Confidence Calibration Analysis")
@@ -240,17 +245,16 @@ def render_calibration_dashboard(calibration_data: dict[str, Any]) -> None:
 
         # Basic calibration metrics
         col1, col2, col3 = st.columns(3)
+        confidences = config_data.get("confidences", [])
+        reliable_flags = config_data.get("reliable_flags", [])
+
         with col1:
-            st.metric("Samples", len(config_data.get("confidences", [])))
+            st.metric("Samples", len(confidences))
         with col2:
-            avg_conf = sum(config_data.get("confidences", [])) / len(
-                config_data.get("confidences", [1])
-            )
+            avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
             st.metric("Avg Confidence", f"{avg_conf:.3f}")
         with col3:
-            reliable_rate = sum(config_data.get("reliable_flags", [])) / len(
-                config_data.get("reliable_flags", [1])
-            )
+            reliable_rate = sum(reliable_flags) / len(reliable_flags) if reliable_flags else 0.0
             st.metric("Reliable Rate", f"{reliable_rate:.3f}")
 
         # Confidence level distribution
@@ -280,6 +284,7 @@ def render_calibration_dashboard(calibration_data: dict[str, Any]) -> None:
             st.pyplot(fig)
 
 
+@beartype
 def render_tool_usage_dashboard(calibration_data: dict[str, Any]) -> None:
     """Render tool usage analysis dashboard."""
     st.subheader("Tool Usage Analysis")
@@ -288,18 +293,17 @@ def render_tool_usage_dashboard(calibration_data: dict[str, Any]) -> None:
         st.info("No calibration data available")
         return
 
-    # Aggregate tool usage across all configurations
-    for config_data in calibration_data.values():
-        # Extract tool usage from research metrics if available
-        for _result in config_data.get("sample_ids", []):
-            # This would need to be implemented based on actual data structure
-            pass
+    # Check if any calibration data has tool usage information
+    has_tool_data = any(config_data.get("sample_ids") for config_data in calibration_data.values())
 
-    st.info(
-        "Tool usage analysis will be available when research metrics are included in the results"
-    )
+    if not has_tool_data:
+        st.info("Tool analysis available when research metrics are in results")
+        return
+
+    st.info("Tool usage data found - analysis implementation pending")
 
 
+@beartype
 def render_raw_data_dashboard(ablation_data: dict[str, Any]) -> None:
     """Render raw data exploration dashboard."""
     st.subheader("Raw Data Exploration")
@@ -325,7 +329,7 @@ def render_raw_data_dashboard(ablation_data: dict[str, Any]) -> None:
 
                     st.write(f"**File:** {selected_file}")
                     st.json(file_data)
-                except Exception as e:
+                except (OSError, json.JSONDecodeError) as e:
                     st.error(f"Error loading file: {e}")
 
         # Evaluation metrics
@@ -503,8 +507,9 @@ def render_prediction_interface() -> None:
                                     st.write("**Reliability Assessment:**")
                                     st.json(reliability)
 
-                    except Exception as e:
-                        st.error(f"Error processing {model} for {task}: {str(e)}")
+                    except (json.JSONDecodeError, OSError) as e:
+                        st.error(f"Error processing {model} for {task}: {e}")
+                    # Note: RuntimeError should propagate to expose actual bugs
 
                     st.divider()
 

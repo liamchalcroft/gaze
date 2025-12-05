@@ -98,7 +98,8 @@ class TestOpenAIAdapter:
         # Verify the log
         assert isinstance(log, GenerationLog)
         assert log.tokens == 100
-        assert log.cost > 0
+        # Cost estimation removed - now always 0 (use OpenRouter dashboard for costs)
+        assert log.cost == 0.0
 
         # Verify the call to the OpenAI client
         adapter.client.chat.completions.create.assert_called_once()
@@ -124,7 +125,8 @@ class TestOpenAIAdapter:
         # Verify the log
         assert isinstance(log, GenerationLog)
         assert log.tokens == 100
-        assert log.cost > 0
+        # Cost estimation removed - now always 0 (use OpenRouter dashboard for costs)
+        assert log.cost == 0.0
 
         # Verify the call to the OpenAI client
         adapter.client.chat.completions.create.assert_called_once()

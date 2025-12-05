@@ -18,9 +18,10 @@ from nova_retrieval_vlm.processors import DiagnosisProcessor
 from nova_retrieval_vlm.processors import LocalizationProcessor
 from nova_retrieval_vlm.processors import ProcessorConfig
 from nova_retrieval_vlm.types import BatchData
-from nova_retrieval_vlm.types import EvaluationMetrics
+from nova_retrieval_vlm.types import CaptionMetrics
+from nova_retrieval_vlm.types import DetectionMetrics
+from nova_retrieval_vlm.types import DiagnosisMetrics
 from nova_retrieval_vlm.types import ModelResponse
-
 
 # Valid unified response for mocks (matches expected JSON schema)
 VALID_UNIFIED_RESPONSE = json.dumps(
@@ -53,7 +54,6 @@ class TestProcessorConfig:
         assert config.task_name == "localization"
         assert config.model_name == "gpt-4o"
         assert config.batch_size == 8  # Default value
-        assert not config.use_retrieval  # Default value
 
     def test_processor_config_all_fields(self):
         """Test ProcessorConfig with all fields specified."""
@@ -61,8 +61,6 @@ class TestProcessorConfig:
             task_name="caption",
             model_name="claude-3-sonnet",
             batch_size=16,
-            use_retrieval=True,
-            retrieval_type="hybrid",
             output_dir=tempfile.mkdtemp(),  # Use temp directory
             skip_existing=True,
         )
@@ -70,8 +68,6 @@ class TestProcessorConfig:
         assert config.task_name == "caption"
         assert config.model_name == "claude-3-sonnet"
         assert config.batch_size == 16
-        assert config.use_retrieval
-        assert config.retrieval_type == "hybrid"
         assert config.output_dir.exists()  # Check directory exists
         assert config.skip_existing
 
@@ -83,8 +79,6 @@ class TestProcessorConfig:
         )
 
         assert config.batch_size == 8
-        assert not config.use_retrieval
-        assert config.retrieval_type == "bm25"
         assert config.output_dir == Path("./runs")
         assert not config.skip_existing
 
@@ -235,7 +229,7 @@ class TestLocalizationProcessor:
         assert hasattr(processor, "logger")
 
     @pytest.mark.asyncio
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_process_batch(
         self,
         mock_adapter_class: MagicMock,
@@ -263,37 +257,52 @@ class TestLocalizationProcessor:
         """Test LocalizationProcessor.evaluate_responses."""
         processor = LocalizationProcessor(processor_config)
 
+        # Use unified response format matching process_batch output
         responses = [
-            ModelResponse(text='{"boxes": [[10, 20, 30, 40]]}', confidence=0.8),
-            ModelResponse(text='{"boxes": [[50, 60, 70, 80]]}', confidence=0.9),
+            ModelResponse(
+                text='{"caption": {}, "diagnosis": {}, "localization": {"localizations": [{"bounding_box": [10, 20, 30, 40], "finding": "lesion"}]}}',
+                confidence=0.8,
+            ),
+            ModelResponse(
+                text='{"caption": {}, "diagnosis": {}, "localization": {"localizations": [{"bounding_box": [50, 60, 70, 80], "finding": "lesion"}]}}',
+                confidence=0.9,
+            ),
         ]
         ground_truth = ['{"boxes": [[10, 20, 30, 40]]}', '{"boxes": [[50, 60, 70, 80]]}']
 
         with patch("nova_retrieval_vlm.processors.localization.evaluate_detection") as mock_eval:
+            # evaluate_detection returns: map30, map50, map50_95, acc50, tp30, fp30
             mock_eval.return_value = {
-                "map50": 0.75,
-                "precision": 0.8,
                 "map30": 0.7,
+                "map50": 0.75,
                 "map50_95": 0.6,
+                "acc50": 0.8,
+                "tp30": 10,
+                "fp30": 2,
             }
 
             metrics = processor.evaluate_responses(responses, ground_truth)
 
-            assert isinstance(metrics, EvaluationMetrics)
-            assert metrics.accuracy == 0.75  # map50 mapped to accuracy
+            assert isinstance(metrics, DetectionMetrics)
+            assert metrics.map50 == 0.75
+            assert metrics.map30 == 0.7
+            assert metrics.map50_95 == 0.6
+            assert metrics.acc50 == 0.8
+            assert metrics.tp30 == 10
+            assert metrics.fp30 == 2
 
-    def test_create_localization_prompt(self, processor_config: ProcessorConfig):
-        """Test _create_localization_prompt generates appropriate prompts."""
+    def test_create_unified_prompt(self, processor_config: ProcessorConfig):
+        """Test _create_unified_prompt generates appropriate prompts for localization."""
         processor = LocalizationProcessor(processor_config)
 
         metadata = {"modality": "CT", "clinical_history": "65-year-old patient with headache"}
-        prompt = processor._create_localization_prompt(Path("test.png"), metadata)  # type: ignore[attr-defined]
+        prompt = processor._create_unified_prompt(Path("test.png"), metadata)
 
-        # Check that clinical history is included in prompt
+        # Check that unified prompt contains expected elements
         assert (
             "65-year-old patient" in prompt or "NOVA" in prompt
         )  # Either clinical history or dataset context
-        assert "bounding" in prompt.lower() or "localization" in prompt.lower()
+        assert "localization" in prompt.lower() or "bounding" in prompt.lower()
 
 
 @pytest.mark.unit
@@ -309,7 +318,7 @@ class TestCaptionProcessor:
         )
 
     @pytest.mark.asyncio
-    @patch("nova_retrieval_vlm.processors.caption.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_process_batch(
         self,
         mock_adapter_class: MagicMock,
@@ -339,27 +348,36 @@ class TestCaptionProcessor:
         ground_truth = ["Reference caption 1", "Reference caption 2"]
 
         with patch("nova_retrieval_vlm.evaluation.caption.evaluate_caption") as mock_eval:
+            # evaluate_caption returns: bleu, bert_f1, radgraph_f1, meteor, modality_f1, clinical_f1, binary_accuracy, binary_f1
             mock_eval.return_value = {
                 "bleu": 0.65,
-                "bert_precision": 0.75,
-                "bert_recall": 0.70,
                 "bert_f1": 0.72,
+                "radgraph_f1": 0.60,
                 "meteor": 0.68,
+                "modality_f1": 0.75,
+                "clinical_f1": 0.70,
+                "binary_accuracy": 0.85,
+                "binary_f1": 0.80,
             }
 
             metrics = processor.evaluate_responses(responses, ground_truth)
 
-            assert isinstance(metrics, EvaluationMetrics)
-            assert metrics.accuracy == 0.65  # BLEU score
-            assert metrics.precision == 0.75
-            assert metrics.f1_score == 0.72
+            assert isinstance(metrics, CaptionMetrics)
+            assert metrics.bleu == 0.65
+            assert metrics.bert_f1 == 0.72
+            assert metrics.meteor == 0.68
+            assert metrics.modality_f1 == 0.75
+            assert metrics.clinical_f1 == 0.70
+            assert metrics.binary_accuracy == 0.85
+            assert metrics.binary_f1 == 0.80
+            assert metrics.radgraph_f1 == 0.60
 
-    def test_create_caption_prompt(self, processor_config: ProcessorConfig):
-        """Test caption prompt creation."""
+    def test_create_unified_prompt(self, processor_config: ProcessorConfig):
+        """Test unified prompt creation for captioning."""
         processor = CaptionProcessor(processor_config)
 
         metadata = {"modality": "MRI", "clinical_history": "Brain scan patient"}
-        prompt = processor._create_caption_prompt(Path("brain.png"), metadata)  # type: ignore[attr-defined]
+        prompt = processor._create_unified_prompt(Path("brain.png"), metadata)
 
         # Check unified prompt contains expected elements
         assert "NOVA" in prompt or "neuroradiol" in prompt.lower()  # Dataset or domain context
@@ -381,7 +399,7 @@ class TestDiagnosisProcessor:
         )
 
     @pytest.mark.asyncio
-    @patch("nova_retrieval_vlm.processors.diagnosis.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_process_batch(
         self,
         mock_adapter_class: MagicMock,
@@ -414,47 +432,64 @@ class TestDiagnosisProcessor:
         with patch(
             "nova_retrieval_vlm.processors.diagnosis.evaluate_diagnosis_nova_official"
         ) as mock_eval:
+            # Mock returns NOVA protocol metrics: top1, top5, coverage, entropy
             mock_eval.return_value = {
-                "accuracy": 1.0,
-                "precision": 1.0,
-                "recall": 1.0,
-                "f1_score": 1.0,
+                "top1": 1.0,
+                "top5": 1.0,
+                "coverage": 1.0,
+                "entropy": 0.0,
             }
 
             metrics = processor.evaluate_responses(responses, ground_truth)
 
-            assert isinstance(metrics, EvaluationMetrics)
-            assert metrics.accuracy == 1.0
-            assert metrics.precision == 1.0
+            assert isinstance(metrics, DiagnosisMetrics)
+            assert metrics.top1 == 1.0
+            assert metrics.top5 == 1.0
+            assert metrics.coverage == 1.0
+            assert metrics.entropy == 0.0
 
     def test_extract_primary_diagnosis(self, processor_config: ProcessorConfig):
-        """Test _extract_primary_diagnosis extracts diagnosis correctly."""
+        """Test _extract_primary_diagnosis strips diagnosis prefixes correctly.
+
+        Note: The structured JSON response already provides primary_diagnosis separately,
+        so this method only needs to strip common prefixes - not extract from complex text.
+        """
         processor = DiagnosisProcessor(processor_config)
 
-        # Test with explicit primary diagnosis marker
-        diagnosis_text = "Primary diagnosis: Acute stroke\nDifferential: TIA"
+        # Test with explicit primary diagnosis marker - just strips prefix
+        diagnosis_text = "Primary diagnosis: Acute stroke"
         result = processor._extract_primary_diagnosis(diagnosis_text)  # type: ignore[attr-defined]
         assert result == "Acute stroke"
 
         # Test with diagnosis marker
-        diagnosis_text = "Diagnosis: Brain tumor\nRecommendations: Further imaging"
+        diagnosis_text = "Diagnosis: Brain tumor"
         result = processor._extract_primary_diagnosis(diagnosis_text)  # type: ignore[attr-defined]
         assert result == "Brain tumor"
 
-        # Test with no markers
+        # Test with no markers - returns as-is
         diagnosis_text = "This appears to be a normal brain scan with no abnormalities."
         result = processor._extract_primary_diagnosis(diagnosis_text)  # type: ignore[attr-defined]
         assert "normal brain scan" in result.lower()
 
-    def test_create_diagnosis_prompt(self, processor_config: ProcessorConfig):
-        """Test diagnosis prompt creation."""
+        # Test empty input raises ValueError
+        import pytest
+
+        with pytest.raises(ValueError, match="Empty diagnosis text"):
+            processor._extract_primary_diagnosis("")  # type: ignore[attr-defined]
+
+        # Test prefix-only input raises ValueError
+        with pytest.raises(ValueError, match="only a prefix"):
+            processor._extract_primary_diagnosis("Primary diagnosis:")  # type: ignore[attr-defined]
+
+    def test_create_unified_prompt(self, processor_config: ProcessorConfig):
+        """Test unified prompt creation for diagnosis."""
         processor = DiagnosisProcessor(processor_config)
 
         metadata = {
             "modality": "CT",
             "clinical_history": "65-year-old male with headache and dizziness",
         }
-        prompt = processor._create_diagnosis_prompt(Path("scan.png"), metadata)  # type: ignore[attr-defined]
+        prompt = processor._create_unified_prompt(Path("scan.png"), metadata)
 
         # Check unified prompt contains expected elements
         assert "NOVA" in prompt or "neuroradiol" in prompt.lower()  # Dataset or domain context
@@ -514,7 +549,7 @@ class TestProcessorIntegration:
             assert hasattr(processor, "process_batch")
             assert hasattr(processor, "evaluate_responses")
 
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     def test_processor_error_handling(self, mock_adapter):
         """Test processor error handling for invalid inputs."""
         # Mock the adapter to avoid API key issues

@@ -48,7 +48,7 @@ ignore = [
 "src/nova_retrieval_vlm/visualization/**/*.py" = ["T201", "PTH123"]
 "src/nova_retrieval_vlm/knowledge_base/**/*.py" = ["N814", "N817", "PLW0603", "S110", "ARG001", "PERF401", "E402", "PLW2901", "SIM102"]
 "src/nova_retrieval_vlm/retrieval/**/*.py" = ["N814"]
-"src/nova_retrieval_vlm/tensor_ops.py" = ["N812"]
+"src/nova_retrieval_vlm/tensor_ops.py" = ["N812", "PLW0602", "PLW0603"]
 "src/nova_retrieval_vlm/prompts/**/*.py" = ["PLW0603"]
 "src/nova_retrieval_vlm/models/openrouter_adapter.py" = ["S310"]
 

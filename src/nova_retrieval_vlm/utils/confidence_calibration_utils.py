@@ -19,12 +19,16 @@ from loguru import logger
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import brier_score_loss
 
+# Default thresholds for calibration analysis
+DEFAULT_N_BINS = 10
+DEFAULT_MIN_CONFIDENCE = 0.7  # Default threshold for filtering reliable predictions
+
 
 @beartype
 def calculate_reliability_diagram_data(
     confidences: list[float] | np.ndarray,
     correct: list[bool] | np.ndarray,
-    n_bins: int = 10,
+    n_bins: int = DEFAULT_N_BINS,
 ) -> dict[str, Any]:
     """Calculate reliability diagram data for confidence calibration analysis.
 
@@ -300,15 +304,18 @@ def load_calibration_data_from_files(
             # Extract calibration-relevant data
             config_name = data.get("config_name", result_file.stem)
             confidence = data.get("confidence", 0.0)
-            data.get("research_metrics", {})
 
             if "final_response" in data:
                 final_response = data["final_response"]
                 confidence_level = final_response.get("confidence_level", "unknown")
-                reliable_flag = final_response.get("reliability_flag", {}).get("reliable", True)
+                # Extract reliable flag - None if not present (don't assume reliability)
+                reliability_flag_data = final_response.get("reliability_flag", {})
+                reliable_flag = (
+                    reliability_flag_data.get("reliable") if reliability_flag_data else None
+                )
             else:
                 confidence_level = "unknown"
-                reliable_flag = True
+                reliable_flag = None  # Unknown reliability - don't assume True
 
             if config_name not in calibration_data:
                 calibration_data[config_name] = {
@@ -326,8 +333,10 @@ def load_calibration_data_from_files(
                 data.get("item_id", result_file.stem)
             )
 
-        except Exception as e:
-            logger.warning(f"Failed to load calibration data from {result_file}: {e}")
+        except OSError as e:
+            raise OSError(f"Failed to read result file {result_file}: {e}") from e
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Malformed JSON in result file {result_file}: {e}") from e
 
     return calibration_data
 
@@ -372,19 +381,29 @@ def create_calibration_summary(
                     level_counts[level] = level_counts.get(level, 0) + 1
                 config_summary["confidence_level_distribution"] = level_counts
 
-            # Reliability flag analysis
-            if data["reliable_flags"]:
-                reliable_rate = np.mean(data["reliable_flags"])
+            # Reliability flag analysis - filter out None values
+            valid_reliable_flags = [f for f in data["reliable_flags"] if f is not None]
+            if valid_reliable_flags:
+                reliable_rate = np.mean(valid_reliable_flags)
                 config_summary["reliable_flag_rate"] = float(reliable_rate)
 
             # Add ground truth analysis if available
             if ground_truth:
                 correct_flags = []
+                missing_ground_truth = []
                 for sample_id in data["sample_ids"]:
                     if sample_id in ground_truth:
                         correct_flags.append(ground_truth[sample_id])
                     else:
-                        correct_flags.append(False)  # Default to incorrect if missing
+                        missing_ground_truth.append(sample_id)
+
+                if missing_ground_truth:
+                    raise ValueError(
+                        f"Missing ground truth for {len(missing_ground_truth)} samples in "
+                        f"config '{config_name}': {missing_ground_truth[:5]}..."
+                        if len(missing_ground_truth) > 5
+                        else f"Missing ground truth for samples: {missing_ground_truth}"
+                    )
 
                 data["correct"] = correct_flags
 
@@ -412,18 +431,15 @@ def create_calibration_summary(
     if ground_truth and len(calibration_data) > 1:
         comparison_metrics = ["accuracy", "expected_calibration_error", "brier_score"]
         for metric in comparison_metrics:
-            try:
-                comparison_df = compare_calibration_across_configs(
-                    {
-                        config: data["calibration_metrics"]
-                        for config, data in summary["configurations"].items()
-                        if "calibration_metrics" in data
-                    },
-                    metric,
-                )
-                summary["comparisons"][metric] = comparison_df.to_dict("records")
-            except Exception as e:
-                logger.warning(f"Failed to create comparison for metric {metric}: {e}")
+            comparison_df = compare_calibration_across_configs(
+                {
+                    config: data["calibration_metrics"]
+                    for config, data in summary["configurations"].items()
+                    if "calibration_metrics" in data
+                },
+                metric,
+            )
+            summary["comparisons"][metric] = comparison_df.to_dict("records")
 
     return summary
 
@@ -449,10 +465,11 @@ def add_calibration_metadata_to_batch(
         # Extract calibration-relevant data
         if "final_response" in result:
             final_response = result["final_response"]
+            reliability_flag_data = final_response.get("reliability_flag", {})
             enhanced_result["calibration_metadata"] = {
                 "confidence": result.get("confidence", 0.0),
                 "confidence_level": final_response.get("confidence_level", "unknown"),
-                "reliable_flag": final_response.get("reliability_flag", {}).get("reliable", True),
+                "reliable_flag": reliability_flag_data.get("reliable") if reliability_flag_data else None,
                 "final_prediction": final_response.get("final_prediction", {}),
                 "research_metrics": result.get("research_metrics", {}),
             }
@@ -465,7 +482,7 @@ def add_calibration_metadata_to_batch(
 @beartype
 def filter_by_reliability_threshold(
     results: list[dict[str, Any]],
-    min_confidence: float = 0.7,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     only_reliable: bool = True,
 ) -> list[dict[str, Any]]:
     """Filter results based on confidence and reliability thresholds.
@@ -486,10 +503,12 @@ def filter_by_reliability_threshold(
 
         metadata = result["calibration_metadata"]
         confidence = metadata.get("confidence", 0.0)
-        reliable_flag = metadata.get("reliable_flag", True)
+        reliable_flag = metadata.get("reliable_flag")
 
-        # Apply filters
-        if confidence >= min_confidence and (not only_reliable or reliable_flag):
+        # Apply filters - treat None as unknown (not reliable if only_reliable is True)
+        meets_confidence = confidence >= min_confidence
+        meets_reliability = not only_reliable or reliable_flag is True
+        if meets_confidence and meets_reliability:
             filtered_results.append(result)
 
     return filtered_results
@@ -499,23 +518,23 @@ def filter_by_reliability_threshold(
 def export_calibration_results(
     calibration_summary: dict[str, Any],
     output_path: Path,
-    format: str = "json",
+    output_format: str = "json",
 ) -> None:
     """Export calibration analysis results.
 
     Args:
         calibration_summary: Calibration analysis summary
         output_path: Output file path
-        format: Export format (json, csv)
+        output_format: Export format (json, csv)
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if format.lower() == "json":
+    if output_format.lower() == "json":
         with open(output_path, "w") as f:
             json.dump(calibration_summary, f, indent=2, default=str)
 
-    elif format.lower() == "csv":
+    elif output_format.lower() == "csv":
         # Flatten the summary for CSV export
         flat_data = []
         for config_name, config_data in calibration_summary["configurations"].items():
@@ -527,6 +546,6 @@ def export_calibration_results(
         df.to_csv(output_path, index=False)
 
     else:
-        raise ValueError(f"Unsupported export format: {format}")
+        raise ValueError(f"Unsupported export format: {output_format}")
 
     logger.info(f"Calibration results exported to {output_path}")

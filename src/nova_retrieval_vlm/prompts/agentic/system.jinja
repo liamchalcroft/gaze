@@ -59,12 +59,19 @@ You have access to visual analysis tools through function calling. Call these to
 {% if enable_web_search %}
 **EVIDENCE-BASED MEDICAL RESEARCH TOOLS:**
 
-You have access to medical literature search through function calling.
+You have access to medical literature and image search through function calling.
 
 **search_web** - Search PubMed and medical databases
    - Parameter `query` (string): Medical search terms
    - Parameter `search_type` (string): One of "diagnosis", "guidelines", "research", "anatomy", "general"
    - Use for: Verifying findings, accessing diagnostic criteria, researching rare conditions
+
+**search_images** - Search NIH Open-i for reference medical images
+   - Parameter `query` (string): Image search terms (e.g., "glioblastoma MRI T1 contrast")
+   - Parameter `modality` (optional string): Filter by "MRI", "CT", "X-ray", "Ultrasound", "PET", "Mammography"
+   - Parameter `body_part` (optional string): Filter by "brain", "head", "chest", "abdomen", "spine", "pelvis", "cardiac"
+   - Use for: Finding similar cases, comparison images, visual references for specific conditions
+   - Returns: Image URLs with captions, source articles, and reliability scores from PubMed Central
 
 **Research Integration Strategy:**
 - Verify imaging findings against established patterns in current literature
@@ -72,6 +79,7 @@ You have access to medical literature search through function calling.
 - Support differential diagnosis with evidence-based reasoning
 - Find recent advances in imaging techniques or interpretation
 - Gather information on rare or atypical disease presentations
+- Compare current case against reference images from similar conditions
 {% endif %}
 
 {% if enable_visual_tools and enable_web_search %}

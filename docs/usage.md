@@ -39,7 +39,6 @@ OUTPUT_DIR=./runs
 ### Download Dataset
 ```bash
 python scripts/download_nova.py --data-dir $DATA_DIR
-python scripts/build_index.py  # Build retrieval indexes
 ```
 
 ### Command Line Interface
@@ -52,13 +51,12 @@ python -m nova_retrieval_vlm.cli \
   max_iterations=5
 ```
 
-#### With Retrieval Augmentation
+#### Agentic Processing
 ```bash
 python -m nova_retrieval_vlm.cli \
   task=localization \
-  use_retrieval=true \
-  retrieval.type=bm25 \
-  retrieval.top_k=3 \
+  agentic.enabled=true \
+  agentic.use_tools=true \
   model.name=openai/gpt-4o
 ```
 
@@ -67,7 +65,6 @@ python -m nova_retrieval_vlm.cli \
 python -m nova_retrieval_vlm.cli \
   task=diagnosis \
   approach=multiturn \
-  use_retrieval=true \
   model.name=anthropic/claude-3.5-sonnet
 ```
 
@@ -115,7 +112,7 @@ python -m nova_retrieval_vlm.cli approach=comprehensive
 ```
 
 ### Agentic Mode
-Multi-turn reasoning with visual tools and retrieval integration.
+Multi-turn reasoning with visual tools and web search integration.
 ```bash
 # Enable agentic processing
 python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true
@@ -125,33 +122,6 @@ python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use
 
 # Configure max turns
 python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true agentic.max_turns=5
-```
-
-## Retrieval Configuration
-
-### BM25 (Keyword-based)
-```bash
-python -m nova_retrieval_vlm.cli \
-  use_retrieval=true \
-  retrieval.type=bm25 \
-  retrieval.top_k=5
-```
-
-### Dense Vector
-```bash
-python -m nova_retrieval_vlm.cli \
-  use_retrieval=true \
-  retrieval.type=dense \
-  retrieval.top_k=3
-```
-
-### Hybrid (Recommended)
-```bash
-python -m nova_retrieval_vlm.cli \
-  use_retrieval=true \
-  retrieval.type=hybrid \
-  retrieval.hybrid_ratio=0.7 \
-  retrieval.top_k=5
 ```
 
 ## Model Selection
@@ -177,12 +147,12 @@ model:
   name: "openai/gpt-4o"
   temperature: 0.1
 
-retrieval:
-  type: "hybrid"
-  top_k: 3
+agentic:
+  enabled: true
+  use_tools: true
+  max_turns: 5
 
 task: "diagnosis"
-use_retrieval: true
 max_iterations: 15
 ```
 

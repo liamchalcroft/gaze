@@ -9,9 +9,8 @@ Provides clean, coherent multi-turn analysis with:
 
 from __future__ import annotations
 
-import base64
-import io
 import json
+import uuid
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -23,6 +22,7 @@ from PIL import Image
 
 from nova_retrieval_vlm.agentic.tools import ToolRegistry
 from nova_retrieval_vlm.agentic.tools import ToolResult
+from nova_retrieval_vlm.agentic.tools import image_to_base64
 from nova_retrieval_vlm.models.openai_adapter import OpenAIAdapter
 from nova_retrieval_vlm.prompts.prompt_loader import create_enhanced_prompt
 from nova_retrieval_vlm.schemas import NOVA_UNIFIED_SCHEMA
@@ -58,14 +58,25 @@ class AgenticResult:
     retrieval_passages: list[str] = field(default_factory=list)
 
 
+class AgenticProcessingError(Exception):
+    """Raised when agentic processing fails."""
+
+    def __init__(
+        self, message: str, turns_completed: int, partial_response: dict[str, Any] | None = None
+    ):
+        self.turns_completed = turns_completed
+        self.partial_response = partial_response
+        super().__init__(message)
+
+
 class AgenticProcessor:
     """Multi-turn agentic processor for medical image analysis.
 
-    Clean architecture with:
+    Architecture:
     - Model-controlled continuation via 'continue' field
     - Optional visual tools (zoom, crop, contrast, threshold)
     - Optional reasoning capabilities
-    - Graceful turn limit handling with warnings
+    - Turn limit enforcement with clear errors
     - Structured JSON output for caption, diagnosis, localization
     """
 
@@ -81,6 +92,7 @@ class AgenticProcessor:
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
         enable_caching: bool = True,
+        disabled_tools: list[str] | None = None,
     ):
         """Initialize agentic processor.
 
@@ -92,6 +104,7 @@ class AgenticProcessor:
             reasoning_enabled: Enable model's internal reasoning capabilities
             reasoning_effort: Reasoning effort level ("high", "medium", "low")
             enable_caching: Enable prompt caching for performance
+            disabled_tools: List of tool names to disable
         """
         self.model_name = model_name
         self.use_tools = use_tools
@@ -100,6 +113,11 @@ class AgenticProcessor:
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
         self.enable_caching = enable_caching
+
+        # Build disabled tools list from config
+        self._disabled_tools: set[str] = set(disabled_tools or [])
+        if not use_web_search:
+            self._disabled_tools.update(["search_web", "search_images"])
 
         # Lazily initialized components
         self._model_adapter: OpenAIAdapter | None = None
@@ -118,15 +136,16 @@ class AgenticProcessor:
     async def analyze(
         self,
         image_path: Path,
-        _task: str,
         metadata: dict[str, Any] | None = None,
         retrieval_passages: list[str] | None = None,
     ) -> AgenticResult:
         """Run agentic analysis on a medical image.
 
+        Uses the unified 'all_tasks' template for comprehensive analysis
+        including localization, captioning, and diagnosis in a single pass.
+
         Args:
             image_path: Path to the medical image
-            _task: Analysis task (always 'all_tasks' for unified analysis)
             metadata: Image metadata including clinical history
             retrieval_passages: Optional context passages (future use)
 
@@ -140,12 +159,33 @@ class AgenticProcessor:
         retrieval_passages = retrieval_passages or []
 
         # Initialize tool registry for this image
-        tool_registry = ToolRegistry(image_path)
+        tool_registry = ToolRegistry(image_path, disabled_tools=list(self._disabled_tools))
 
-        # Build system prompt with capabilities flags
-        from PIL import Image
+        try:
+            return await self._run_analysis(
+                image_path=image_path,
+                metadata=metadata,
+                retrieval_passages=retrieval_passages,
+                tool_registry=tool_registry,
+            )
+        finally:
+            # Ensure tool registry resources are cleaned up
+            tool_registry.close()
 
-        image = Image.open(image_path)
+    @beartype
+    async def _run_analysis(
+        self,
+        image_path: Path,
+        metadata: dict[str, Any],
+        retrieval_passages: list[str],
+        tool_registry: ToolRegistry,
+    ) -> AgenticResult:
+        """Run the actual analysis loop. Separated for resource management."""
+        # Load image for dimensions and base64 encoding
+        with Image.open(image_path) as image:
+            image_width = image.width
+            image_height = image.height
+            image_base64 = image_to_base64(image)
 
         # Use unified all_tasks template for consistent behavior
         system_prompt = create_enhanced_prompt(
@@ -154,8 +194,8 @@ class AgenticProcessor:
             passages=retrieval_passages,
             metadata={
                 **metadata,
-                "width": image.width,
-                "height": image.height,
+                "width": image_width,
+                "height": image_height,
                 "image_id": image_path.name,
                 "enable_visual_tools": self.use_tools,
                 "enable_web_search": self.use_web_search,
@@ -184,7 +224,7 @@ class AgenticProcessor:
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{self._image_to_base64(image)}"
+                            "url": f"data:image/jpeg;base64,{image_base64}"
                         },
                     },
                 ],
@@ -192,7 +232,11 @@ class AgenticProcessor:
         ]
 
         # Multi-turn agentic loop with proper OpenRouter tool calling
-        assert self._model_adapter is not None  # Type narrowing for mypy
+        # Bind to local variable for type narrowing (guaranteed non-None after _ensure_initialized)
+        model_adapter = self._model_adapter
+        if model_adapter is None:
+            raise RuntimeError("Model adapter not initialized - _ensure_initialized() failed")
+
         for turn_idx in range(self.max_turns):
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
 
@@ -204,7 +248,7 @@ class AgenticProcessor:
             response_format = None if tool_schemas else NOVA_UNIFIED_SCHEMA
 
             # Generate response with tool calling support
-            response_text, tool_calls, gen_log = await self._model_adapter.generate_chat(
+            response_text, tool_calls, gen_log = await model_adapter.generate_chat(
                 messages=messages,
                 max_tokens=8192,
                 temperature=0.0,
@@ -227,18 +271,28 @@ class AgenticProcessor:
             if response_text:
                 assistant_message["content"] = response_text
             if tool_calls:
-                # Format tool calls for OpenAI API format
-                assistant_message["tool_calls"] = [
-                    {
-                        "id": tc.get("id", f"call_{i}"),
+                # Format tool calls for OpenAI API format - validate required fields
+                formatted_calls = []
+                for i, tc in enumerate(tool_calls):
+                    if "name" not in tc:
+                        raise AgenticProcessingError(
+                            f"Tool call {i} missing required 'name' field: {tc}",
+                            turns_completed=turn_idx + 1,
+                        )
+                    if "arguments" not in tc:
+                        raise AgenticProcessingError(
+                            f"Tool call '{tc['name']}' missing required 'arguments' field",
+                            turns_completed=turn_idx + 1,
+                        )
+                    formatted_calls.append({
+                        "id": tc.get("id", f"nova_{uuid.uuid4().hex[:12]}"),
                         "type": "function",
                         "function": {
-                            "name": tc.get("name", ""),
-                            "arguments": tc.get("arguments", "{}"),
+                            "name": tc["name"],
+                            "arguments": tc["arguments"],
                         },
-                    }
-                    for i, tc in enumerate(tool_calls)
-                ]
+                    })
+                assistant_message["tool_calls"] = formatted_calls
             messages.append(assistant_message)
 
             # Check if model wants to use tools
@@ -248,18 +302,22 @@ class AgenticProcessor:
                 # Execute tools and collect results
                 tool_results = []
                 for tool_call in tool_calls:
-                    tool_name = tool_call.get("name", "")
-                    tool_args_str = tool_call.get("arguments", "{}")
+                    # Tool call structure already validated above
+                    tool_name = tool_call["name"]
+                    tool_args_str = tool_call["arguments"]
 
-                    # Parse arguments from string
-                    tool_args = {}
-                    if isinstance(tool_args_str, str):
-                        try:
+                    # Parse arguments from string - fail fast on malformed JSON
+                    try:
+                        if isinstance(tool_args_str, str):
                             tool_args = json.loads(tool_args_str)
-                        except ValueError:
-                            tool_args = {}
-                    else:
-                        tool_args = tool_args_str
+                        else:
+                            tool_args = tool_args_str
+                    except json.JSONDecodeError as e:
+                        raise AgenticProcessingError(
+                            f"Malformed JSON in tool arguments for '{tool_name}': {e}",
+                            turns_completed=turn_idx + 1,
+                            partial_response={"error": "malformed_tool_args", "tool": tool_name},
+                        ) from e
 
                     logger.debug(f"Executing tool: {tool_name} with args: {tool_args}")
                     result = await tool_registry.execute(tool_name, **tool_args)
@@ -267,7 +325,7 @@ class AgenticProcessor:
 
                 # Add tool results to conversation with proper format
                 for i, result in enumerate(tool_results):
-                    tool_call_id = tool_calls[i].get("id", f"call_{i}")
+                    tool_call_id = tool_calls[i].get("id", f"nova_{uuid.uuid4().hex[:12]}")
 
                     # Build tool result content - include image if produced
                     if result.image_base64:
@@ -289,8 +347,9 @@ class AgenticProcessor:
                         tool_content = result.description
                         if result.error:
                             tool_content = f"{tool_content}\nError: {result.error}"
-                        if result.metadata.get("formatted_results"):
-                            tool_content = f"{tool_content}\n{result.metadata['formatted_results']}"
+                        # Use walrus operator for cleaner metadata access
+                        if formatted := result.metadata.get("formatted_results"):
+                            tool_content = f"{tool_content}\n{formatted}"
 
                     messages.append(
                         {
@@ -323,34 +382,27 @@ class AgenticProcessor:
                         final_response = parsed
                         break
                     elif turn_idx == self.max_turns - 2:
-                        # Penultimate turn - add final turn warning to messages
+                        # Penultimate turn - warn model this is second-to-last turn
+                        # Must be user message (can't have consecutive assistant messages)
                         final_warning = (
-                            f"FINAL TURN WARNING: Turn {turn_idx + 1}/{self.max_turns}. "
-                            f"Set 'continue': false and complete your analysis."
+                            f"IMPORTANT: This is turn {turn_idx + 2}/{self.max_turns}. "
+                            f"The next turn is your FINAL turn. Complete your analysis "
+                            f"and set 'continue': false in your next response."
                         )
-                        messages.append({"role": "assistant", "content": final_warning})
-                    else:
-                        # Continue to next turn normally
-                        pass
+                        messages.append({"role": "user", "content": final_warning})
+                    # Continue to next turn
                 else:
                     # Model is done, this is the final response
                     final_response = parsed
                     break
 
-            except json.JSONDecodeError:
-                # Not a JSON response, continue for another turn
-                if turn_idx == self.max_turns - 1:
-                    # Last turn, create a fallback response
-                    final_response = {
-                        "caption": {"description": response_text, "confidence": 0.5},
-                        "diagnosis": {
-                            "primary_diagnosis": "Analysis incomplete",
-                            "confidence": 0.3,
-                        },
-                        "localization": {"localizations": [], "confidence": 0.1},
-                    }
-                    break
-                continue
+            except json.JSONDecodeError as e:
+                # Not a JSON response - fail immediately
+                raise AgenticProcessingError(
+                    f"Invalid JSON response on turn {turn_idx + 1}: {e}. "
+                    f"Response: {response_text[:200]}...",
+                    turns_completed=turn_idx + 1,
+                ) from e
 
         # Calculate confidence based on analysis
         confidence = self._calculate_confidence(final_response, turns)
@@ -363,6 +415,7 @@ class AgenticProcessor:
             confidence=confidence,
         )
 
+    @beartype
     def _calculate_confidence(
         self,
         response: dict[str, Any],
@@ -385,6 +438,7 @@ class AgenticProcessor:
 
         return min(1.0, confidence)
 
+    @beartype
     def _format_tool_results(self, tool_results: list[ToolResult]) -> str:
         """Format tool results for conversation context."""
         if not tool_results:
@@ -402,8 +456,3 @@ class AgenticProcessor:
 
         return "\n".join(result_strings)
 
-    def _image_to_base64(self, image: Image.Image, quality: int = 85) -> str:
-        """Convert PIL Image to base64 JPEG string."""
-        buffer = io.BytesIO()
-        image.convert("RGB").save(buffer, format="JPEG", quality=quality)
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")

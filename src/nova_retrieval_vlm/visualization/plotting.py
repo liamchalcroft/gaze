@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from loguru import logger
 from PIL import Image
 from PIL import ImageDraw
 
@@ -353,7 +354,7 @@ def plot_reliability_flag_analysis(
         title: Plot title
     """
     if "reliable" not in reliability_data or "unreliable" not in reliability_data:
-        print("Missing reliability data for plotting")
+        logger.warning("Missing reliability data for plotting - skipping reliability flag analysis")
         return
 
     reliable = reliability_data["reliable"]
@@ -460,7 +461,7 @@ def plot_tool_usage_heatmap(
             )
 
     if not df_data:
-        print("No tool usage data available for plotting")
+        logger.info("No tool usage data available for plotting - skipping heatmap")
         return
 
     df = pd.DataFrame(df_data)

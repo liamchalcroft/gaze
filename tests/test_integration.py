@@ -85,7 +85,7 @@ class TestEndToEndWorkflows:
 class TestLocalizationWorkflow(TestEndToEndWorkflows):
     """Integration tests for localization workflow."""
 
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_localization_end_to_end(
         self,
         mock_adapter_class,
@@ -146,7 +146,7 @@ class TestLocalizationWorkflow(TestEndToEndWorkflows):
             assert (batch_ctx.folder / "pred.jsonl").exists()
             assert (batch_ctx.folder / "ref.jsonl").exists()
 
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     @patch("nova_retrieval_vlm.processors.localization.evaluate_detection")
     async def test_localization_with_evaluation(
         self,
@@ -200,12 +200,12 @@ class TestLocalizationWorkflow(TestEndToEndWorkflows):
 class TestCaptionWorkflow(TestEndToEndWorkflows):
     """Integration tests for caption workflow."""
 
-    @patch("nova_retrieval_vlm.processors.caption.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_caption_end_to_end(
         self,
         mock_adapter_class,
         sample_batch_data,
-        mock_huggingface_dataset,
+        _mock_huggingface_dataset,
     ):
         """Test complete caption workflow."""
         # Setup mock adapter
@@ -241,7 +241,7 @@ class TestCaptionWorkflow(TestEndToEndWorkflows):
             assert metrics.accuracy == 0.65  # BLEU score
             assert metrics.f1_score == 0.72
 
-    @patch("nova_retrieval_vlm.processors.caption.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     async def test_caption_with_patient_context(self, mock_adapter_class, mock_image):
         """Test caption generation with rich patient context."""
         mock_adapter = AsyncMock()
@@ -302,20 +302,15 @@ class TestMultiTaskIntegration:
 
         results = {}
 
-        # Mock all adapters
-        with (
-            patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter") as mock_loc_adapter,
-            patch("nova_retrieval_vlm.processors.caption.OpenAIAdapter") as mock_cap_adapter,
-        ):
-            # Setup localization mock
-            mock_loc_adapter_instance = AsyncMock()
-            mock_loc_adapter_instance.generate.return_value = ('{"boxes": []}', MagicMock())
-            mock_loc_adapter.return_value = mock_loc_adapter_instance
-
-            # Setup caption mock
-            mock_cap_adapter_instance = AsyncMock()
-            mock_cap_adapter_instance.generate.return_value = ("Medical caption", MagicMock())
-            mock_cap_adapter.return_value = mock_cap_adapter_instance
+        # Mock adapter - returns different responses based on call order
+        with patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter") as mock_adapter_class:
+            mock_adapter_instance = AsyncMock()
+            # Both processors will get unified response format
+            mock_adapter_instance.generate.return_value = (
+                '{"caption": {"text": "Medical caption"}, "diagnosis": {}, "localization": {"localizations": []}}',
+                MagicMock(),
+            )
+            mock_adapter_class.return_value = mock_adapter_instance
 
             # Process with each processor
             for task_name, processor in processors.items():
@@ -348,14 +343,13 @@ class TestMultiTaskIntegration:
         results = []
 
         for processor in processors:
-            with patch(
-                f"nova_retrieval_vlm.processors.{processor.config.task_name}.OpenAIAdapter"
-            ) as mock_adapter:
+            with patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter") as mock_adapter:
                 mock_adapter_instance = AsyncMock()
-                if processor.config.task_name == "localization":
-                    mock_adapter_instance.generate.return_value = ('{"boxes": []}', MagicMock())
-                else:
-                    mock_adapter_instance.generate.return_value = ("Caption text", MagicMock())
+                # Use unified response format
+                mock_adapter_instance.generate.return_value = (
+                    '{"caption": {"text": "Caption text"}, "diagnosis": {}, "localization": {"localizations": []}}',
+                    MagicMock(),
+                )
                 mock_adapter.return_value = mock_adapter_instance
 
                 responses = await processor.process_batch(batch_data, 0)
@@ -365,68 +359,6 @@ class TestMultiTaskIntegration:
         for response in results:
             assert response.metadata["image_path"] == str(mock_image)
             assert response.metadata["modality"] == "CT"
-
-
-@pytest.mark.integration
-class TestRetrievalIntegration:
-    """Integration tests for retrieval-augmented processing."""
-
-    @pytest.fixture
-    def retrieval_config(self):
-        """Configuration with retrieval enabled."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = ProcessorConfig(
-                task_name="localization",
-                model_name="gpt-4o",
-                use_retrieval=True,
-                retrieval_type="bm25",
-                output_dir=Path(temp_dir),
-            )
-            yield config
-
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
-    async def test_localization_with_retrieval(
-        self, mock_adapter_class, retrieval_config, mock_image
-    ):
-        """Test localization with retrieval augmentation."""
-        # Mock retrieval passages
-        mock_passages = [
-            "Medical guideline: Localization of brain lesions requires careful analysis of anatomical landmarks.",
-            "Reference: CT scans show hypodense areas in acute stroke within 6 hours.",
-            "Protocol: Use bounding boxes to mark areas of abnormal attenuation.",
-        ]
-
-        mock_adapter = AsyncMock()
-        mock_adapter.generate.return_value = (
-            '{"boxes": [[10, 20, 30, 40]], "confidence": 0.95}',
-            MagicMock(),
-        )
-        mock_adapter_class.return_value = mock_adapter
-
-        batch_data = BatchData(
-            images=[mock_image],
-            metadata=[{"modality": "CT", "clinical_query": "locate stroke"}],
-        )
-
-        processor = LocalizationProcessor(retrieval_config)
-
-        # Mock retrieval system (this would normally be injected)
-        with patch.object(processor, "_retrieve_relevant_passages", return_value=mock_passages):
-            responses = await processor.process_batch(batch_data, 0)
-
-        assert len(responses) == 1
-        response = responses[0]
-
-        # Verify retrieval enhanced the processing
-        assert response.confidence >= 0.9  # Should have high confidence with good retrieval
-
-        # Verify adapter was called with retrieved context
-        mock_adapter.generate.assert_called_once()
-        call_kwargs = mock_adapter.generate.call_args[1]
-        # The passages should be included in the prompt or context
-        assert "passages" in call_kwargs or any(
-            "guideline" in str(arg).lower() for arg in call_kwargs.values()
-        )
 
 
 @pytest.mark.integration
@@ -466,7 +398,7 @@ class TestErrorRecoveryAndResilience:
         processor_config = ProcessorConfig(task_name="caption", model_name="slow-model")
         processor = CaptionProcessor(processor_config)
 
-        with patch("nova_retrieval_vlm.processors.caption.OpenAIAdapter") as mock_adapter_class:
+        with patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter") as mock_adapter_class:
             mock_adapter = AsyncMock()
             mock_adapter.generate.side_effect = TimeoutError("Request timeout")
             mock_adapter_class.return_value = mock_adapter
@@ -555,15 +487,13 @@ class TestPerformanceIntegration:
         ]
 
         async def process_with_mock(processor, batch_data):
-            adapter_path = (
-                f"nova_retrieval_vlm.processors.{processor.config.task_name}.OpenAIAdapter"
-            )
-            with patch(adapter_path) as mock_adapter_class:
+            with patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter") as mock_adapter_class:
                 mock_adapter = AsyncMock()
-                if processor.config.task_name == "localization":
-                    mock_adapter.generate.return_value = ('{"boxes": []}', MagicMock())
-                else:
-                    mock_adapter.generate.return_value = ("Caption", MagicMock())
+                # Use unified response format
+                mock_adapter.generate.return_value = (
+                    '{"caption": {"text": "Caption"}, "diagnosis": {}, "localization": {"localizations": []}}',
+                    MagicMock(),
+                )
                 mock_adapter_class.return_value = mock_adapter
 
                 return await processor.process_batch(batch_data, 0)

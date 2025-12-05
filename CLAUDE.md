@@ -1,7 +1,7 @@
-# NOVA Retrieval VLM Project Guide for Claude
+# NOVA VLM Project Guide for Claude
 
 ## Project Overview
-This is a research framework for comparing vision-language models on the NOVA brain-MRI benchmark dataset. It evaluates baseline and retrieval-augmented models on medical imaging analysis tasks including localization, captioning, and diagnosis.
+This is a research framework for benchmarking vision-language models on the NOVA brain-MRI dataset. It evaluates models on medical imaging analysis tasks including localization, captioning, and diagnosis using agentic multi-turn reasoning with visual tools and web search.
 
 ## Quick Reference
 
@@ -11,13 +11,12 @@ nova_retrieval_vlm/
 ├── src/nova_retrieval_vlm/     # Main Python package
 │   ├── cli.py                  # Main CLI interface
 │   ├── config.py               # Hydra configuration classes
-│   ├── agentic/                # Agentic processing (multi-turn, visual tools)
+│   ├── agentic/                # Agentic processing (multi-turn, visual tools, web search)
 │   ├── data/                   # Dataset handling
 │   ├── evaluation/             # Task-specific evaluation metrics
 │   ├── models/                 # Model adapters (OpenAI, OpenRouter)
 │   ├── processors/             # Task processors (localization, diagnosis, caption)
 │   ├── prompts/                # Jinja2 prompt templates
-│   ├── retrieval/              # Retrieval system (BM25, FAISS, Hybrid)
 │   └── visualization/          # Streamlit GUI and plotting
 ├── scripts/                    # Utility scripts for benchmarking
 ├── tests/                      # Test suite (150+ tests)
@@ -54,8 +53,8 @@ pre-commit run --all-files
 # Basic localization task
 python -m nova_retrieval_vlm.cli task=localization model.name=openai/gpt-4o
 
-# With retrieval augmentation
-python -m nova_retrieval_vlm.cli task=localization use_retrieval=true retrieval.type=bm25
+# Agentic multi-turn analysis with visual tools
+python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
 
 # Multi-turn analysis
 python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
@@ -68,14 +67,13 @@ bash scripts/run_full_benchmarks.sh
 
 # Individual benchmarks
 bash scripts/run_baseline_benchmark.sh
-bash scripts/run_retrieval_benchmark.sh
 bash scripts/run_multiturn_benchmark.sh
 ```
 
 ## Technology Stack
 - **Core**: Python 3.10+, PyTorch, Hydra configuration
 - **Models**: OpenRouter API (100+ models), OpenAI API
-- **Retrieval**: Haystack (BM25, FAISS), Sentence Transformers
+- **Web Search**: PubMed integration for real-time medical literature
 - **Evaluation**: TorchMetrics, BERTScore, RadGraph
 - **Visualization**: Streamlit, Plotly, Matplotlib
 - **Type Safety**: jaxtyping (tensor shapes), beartype (runtime validation)
@@ -88,10 +86,9 @@ bash scripts/run_multiturn_benchmark.sh
 - `src/nova_retrieval_vlm/types.py` - Type definitions with jaxtyping/beartype
 - `src/nova_retrieval_vlm/agentic/` - Agentic processing module:
   - `processor.py` - Core AgenticProcessor with multi-turn reasoning
-  - `tools.py` - ToolRegistry with visual tools (zoom, crop, contrast, threshold)
+  - `tools.py` - ToolRegistry with visual tools (zoom, crop, contrast, threshold, web search)
   - `localization.py` - AgenticLocalizationProcessor
   - `diagnosis.py` - AgenticDiagnosisProcessor
-  - `retrieval_manager.py` - RetrievalManager for knowledge retrieval
 - `src/nova_retrieval_vlm/processors/` - Task processors (localization, diagnosis, caption)
 - `src/nova_retrieval_vlm/models/openai_adapter.py` - Model API interface
 - `src/nova_retrieval_vlm/evaluation/` - Evaluation metrics (NOVA benchmark protocol)
@@ -205,7 +202,6 @@ uv run python -m tracemalloc -c "import nova_retrieval_vlm"
 ## Data Paths
 - Input data: `./data/nova/` (configurable)
 - Output runs: `./runs/` (configurable)
-- Indexes: `./indexes/` (for retrieval)
 
 ## Contact & Resources
 - GitHub Issues: Report bugs and feature requests
@@ -242,7 +238,7 @@ uv run python -m tracemalloc -c "import nova_retrieval_vlm"
 - ✅ Pyright configuration for type checking
 - ✅ Processor pattern architecture
 - ✅ Type-safe core modules with jaxtyping/beartype
-- ✅ Agentic processing module with visual tools and retrieval integration
+- ✅ Agentic processing module with visual tools and web search
 - ✅ Test suite (150+ tests)
 
 ---

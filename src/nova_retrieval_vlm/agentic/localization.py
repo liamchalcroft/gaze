@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from beartype import beartype
 from loguru import logger
@@ -16,8 +15,9 @@ from nova_retrieval_vlm.agentic.processor import AgenticProcessor
 from nova_retrieval_vlm.agentic.processor import AgenticResult
 from nova_retrieval_vlm.evaluation.detection import evaluate_detection
 from nova_retrieval_vlm.processors.base import BaseProcessor
+from nova_retrieval_vlm.processors.base import ProcessorConfig
 from nova_retrieval_vlm.types import BatchData
-from nova_retrieval_vlm.types import EvaluationMetrics
+from nova_retrieval_vlm.types import DetectionMetrics
 from nova_retrieval_vlm.types import ModelResponse
 
 
@@ -28,15 +28,15 @@ class AgenticLocalizationProcessor(BaseProcessor):
     - Tool calling for interactive analysis (zoom, crop, contrast, flip, rotate)
     - Multi-turn refinement for uncertain cases
     - Retrieval augmentation support
-    - Visual comparison with retrieved examples (planned)
     """
 
+    @beartype
     def __init__(
         self,
-        config: Any,
+        config: ProcessorConfig,
         use_tools: bool = True,
         max_turns: int = 10,
-    ):
+    ) -> None:
         """Initialize agentic localization processor.
 
         Args:
@@ -47,7 +47,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
         super().__init__(config)
         self.use_tools = use_tools
         self.max_turns = max_turns
-        self.task_name = getattr(config, "task_name", "all_tasks")  # Get task name from config
+        self.task_name = config.task_name
 
         self._agentic_processor = AgenticProcessor(
             model_name=config.model_name,
@@ -69,13 +69,12 @@ class AgenticLocalizationProcessor(BaseProcessor):
         """Process localization batch with fully agentic analysis."""
         responses = []
 
-        for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=False)):
+        for i, (image_path, metadata) in enumerate(zip(batch.images, batch.metadata, strict=True)):
             self.logger.debug(f"Processing image {i + 1}/{len(batch.images)}: {image_path}")
 
             # Run agentic analysis - model can search web independently
             result = await self._agentic_processor.analyze(
                 image_path=Path(image_path),
-                _task=self.task_name,
                 metadata=metadata,
             )
 
@@ -88,33 +87,44 @@ class AgenticLocalizationProcessor(BaseProcessor):
 
         return responses
 
-    # NOTE: Retrieval method removed - model uses search_web tool instead
-
+    @beartype
     def _convert_result(
         self,
         result: AgenticResult,
-        image_path: Path,
+        image_path: str | Path,
         batch_idx: int,
         sample_idx: int,
     ) -> ModelResponse:
-        """Convert AgenticResult to ModelResponse."""
+        """Convert AgenticResult to ModelResponse.
+
+        Raises:
+            KeyError: If required fields are missing from response.
+        """
         response = result.final_response
 
-        # For unified tasks, extract caption, diagnosis, and localization
-        caption = response.get("caption", {})
-        diagnosis = response.get("diagnosis", {})
-        localization = response.get("localization", {})
-        reasoning = response.get("reasoning", "")
+        # Validate required fields exist - fail fast on missing data
+        if "caption" not in response:
+            raise KeyError("Missing 'caption' in agentic response")
+        if "diagnosis" not in response:
+            raise KeyError("Missing 'diagnosis' in agentic response")
+        if "localization" not in response:
+            raise KeyError("Missing 'localization' in agentic response")
 
-        # Extract boxes and labels from localization if available
+        caption = response["caption"]
+        diagnosis = response["diagnosis"]
+        localization = response["localization"]
+        # Optional field - chain-of-thought reasoning from model, defaults to empty
+        reasoning: str = response.get("reasoning", "")
+
+        # Extract boxes and labels from localization
         boxes = []
         labels = []
-        if localization and "localizations" in localization:
-            for loc in localization["localizations"]:
-                if "bounding_box" in loc:
-                    boxes.append(loc["bounding_box"])
-                if "finding" in loc:
-                    labels.append(loc["finding"])
+        localizations_list = localization.get("localizations", [])
+        for loc in localizations_list:
+            if "bounding_box" in loc:
+                boxes.append(loc["bounding_box"])
+            if "finding" in loc:
+                labels.append(loc["finding"])
 
         return ModelResponse(
             text=json.dumps(
@@ -144,6 +154,7 @@ class AgenticLocalizationProcessor(BaseProcessor):
             },
         )
 
+    @beartype
     def _log_analysis(self, result: AgenticResult, sample_idx: int) -> None:
         """Log analysis details for debugging."""
         tool_count = sum(len(t.tool_calls) for t in result.turns)
@@ -158,29 +169,38 @@ class AgenticLocalizationProcessor(BaseProcessor):
     @beartype
     def evaluate_responses(
         self, responses: list[ModelResponse], ground_truth: list[str]
-    ) -> EvaluationMetrics:
-        """Evaluate localization responses."""
+    ) -> DetectionMetrics:
+        """Evaluate localization responses using NOVA detection metrics.
+
+        Raises:
+            ValueError: If JSON parsing fails or required fields are missing.
+        """
         # Extract predicted boxes - format for evaluator
         predicted_dicts = []
         for response in responses:
             try:
                 parsed = json.loads(response.text)
-                boxes = parsed.get("boxes", [])
-                predicted_dicts.append(
-                    {
-                        "boxes": boxes,
-                        "scores": [response.confidence] * len(boxes),
-                        "labels": [0] * len(boxes),
-                    }
-                )
-            except json.JSONDecodeError:
-                predicted_dicts.append({"boxes": [], "scores": [], "labels": []})
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in response: {response.text[:100]}") from e
+
+            if "boxes" not in parsed:
+                raise ValueError(f"Missing 'boxes' in response: {parsed}")
+            boxes = parsed["boxes"]
+            predicted_dicts.append(
+                {
+                    "boxes": boxes,
+                    "scores": [response.confidence] * len(boxes),
+                    "labels": [0] * len(boxes),
+                }
+            )
 
         # Parse ground truth boxes
         ground_truth_dicts = []
         for gt in ground_truth:
             gt_parsed = json.loads(gt)
-            boxes = gt_parsed.get("boxes", [])
+            if "boxes" not in gt_parsed:
+                raise ValueError(f"Missing 'boxes' in ground truth: {gt[:100]}")
+            boxes = gt_parsed["boxes"]
 
             ground_truth_dicts.append(
                 {
@@ -193,10 +213,11 @@ class AgenticLocalizationProcessor(BaseProcessor):
         # Use evaluation function
         results = evaluate_detection(predicted_dicts, ground_truth_dicts)
 
-        return EvaluationMetrics(
-            accuracy=results.get("map50", 0.0),
-            precision=results.get("precision"),
-            recall=results.get("recall"),
-            f1_score=results.get("f1_score"),
-            auc_roc=results.get("map30"),
+        return DetectionMetrics(
+            map30=results["map30"],
+            map50=results["map50"],
+            map50_95=results["map50_95"],
+            acc50=results["acc50"],
+            tp30=results["tp30"],
+            fp30=results["fp30"],
         )

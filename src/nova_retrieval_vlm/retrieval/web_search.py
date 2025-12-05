@@ -13,17 +13,17 @@ import re
 import time
 from dataclasses import dataclass
 from dataclasses import field
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-import requests
-import urllib3
 from beartype import beartype
 from loguru import logger
 
-# Suppress SSL warnings for web scraping
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Note: SSL verification is enabled by default for security.
+# If you encounter SSL issues with specific endpoints, handle them explicitly
+# per-request rather than globally disabling SSL warnings.
 
 
 @dataclass
@@ -35,7 +35,7 @@ class SearchResult:
     content: str  # Full content or detailed snippet
     snippet: str  # Brief description
     source: str
-    reliability_score: float  # 0.0-1.0
+    reliability_score: float  # 0.0-1.0 - original source reliability
     publication_date: str | None = None
     author: str | None = None
     journal: str | None = None
@@ -45,6 +45,7 @@ class SearchResult:
     extracted_entities: list[str] = field(default_factory=list)  # Medical entities found
     citation_count: int | None = None  # For academic sources
     open_access: bool = False
+    ranking_score: float = 0.0  # Composite ranking score (set during ranking)
 
     def to_llm_dict(self) -> dict[str, Any]:
         """Convert to LLM-friendly dictionary format."""
@@ -63,21 +64,51 @@ class SearchResult:
         }
 
 
+class SearchError(Exception):
+    """Raised when a search operation fails."""
+
+    def __init__(self, engine_name: str, message: str, original_error: Exception | None = None):
+        self.engine_name = engine_name
+        self.original_error = original_error
+        super().__init__(f"{engine_name}: {message}")
+
+
 class SearchEngine:
     """Base class for search engines with common functionality."""
 
     def __init__(self, name: str, timeout: int = 30, max_retries: int = 3):
         self.name = name
-        self.timeout = timeout
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.max_retries = max_retries
-        self.session = requests.Session()
-        self.session.headers.update(self._get_headers())
+        self.headers = self._get_headers()
+        # Reusable session for connection pooling (lazy-initialized)
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create a reusable aiohttp session for connection pooling."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                headers=self.headers,
+                timeout=self.timeout,
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the session and release resources."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _get_headers(self) -> dict[str, str]:
         """Get standard headers for web requests."""
+        user_agent = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
         return {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
             "DNT": "1",
@@ -86,28 +117,33 @@ class SearchEngine:
         }
 
     async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        """Search with retry logic."""
+        """Search with retry logic. Raises SearchError on failure."""
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 results = await self._search_impl(query, max_results)
                 if results:
                     return results
-
-            except Exception as e:
+                # Empty results is valid - no matches found
+                return []
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+            ) as e:
+                last_error = e
                 logger.warning(f"Search attempt {attempt + 1} failed for {self.name}: {e}")
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2**attempt)  # Exponential backoff
 
-        logger.error(f"All search attempts failed for {self.name}")
-        return []
+        raise SearchError(self.name, "All search attempts failed", last_error)
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Implement actual search logic in subclasses."""
         raise NotImplementedError
 
-    def _calculate_reliability(self, url: str, source: str) -> float:
-        """Calculate source reliability score."""
-        _ = source  # Unused parameter
+    def _calculate_reliability(self, url: str) -> float:
+        """Calculate source reliability score based on URL domain."""
         # High-reliability medical sources
         high_reliability = {
             "pubmed.ncbi.nlm.nih.gov": 0.95,
@@ -147,52 +183,72 @@ class PubMedSearchEngine(SearchEngine):
         super().__init__("PubMed", **kwargs)
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
         self.api_key = os.getenv("NCBI_API_KEY")
+        # Email is required by NCBI for API usage tracking
+        self.email = self._get_required_email()
+
+        # Update headers with API key if available
+        if self.api_key:
+            self.headers["Authorization"] = f"Bearer {self.api_key}"
+
+    @staticmethod
+    def _get_required_email() -> str:
+        """Get required NCBI email from environment.
+
+        NCBI requires a valid email for API rate limiting identification.
+        See: https://www.ncbi.nlm.nih.gov/books/NBK25497/
+
+        Raises:
+            ValueError: If NCBI_EMAIL environment variable is not set.
+        """
+        email = os.getenv("NCBI_EMAIL")
+        if not email:
+            raise ValueError(
+                "NCBI_EMAIL environment variable is required for PubMed API access. "
+                "Set it to a valid email address for NCBI rate limiting identification. "
+                "See: https://www.ncbi.nlm.nih.gov/books/NBK25497/"
+            )
+        return email
 
     def _get_headers(self) -> dict[str, str]:
-        headers = super()._get_headers()
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+        return super()._get_headers()  # API key is already set in self.headers
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Search PubMed with enhanced metadata extraction."""
-        try:
-            # Step 1: Search for articles
-            search_url = f"{self.base_url}esearch.fcgi"
-            search_params = {
-                "db": "pubmed",
-                "term": query,
-                "retmax": max_results,
-                "retmode": "json",
-                "sort": "relevance",
-                "tool": "nova_retrieval_vlm",
-                "email": "research@example.com",
-            }
+        # Step 1: Search for articles
+        search_url = f"{self.base_url}esearch.fcgi"
+        search_params = {
+            "db": "pubmed",
+            "term": query,
+            "retmax": max_results,
+            "retmode": "json",
+            "sort": "relevance",
+            "tool": "nova_retrieval_vlm",
+            "email": self.email,
+        }
 
-            if self.api_key:
-                search_params["api_key"] = self.api_key
+        if self.api_key:
+            search_params["api_key"] = self.api_key
 
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(search_url, params=search_params, timeout=self.timeout) as response,
-            ):
-                if response.status != 200:
-                    return []
-                search_data = await response.json()
+        session = await self._get_session()
+        async with session.get(search_url, params=search_params) as response:
+            if response.status != 200:
+                raise SearchError(
+                    self.name,
+                    f"PubMed API returned status {response.status}",
+                )
+            search_data = await response.json()
 
-            if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
-                return []
-
-            pmid_list = search_data["esearchresult"]["idlist"]
-            if not pmid_list:
-                return []
-
-            # Step 2: Fetch detailed information
-            return await self._fetch_article_details(pmid_list)
-
-        except Exception as e:
-            logger.error(f"PubMed search failed: {e}")
+        if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
+            # No results found - this is valid, not an error
             return []
+
+        pmid_list = search_data["esearchresult"]["idlist"]
+        if not pmid_list:
+            # No matching articles - valid empty result
+            return []
+
+        # Step 2: Fetch detailed information
+        return await self._fetch_article_details(pmid_list)
 
     async def _fetch_article_details(self, pmid_list: list[str]) -> list[SearchResult]:
         """Fetch detailed article information from PubMed."""
@@ -209,82 +265,79 @@ class PubMedSearchEngine(SearchEngine):
         # Rate limiting
         await asyncio.sleep(0.5)
 
-        try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(fetch_url, params=fetch_params, timeout=self.timeout) as response,
-            ):
-                if response.status != 200:
-                    return []
-                data = await response.json()
-
-            results = []
-            if "result" not in data:
-                return results
-
-            for pmid in pmid_list:
-                if pmid not in data["result"]:
-                    continue
-
-                article = data["result"][pmid]
-
-                # Extract metadata
-                title = article.get("title", "").strip()
-                authors = article.get("authors", [])
-                journal = article.get("fulljournalname", "")
-                pub_date = article.get("pubdate", "")
-                abstract = article.get("abstract", "")
-                doi = article.get("doi", "")
-                article_ids = article.get("articleids", [])
-
-                # Check for open access
-                open_access = any(
-                    aid["idtype"] == "pmc" for aid in article_ids if isinstance(aid, dict)
+        session = await self._get_session()
+        async with session.get(fetch_url, params=fetch_params) as response:
+            if response.status != 200:
+                raise SearchError(
+                    self.name,
+                    f"Failed to fetch article details: status {response.status}",
                 )
+            data = await response.json()
 
-                # Determine content type
-                publication_types = article.get("publicationtypes", [])
-                content_type = "article"  # default
-                if "Review" in publication_types:
-                    content_type = "review"
-                elif "Case Reports" in publication_types:
-                    content_type = "case_report"
-                elif "Guideline" in publication_types:
-                    content_type = "guidelines"
-
-                # Create content
-                content = abstract if abstract else title
-
-                # Extract medical entities
-                entities = self._extract_medical_entities(title + " " + content)
-
-                # Create search result
-                result = SearchResult(
-                    title=title,
-                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                    content=content,
-                    snippet=self._create_snippet(title, content),
-                    source="pubmed",
-                    reliability_score=self._calculate_reliability(
-                        f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/", "pubmed"
-                    ),
-                    publication_date=pub_date,
-                    author=", ".join([a.get("name", "") for a in authors[:3]]),
-                    journal=journal,
-                    doi=doi,
-                    content_type=content_type,
-                    medical_relevance=0.9,  # PubMed is highly relevant for medical
-                    extracted_entities=entities,
-                    open_access=open_access,
-                )
-
-                results.append(result)
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Failed to fetch article details: {e}")
+        if "result" not in data:
+            # No article details available - return empty (valid case)
             return []
+
+        results = []
+        for pmid in pmid_list:
+            if pmid not in data["result"]:
+                continue
+
+            article = data["result"][pmid]
+
+            # Extract metadata
+            title = article.get("title", "").strip()
+            authors = article.get("authors", [])
+            journal = article.get("fulljournalname", "")
+            pub_date = article.get("pubdate", "")
+            abstract = article.get("abstract", "")
+            doi = article.get("doi", "")
+            article_ids = article.get("articleids", [])
+
+            # Check for open access
+            open_access = any(
+                aid["idtype"] == "pmc" for aid in article_ids if isinstance(aid, dict)
+            )
+
+            # Determine content type
+            publication_types = article.get("publicationtypes", [])
+            content_type = "article"  # default
+            if "Review" in publication_types:
+                content_type = "review"
+            elif "Case Reports" in publication_types:
+                content_type = "case_report"
+            elif "Guideline" in publication_types:
+                content_type = "guidelines"
+
+            # Create content
+            content = abstract if abstract else title
+
+            # Extract medical entities
+            entities = self._extract_medical_entities(title + " " + content)
+
+            # Create search result
+            result = SearchResult(
+                title=title,
+                url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                content=content,
+                snippet=self._create_snippet(title, content),
+                source="pubmed",
+                reliability_score=self._calculate_reliability(
+                    f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                ),
+                publication_date=pub_date,
+                author=", ".join([a.get("name", "") for a in authors[:3]]),
+                journal=journal,
+                doi=doi,
+                content_type=content_type,
+                medical_relevance=0.9,  # PubMed is highly relevant for medical
+                extracted_entities=entities,
+                open_access=open_access,
+            )
+
+            results.append(result)
+
+        return results
 
     def _create_snippet(self, title: str, content: str) -> str:
         """Create a concise snippet."""
@@ -326,6 +379,9 @@ class PubMedSearchEngine(SearchEngine):
 class WebSearchManager:
     """Manager for web search operations with LLM agent integration."""
 
+    SUPPORTED_ENGINES = {"pubmed"}
+    MAX_CACHE_SIZE = 500  # Maximum number of cached queries
+
     def __init__(
         self,
         engines: list[str] | None = None,
@@ -338,11 +394,14 @@ class WebSearchManager:
         Initialize web search manager.
 
         Args:
-            engines: List of search engines to use
+            engines: List of search engines to use (default: ["pubmed"])
             max_results_per_engine: Results to fetch per engine
             timeout: Request timeout in seconds
             max_total_results: Maximum total results to return
             cache_duration: Cache duration in seconds
+
+        Raises:
+            ValueError: If no valid engines are specified
         """
         self.max_results_per_engine = max_results_per_engine
         self.max_total_results = max_total_results
@@ -351,18 +410,55 @@ class WebSearchManager:
 
         # Initialize search engines
         self.engines: list[SearchEngine] = []
-        if not engines:
-            engines = ["pubmed"]  # Default to reliable sources only
+        engines = engines or ["pubmed"]  # Default to PubMed
 
         for engine in engines:
             if engine == "pubmed":
                 self.engines.append(PubMedSearchEngine(timeout=timeout))
-            else:
-                logger.warning(f"Unknown search engine: {engine}")
+            elif engine not in self.SUPPORTED_ENGINES:
+                raise ValueError(
+                    f"Unknown search engine: {engine}. Supported: {self.SUPPORTED_ENGINES}"
+                )
 
         if not self.engines:
-            logger.warning("No search engines configured, using PubMed as fallback")
-            self.engines.append(PubMedSearchEngine(timeout=timeout))
+            raise ValueError("No valid search engines configured")
+
+    async def __aenter__(self) -> WebSearchManager:
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Async context manager exit with cleanup."""
+        await self.close()
+
+    async def close(self) -> None:
+        """Close all engine sessions and release resources."""
+        for engine in self.engines:
+            await engine.close()
+
+    def _evict_stale_cache(self) -> None:
+        """Evict stale entries and enforce maximum cache size."""
+        current_time = time.time()
+
+        # First, remove expired entries
+        expired_keys = [
+            key for key, (timestamp, _) in self._cache.items()
+            if current_time - timestamp > self.cache_duration
+        ]
+        for key in expired_keys:
+            del self._cache[key]
+
+        # If still over limit, evict oldest entries
+        if len(self._cache) > self.MAX_CACHE_SIZE:
+            sorted_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][0])
+            keys_to_remove = sorted_keys[: len(self._cache) - self.MAX_CACHE_SIZE // 2]
+            for key in keys_to_remove:
+                del self._cache[key]
 
     @beartype
     async def search(
@@ -377,13 +473,16 @@ class WebSearchManager:
 
         Args:
             query: Search query
-            search_type: Type of search ('diagnosis', 'guidelines', 'research', 'anatomy', 'general')
+            search_type: Type of search (diagnosis/guidelines/research/anatomy/general)
             medical_focus: Whether to prioritize medical sources
             enhance_query: Whether to enhance the query automatically
 
         Returns:
             Ranked list of search results
         """
+        # Evict stale cache entries periodically
+        self._evict_stale_cache()
+
         # Check cache
         cache_key = f"{query}:{search_type}:{medical_focus}"
         if cache_key in self._cache:
@@ -398,17 +497,22 @@ class WebSearchManager:
 
         # Search across all engines
         all_results = []
+        errors: list[SearchError] = []
         for engine in self.engines:
             try:
                 results = await engine.search(search_query, self.max_results_per_engine)
                 all_results.extend(results)
-
-                # Rate limiting between engines
-                await asyncio.sleep(1)
-
-            except Exception as e:
+                await asyncio.sleep(1)  # Rate limiting
+            except SearchError as e:
+                errors.append(e)
                 logger.error(f"Engine {engine.name} failed: {e}")
-                continue
+
+        # If all engines failed, raise an error
+        if errors and not all_results:
+            raise SearchError(
+                "WebSearchManager",
+                f"All search engines failed: {[str(e) for e in errors]}",
+            )
 
         # Filter and rank results
         filtered_results = self._filter_results(all_results, medical_focus)
@@ -492,16 +596,16 @@ class WebSearchManager:
             # Boost for medical relevance
             score += result.medical_relevance * 0.3
 
-            # Boost for recent publications
+            # Boost for recent publications (newer = higher boost)
             if result.publication_date:
-                try:
-                    year = int(re.search(r"\b(19|20)\d{2}\b", result.publication_date).group())
-                    current_year = 2024
-                    recency_boost = max(0, (current_year - year) / 10 * 0.1)
+                match = re.search(r"\b(19|20)\d{2}\b", result.publication_date)
+                if match:
+                    year = int(match.group())
+                    current_year = datetime.now().year
+                    years_old = current_year - year
+                    # Newer papers get higher boost: max 0.15 for current year, decays over 15 years
+                    recency_boost = max(0.0, 0.15 * (1 - min(1.0, years_old / 15)))
                     score += recency_boost
-                except (AttributeError, ValueError, TypeError):
-                    # No valid date found, skip recency boost
-                    pass
 
             # Boost for open access
             if result.open_access:
@@ -533,10 +637,11 @@ class WebSearchManager:
             )
             score += entity_matches * 0.1
 
-            result.reliability_score = min(1.0, score)  # Cap at 1.0
+            # Store in ranking_score, preserving original reliability_score
+            result.ranking_score = min(1.0, score)
 
-        # Sort by score (descending)
-        results.sort(key=lambda x: x.reliability_score, reverse=True)
+        # Sort by ranking score (descending)
+        results.sort(key=lambda x: x.ranking_score, reverse=True)
         return results
 
     def format_for_llm(self, results: list[SearchResult], max_content_length: int = 5000) -> str:
@@ -580,7 +685,7 @@ class WebSearchManager:
 
             # Check length limit
             if total_length + len(formatted) > max_content_length:
-                formatted.append(
+                formatted_results.append(
                     f"\n... ({len(results) - i + 1} more results omitted due to length limit)"
                 )
                 break
@@ -595,42 +700,75 @@ class WebSearchManager:
 async def search_medical_literature(
     query: str, max_results: int = 5, search_type: str = "general"
 ) -> list[SearchResult]:
-    """Search medical literature with optimized settings."""
-    manager = WebSearchManager(
+    """Search medical literature with optimized settings.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results
+        search_type: Type of search (diagnosis, guidelines, research, anatomy, general)
+
+    Returns:
+        List of search results
+
+    Raises:
+        SearchError: If the search fails
+    """
+    async with WebSearchManager(
         engines=["pubmed"], max_total_results=max_results, max_results_per_engine=max_results
-    )
-    return await manager.search(query, search_type=search_type)
+    ) as manager:
+        return await manager.search(query, search_type=search_type)
 
 
 def search_medical_literature_sync(
     query: str, max_results: int = 5, search_type: str = "general"
 ) -> list[SearchResult]:
-    """Synchronous wrapper for medical literature search."""
-    try:
-        import asyncio
+    """Synchronous wrapper for medical literature search.
 
-        # Try to get current event loop
-        try:
-            asyncio.get_running_loop()
-            # If we're in an async context, we need to handle this differently
-            # For now, return empty results to avoid blocking
-            logger.warning("Called sync search from async context, returning empty results")
-            return []
-        except RuntimeError:
-            # No event loop running, we can create one
-            return asyncio.run(search_medical_literature(query, max_results, search_type))
-    except Exception as e:
-        logger.error(f"Synchronous medical literature search failed: {e}")
-        return []
+    Note: Cannot be called from within an async context.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results
+        search_type: Type of search
+
+    Returns:
+        List of search results
+
+    Raises:
+        RuntimeError: If called from an async context
+        SearchError: If the search fails
+    """
+    # Check if we're in an async context without string-matching exceptions
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running event loop - safe to use asyncio.run()
+        loop = None
+
+    if loop is not None:
+        raise RuntimeError(
+            "search_medical_literature_sync cannot be called from an async context. "
+            "Use search_medical_literature instead."
+        )
+
+    return asyncio.run(search_medical_literature(query, max_results, search_type))
 
 
 async def search_clinical_guidelines(query: str, max_results: int = 5) -> list[SearchResult]:
-    """Search specifically for clinical guidelines."""
-    manager = WebSearchManager(max_total_results=max_results)
-    return await manager.search(query, search_type="guidelines")
+    """Search specifically for clinical guidelines.
+
+    Raises:
+        SearchError: If the search fails
+    """
+    async with WebSearchManager(max_total_results=max_results) as manager:
+        return await manager.search(query, search_type="guidelines")
 
 
 async def search_diagnostic_information(query: str, max_results: int = 5) -> list[SearchResult]:
-    """Search for diagnostic information and case reports."""
-    manager = WebSearchManager(max_total_results=max_results)
-    return await manager.search(query, search_type="diagnosis")
+    """Search for diagnostic information and case reports.
+
+    Raises:
+        SearchError: If the search fails
+    """
+    async with WebSearchManager(max_total_results=max_results) as manager:
+        return await manager.search(query, search_type="diagnosis")

@@ -28,7 +28,6 @@ agentic:
   enabled_tools: []
   disabled_tools: []
   single_shot: false
-  use_retrieval: false
 
 # Paths configuration
 paths:

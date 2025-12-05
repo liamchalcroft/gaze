@@ -8,6 +8,8 @@ and confidence intervals for research paper preparation.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +20,54 @@ from loguru import logger
 from scipy import stats
 
 
+@dataclass(frozen=True)
+class EffectSizeResult:
+    """Result of effect size calculation between two groups."""
+
+    effect_size: float
+    ci_lower: float
+    ci_upper: float
+    n1: int
+    n2: int
+    mean1: float
+    mean2: float
+
+
+@dataclass(frozen=True)
+class StatisticalTestResult:
+    """Result of a statistical test between two groups."""
+
+    test_name: str
+    statistic: float
+    p_value: float
+    significant: bool
+    n1: int
+    n2: int
+    alpha: float
+    mean1: float
+    mean2: float
+    std1: float
+    std2: float
+
+
+@dataclass(frozen=True)
+class ConfidenceIntervalResult:
+    """Result of confidence interval calculation."""
+
+    mean: float
+    ci_lower: float
+    ci_upper: float
+    std: float
+    n: int
+    confidence_level: float
+
+
 @beartype
 def calculate_effect_size(
     group1: list[float] | np.ndarray,
     group2: list[float] | np.ndarray,
     effect_type: str = "cohens_d",
-) -> dict[str, float]:
+) -> EffectSizeResult:
     """Calculate effect size between two groups.
 
     Args:
@@ -32,7 +76,10 @@ def calculate_effect_size(
         effect_type: Type of effect size ('cohens_d', 'hedges_g', 'glass_delta')
 
     Returns:
-        Dictionary with effect size and confidence intervals
+        EffectSizeResult with effect size and confidence intervals.
+
+    Raises:
+        ValueError: If unknown effect_type or empty groups after NaN removal.
     """
     group1 = np.array(group1)
     group2 = np.array(group2)
@@ -42,47 +89,50 @@ def calculate_effect_size(
     group2 = group2[~np.isnan(group2)]
 
     if len(group1) == 0 or len(group2) == 0:
-        return {"effect_size": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+        raise ValueError("Cannot calculate effect size with empty groups after NaN removal")
 
     n1, n2 = len(group1), len(group2)
-    mean1, mean2 = np.mean(group1), np.mean(group2)
-    std1, std2 = np.std(group1, ddof=1), np.std(group2, ddof=1)
+    mean1, mean2 = float(np.mean(group1)), float(np.mean(group2))
+    std1, std2 = float(np.std(group1, ddof=1)), float(np.std(group2, ddof=1))
 
     # Pooled standard deviation
     pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
 
     if pooled_std == 0:
-        return {"effect_size": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+        raise ValueError("Cannot calculate effect size with zero pooled standard deviation")
 
     if effect_type == "cohens_d":
-        # Cohen's d
         effect_size = (mean1 - mean2) / pooled_std
     elif effect_type == "hedges_g":
-        # Hedges' g (bias-corrected Cohen's d)
         effect_size = (mean1 - mean2) / pooled_std
-        # Bias correction
         correction_factor = 1 - (3 / (4 * (n1 + n2) - 9))
         effect_size *= correction_factor
     elif effect_type == "glass_delta":
-        # Glass's Delta (uses control group std)
+        if std2 == 0:
+            raise ValueError("Cannot calculate Glass's delta with zero control group std")
         effect_size = (mean1 - mean2) / std2
     else:
         raise ValueError(f"Unknown effect type: {effect_type}")
 
-    # Calculate confidence intervals
-    se = pooled_std * np.sqrt(1 / n1 + 1 / n2)
-    ci_lower = effect_size - 1.96 * se
-    ci_upper = effect_size + 1.96 * se
+    # Confidence intervals using Hedges & Olkin variance approximation
+    df = n1 + n2 - 2
+    if df <= 0:
+        ci_lower = effect_size
+        ci_upper = effect_size
+    else:
+        se_d = np.sqrt((n1 + n2) / (n1 * n2) + effect_size**2 / (2 * df))
+        ci_lower = effect_size - 1.96 * se_d
+        ci_upper = effect_size + 1.96 * se_d
 
-    return {
-        "effect_size": float(effect_size),
-        "ci_lower": float(ci_lower),
-        "ci_upper": float(ci_upper),
-        "n1": n1,
-        "n2": n2,
-        "mean1": float(mean1),
-        "mean2": float(mean2),
-    }
+    return EffectSizeResult(
+        effect_size=float(effect_size),
+        ci_lower=float(ci_lower),
+        ci_upper=float(ci_upper),
+        n1=n1,
+        n2=n2,
+        mean1=mean1,
+        mean2=mean2,
+    )
 
 
 @beartype
@@ -92,7 +142,7 @@ def perform_statistical_test(
     test_type: str = "ttest",
     alpha: float = 0.05,
     alternative: str = "two-sided",
-) -> dict[str, Any]:
+) -> StatisticalTestResult:
     """Perform statistical test between two groups.
 
     Args:
@@ -103,7 +153,10 @@ def perform_statistical_test(
         alternative: Alternative hypothesis ('two-sided', 'less', 'greater')
 
     Returns:
-        Dictionary with test statistics and p-values
+        StatisticalTestResult with test statistics and p-values.
+
+    Raises:
+        ValueError: If groups are empty, unknown test_type, or invalid inputs.
     """
     group1 = np.array(group1)
     group2 = np.array(group2)
@@ -113,43 +166,37 @@ def perform_statistical_test(
     group2 = group2[~np.isnan(group2)]
 
     if len(group1) == 0 or len(group2) == 0:
-        return {"statistic": 0.0, "p_value": 1.0, "significant": False}
+        raise ValueError("Cannot perform statistical test with empty groups after NaN removal")
 
-    result = {"n1": len(group1), "n2": len(group2), "alpha": alpha}
+    n1, n2 = len(group1), len(group2)
 
     if test_type == "ttest":
-        # Student's t-test
         statistic, p_value = stats.ttest_ind(group1, group2, alternative=alternative)
-        result["test"] = "Student's t-test"
-        result["statistic"] = float(statistic)
-        result["p_value"] = float(p_value)
-
+        test_name = "Student's t-test"
     elif test_type == "mannwhitney":
-        # Mann-Whitney U test
         statistic, p_value = stats.mannwhitneyu(group1, group2, alternative=alternative)
-        result["test"] = "Mann-Whitney U"
-        result["statistic"] = float(statistic)
-        result["p_value"] = float(p_value)
-
+        test_name = "Mann-Whitney U"
     elif test_type == "wilcoxon":
-        # Wilcoxon signed-rank test (for paired data)
-        if len(group1) != len(group2):
+        if n1 != n2:
             raise ValueError("Wilcoxon test requires paired data of equal length")
         statistic, p_value = stats.wilcoxon(group1, group2, alternative=alternative)
-        result["test"] = "Wilcoxon signed-rank"
-        result["statistic"] = float(statistic)
-        result["p_value"] = float(p_value)
-
+        test_name = "Wilcoxon signed-rank"
     else:
         raise ValueError(f"Unknown test type: {test_type}")
 
-    result["significant"] = p_value < alpha
-    result["mean1"] = float(np.mean(group1))
-    result["mean2"] = float(np.mean(group2))
-    result["std1"] = float(np.std(group1, ddof=1))
-    result["std2"] = float(np.std(group2, ddof=1))
-
-    return result
+    return StatisticalTestResult(
+        test_name=test_name,
+        statistic=float(statistic),
+        p_value=float(p_value),
+        significant=p_value < alpha,
+        n1=n1,
+        n2=n2,
+        alpha=alpha,
+        mean1=float(np.mean(group1)),
+        mean2=float(np.mean(group2)),
+        std1=float(np.std(group1, ddof=1)),
+        std2=float(np.std(group2, ddof=1)),
+    )
 
 
 @beartype
@@ -169,11 +216,12 @@ def analyze_ablation_configurations(
         Statistical analysis results
     """
     if baseline_config not in results:
-        logger.warning(f"Baseline configuration {baseline_config} not found")
-        return {}
+        raise ValueError(f"Baseline configuration '{baseline_config}' not found in results")
 
     baseline_data = results[baseline_config]
-    baseline_values = [baseline_data.get(metric, 0)]
+    if metric not in baseline_data:
+        raise KeyError(f"Metric '{metric}' not found in baseline configuration '{baseline_config}'")
+    baseline_values = [baseline_data[metric]]
 
     analysis_results = {
         "baseline_config": baseline_config,
@@ -190,7 +238,9 @@ def analyze_ablation_configurations(
         if config_name == baseline_config:
             continue
 
-        config_values = [config_data.get(metric, 0)]
+        if metric not in config_data:
+            raise KeyError(f"Metric '{metric}' not found in configuration '{config_name}'")
+        config_values = [config_data[metric]]
 
         # Perform statistical test
         test_result = perform_statistical_test(config_values, baseline_values, test_type="ttest")
@@ -200,25 +250,25 @@ def analyze_ablation_configurations(
             config_values, baseline_values, effect_type="cohens_d"
         )
 
+        difference = config_values[0] - baseline_values[0] if config_values else 0
         comparison_result = {
             "config_name": config_name,
             "config_value": config_values[0] if config_values else 0,
-            "difference": config_values[0] - baseline_values[0] if config_values else 0,
-            "relative_improvement": (
-                (config_values[0] - baseline_values[0]) / baseline_values[0] * 100
-            )
+            "difference": difference,
+            "relative_improvement": (difference / baseline_values[0] * 100)
             if baseline_values[0] != 0
             else 0,
         }
 
-        comparison_result.update(test_result)
-        comparison_result.update(effect_result)
+        # Merge dataclass results into comparison dict
+        comparison_result.update(asdict(test_result))
+        comparison_result.update(asdict(effect_result))
 
         analysis_results["comparisons"][config_name] = comparison_result
 
         # Update summary
-        if test_result["significant"]:
-            if comparison_result["difference"] > 0:
+        if test_result.significant:
+            if difference > 0:
                 analysis_results["summary"]["significant_improvements"] += 1
             else:
                 analysis_results["summary"]["significant_degradations"] += 1
@@ -278,7 +328,7 @@ def create_statistical_summary_table(
 def calculate_confidence_intervals(
     values: list[float] | np.ndarray,
     confidence_level: float = 0.95,
-) -> dict[str, float]:
+) -> ConfidenceIntervalResult:
     """Calculate confidence intervals for a set of values.
 
     Args:
@@ -286,16 +336,19 @@ def calculate_confidence_intervals(
         confidence_level: Confidence level (0-1)
 
     Returns:
-        Dictionary with confidence interval statistics
+        ConfidenceIntervalResult with mean, CI bounds, and statistics.
+
+    Raises:
+        ValueError: If values is empty after NaN removal.
     """
     values = np.array(values)
     values = values[~np.isnan(values)]
 
     if len(values) == 0:
-        return {"mean": 0, "ci_lower": 0, "ci_upper": 0, "std": 0, "n": 0}
+        raise ValueError("Cannot calculate confidence intervals with empty values after NaN removal")
 
-    mean = np.mean(values)
-    std = np.std(values, ddof=1)
+    mean = float(np.mean(values))
+    std = float(np.std(values, ddof=1))
     n = len(values)
 
     # Calculate confidence interval
@@ -303,17 +356,14 @@ def calculate_confidence_intervals(
     t_critical = stats.t.ppf(1 - alpha / 2, n - 1)
     margin_error = t_critical * (std / np.sqrt(n))
 
-    ci_lower = mean - margin_error
-    ci_upper = mean + margin_error
-
-    return {
-        "mean": float(mean),
-        "ci_lower": float(ci_lower),
-        "ci_upper": float(ci_upper),
-        "std": float(std),
-        "n": n,
-        "confidence_level": confidence_level,
-    }
+    return ConfidenceIntervalResult(
+        mean=mean,
+        ci_lower=float(mean - margin_error),
+        ci_upper=float(mean + margin_error),
+        std=std,
+        n=n,
+        confidence_level=confidence_level,
+    )
 
 
 @beartype
@@ -402,11 +452,8 @@ def generate_paper_ready_statistics(
     # 2. Statistical tests vs baseline
     if baseline_config in results:
         for metric in ["accuracy", "confidence", "avg_tokens"]:
-            try:
-                test_results = analyze_ablation_configurations(results, baseline_config, metric)
-                statistical_results["statistical_tests"][metric] = test_results
-            except Exception as e:
-                logger.warning(f"Failed to analyze {metric}: {e}")
+            test_results = analyze_ablation_configurations(results, baseline_config, metric)
+            statistical_results["statistical_tests"][metric] = test_results
 
     # 3. Calibration reliability analysis
     calibration_data = {
@@ -455,7 +502,6 @@ def calculate_statistical_power(
     """
     # Use normal approximation for power calculation
     z_alpha = stats.norm.ppf(1 - alpha / 2)
-    stats.norm.ppf(power)
 
     # Calculate non-centrality parameter
     ncp = effect_size * np.sqrt(sample_size / 2)

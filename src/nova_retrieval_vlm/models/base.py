@@ -19,14 +19,7 @@ class GenerationLog(BaseModel):
     timestamp: float = Field(description="Unix timestamp of generation")
     latency_seconds: float | None = Field(None, ge=0.0, description="Response latency in seconds")
 
-    class Config:
-        """Pydantic configuration for serialization."""
-
-        json_encoders = {
-            Path: str,  # Serialize Path objects as strings
-        }
-
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """Convert to dictionary for logging/storage."""
         return self.model_dump()
 

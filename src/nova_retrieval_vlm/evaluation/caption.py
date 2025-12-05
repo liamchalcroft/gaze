@@ -3,32 +3,51 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 from collections.abc import Sequence
 
 import nltk
 import sacrebleu
+from beartype import beartype
 from bert_score import score as bert_score_fn
-from loguru import logger
 from nltk.tokenize import word_tokenize
-from nltk.translate.meteor_score import meteor_score
+from nltk.translate.meteor_score import meteor_score as nltk_meteor_score
 
-# Ensure NLTK data is available at module load
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
-nltk.download("wordnet", quiet=True)
-nltk.download("omw-1.4", quiet=True)
+# Check for optional RadGraph dependency at module load
+RADGRAPH_AVAILABLE = importlib.util.find_spec("radgraph") is not None
 
 
+@functools.lru_cache(maxsize=1)
+def _ensure_nltk_data() -> bool:
+    """Download required NLTK data if not already present.
+
+    Uses lru_cache for thread-safe one-time initialization without global mutable state.
+    The cache ensures this runs exactly once per process.
+
+    Returns:
+        True when initialization is complete (value unused, just for caching).
+    """
+    nltk.download("punkt", quiet=True)
+    nltk.download("punkt_tab", quiet=True)
+    nltk.download("wordnet", quiet=True)
+    nltk.download("omw-1.4", quiet=True)
+    return True
+
+
+@beartype
 def _calculate_radgraph_f1(refs: Sequence[str], preds: Sequence[str]) -> float | None:
-    """Calculate RadGraph F1 score if radgraph is installed.
+    """Calculate RadGraph F1 score.
 
     RadGraph is an optional heavy dependency for clinical NLP evaluation.
-    Returns None if not installed, allowing callers to handle accordingly.
+    Returns None if not installed.
+
+    Raises:
+        ImportError: If radgraph is specified in pyproject.toml but not properly installed.
     """
-    try:
-        from radgraph.radgraph import F1RadGraph
-    except ImportError:
+    if not RADGRAPH_AVAILABLE:
         return None
+
+    from radgraph.radgraph import F1RadGraph
 
     rg = F1RadGraph(reward_level="partial")
     radgraph_f1_result, *_ = rg.forward(refs, preds)
@@ -36,11 +55,15 @@ def _calculate_radgraph_f1(refs: Sequence[str], preds: Sequence[str]) -> float |
 
 
 @functools.lru_cache(maxsize=128)
-def _cached_word_tokenize(text: str) -> list:
-    """Cached word tokenization to avoid repeated processing."""
-    return word_tokenize(text)
+def _cached_word_tokenize(text: str) -> tuple[str, ...]:
+    """Cached word tokenization to avoid repeated processing.
+
+    Returns tuple instead of list for hashability (required by lru_cache).
+    """
+    return tuple(word_tokenize(text))
 
 
+@beartype
 def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, float | None]:
     """Evaluate generated captions using multiple metrics.
 
@@ -52,41 +75,49 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         Dictionary with keys 'bleu', 'bert_f1', 'radgraph_f1', 'meteor',
         'modality_f1', 'clinical_f1', 'binary_f1'. radgraph_f1 may be None
         if radgraph is not installed.
+
+    Raises:
+        ValueError: If preds and refs have different lengths.
     """
+    _ensure_nltk_data()
+
+    if len(preds) != len(refs):
+        raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {len(refs)}")
     bleu = sacrebleu.corpus_bleu(preds, [refs])
 
     _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
     bert_f1_score = float(f1_scores.mean()) * 100
 
-    # METEOR - Fixed calculation with caching
+    # METEOR calculation with proper tokenization
     # Prepare references for METEOR (list of lists format)
-    ref_tokens = [[_cached_word_tokenize(ref)] for ref in refs]
-    pred_tokens = [_cached_word_tokenize(pred) for pred in preds]
+    # Convert tuples back to lists for METEOR compatibility
+    ref_tokens = [[list(_cached_word_tokenize(ref))] for ref in refs]
+    pred_tokens = [list(_cached_word_tokenize(pred)) for pred in preds]
 
-    # Pre-calculate METEOR scores to avoid try-except in loop
-    valid_meteor_scores = []
-    failed_indices = []
+    # Calculate METEOR scores - fail on invalid inputs
+    meteor_scores = [
+        nltk_meteor_score(ref_tokens[i], pred_token) for i, pred_token in enumerate(pred_tokens)
+    ]
 
-    for i, pred_token in enumerate(pred_tokens):
-        try:
-            score = meteor_score(ref_tokens[i], pred_token)
-            valid_meteor_scores.append(score)
-        except (ValueError, RuntimeError) as e:
-            failed_indices.append(i)
-            logger.warning(f"METEOR calculation failed for sample {i}: {e}")
-
-    # Handle failed calculations
-    total_samples = len(pred_tokens)
-    if failed_indices:
-        logger.info(f"METEOR failed for {len(failed_indices)}/{total_samples} samples")
-
-    meteor = float(sum(valid_meteor_scores) / total_samples * 100) if valid_meteor_scores else 0.0
+    meteor = float(sum(meteor_scores) / len(meteor_scores) * 100)
 
     # RadGraph F1 (optional heavy dependency)
     radgraph_f1 = _calculate_radgraph_f1(refs, preds)
 
     # Keyword-based F1 (case-insensitive exact keyword matching per NOVA protocol)
-    modality_terms = {"flair", "t1", "t2", "t1w", "t2w", "axial", "sagittal", "coronal", "weighted"}
+    # NOVA modality terms: "flair, axial, sagittal, t1, t2, coronal, dwi, t1w, t2w, weighted"
+    modality_terms = {
+        "flair",
+        "t1",
+        "t2",
+        "t1w",
+        "t2w",
+        "axial",
+        "sagittal",
+        "coronal",
+        "dwi",
+        "weighted",
+    }
     clinical_terms = {
         "lesion",
         "tumor",
@@ -106,10 +137,15 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         "abnormal",
         "abnormality",
     }
-    mod_f1s = []
-    clin_f1s = []
+    # Single pass through predictions and references for all keyword-based metrics
+    mod_f1s: list[float] = []
+    clin_f1s: list[float] = []
     binary_correct = 0
-    for p, r in zip(preds, refs, strict=False):
+    tp = 0  # True positives for binary F1
+    fp = 0  # False positives for binary F1
+    fn = 0  # False negatives for binary F1
+
+    for p, r in zip(preds, refs, strict=True):
         p_words = {w.lower().strip(".,;:!?()[]") for w in p.split()}
         r_words = {w.lower().strip(".,;:!?()[]") for w in r.split()}
 
@@ -143,29 +179,19 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         if pred_abnormal == ref_abnormal:
             binary_correct += 1
 
+        # Binary F1 TP/FP/FN calculation (reuse p_clin, r_clin from above)
+        if pred_abnormal and ref_abnormal:
+            tp += 1
+        elif pred_abnormal and not ref_abnormal:
+            fp += 1
+        elif not pred_abnormal and ref_abnormal:
+            fn += 1
+
     modality_f1 = float(sum(mod_f1s) / len(mod_f1s) if mod_f1s else 0.0)
     clinical_f1 = float(sum(clin_f1s) / len(clin_f1s) if clin_f1s else 0.0)
     binary_accuracy = float(binary_correct / len(preds) if preds else 0.0)
 
-    # Calculate binary F1 with TP/FP/FN (per NOVA protocol)
-    tp = sum(
-        1
-        for p, r in zip(preds, refs, strict=False)
-        if bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
-        and bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
-    )
-    fp = sum(
-        1
-        for p, r in zip(preds, refs, strict=False)
-        if bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
-        and not bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
-    )
-    fn = sum(
-        1
-        for p, r in zip(preds, refs, strict=False)
-        if not bool({w.lower().strip(".,;:!?()[]") for w in p.split()} & clinical_terms)
-        and bool({w.lower().strip(".,;:!?()[]") for w in r.split()} & clinical_terms)
-    )
+    # Binary F1 from accumulated TP/FP/FN
     precision_bin = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall_bin = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     binary_f1 = (

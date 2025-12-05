@@ -194,7 +194,7 @@ outputs/
 results/
 experiments/
 logs/
-eval_*/
+eval*/
 !outputs/.gitkeep
 !runs/.gitkeep
 

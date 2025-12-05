@@ -51,10 +51,11 @@ class TestToolRegistry:
         assert registry.current_image is not None
         assert registry.current_image.size == (100, 100)
 
-    def test_execute_zoom(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_zoom(self, temp_image):
         """Test zoom tool execution."""
         registry = ToolRegistry(temp_image)
-        result = registry.execute("zoom", factor=2.0)
+        result = await registry.execute("zoom", factor=2.0)
 
         assert result.success
         assert result.tool_name == "zoom"
@@ -62,10 +63,11 @@ class TestToolRegistry:
         assert result.image_base64 is not None
         assert registry.current_image.size == (200, 200)
 
-    def test_execute_crop(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_crop(self, temp_image):
         """Test crop tool execution."""
         registry = ToolRegistry(temp_image)
-        result = registry.execute("crop", box=[0.25, 0.25, 0.75, 0.75])
+        result = await registry.execute("crop", box=[0.25, 0.25, 0.75, 0.75])
 
         assert result.success
         assert result.tool_name == "crop"
@@ -74,59 +76,129 @@ class TestToolRegistry:
         assert registry.current_image.size[0] <= 100
         assert registry.current_image.size[1] <= 100
 
-    def test_execute_contrast(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_contrast(self, temp_image):
         """Test contrast adjustment tool."""
         registry = ToolRegistry(temp_image)
-        result = registry.execute("adjust_contrast", factor=1.5)
+        result = await registry.execute("adjust_contrast", factor=1.5)
 
         assert result.success
         assert result.tool_name == "adjust_contrast"
         assert "1.5" in result.description
 
-    def test_execute_threshold(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_threshold(self, temp_image):
         """Test intensity threshold tool."""
         registry = ToolRegistry(temp_image)
-        result = registry.execute("threshold", lower=50, upper=200)
+        result = await registry.execute("threshold", lower=50, upper=200)
 
         assert result.success
         assert result.tool_name == "threshold"
         assert "[50, 200]" in result.description
 
-    def test_execute_reset(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_flip_horizontal(self, temp_image):
+        """Test flip horizontal tool."""
+        registry = ToolRegistry(temp_image)
+        registry.set_image(temp_image)  # Explicitly load image
+        original_size = registry.current_image.size
+
+        result = await registry.execute("flip_horizontal")
+
+        assert result.success
+        assert result.tool_name == "flip_horizontal"
+        assert "horizontal" in result.description.lower()
+        assert result.image_base64 is not None
+        # Size should remain the same after flip
+        assert registry.current_image.size == original_size
+
+    @pytest.mark.asyncio
+    async def test_execute_flip_vertical(self, temp_image):
+        """Test flip vertical tool."""
+        registry = ToolRegistry(temp_image)
+        registry.set_image(temp_image)  # Explicitly load image
+        original_size = registry.current_image.size
+
+        result = await registry.execute("flip_vertical")
+
+        assert result.success
+        assert result.tool_name == "flip_vertical"
+        assert "vertical" in result.description.lower()
+        assert result.image_base64 is not None
+        # Size should remain the same after flip
+        assert registry.current_image.size == original_size
+
+    @pytest.mark.asyncio
+    async def test_execute_rotate_clockwise(self, temp_image):
+        """Test rotate tool clockwise."""
+        registry = ToolRegistry(temp_image)
+        registry.set_image(temp_image)  # Explicitly load image
+        original_size = registry.current_image.size
+
+        result = await registry.execute("rotate", clockwise=True)
+
+        assert result.success
+        assert result.tool_name == "rotate"
+        assert "clockwise" in result.description.lower()
+        assert result.image_base64 is not None
+        # For square images, size should be swapped (W, H) -> (H, W)
+        assert registry.current_image.size == (original_size[1], original_size[0])
+
+    @pytest.mark.asyncio
+    async def test_execute_rotate_counterclockwise(self, temp_image):
+        """Test rotate tool counter-clockwise."""
+        registry = ToolRegistry(temp_image)
+        registry.set_image(temp_image)  # Explicitly load image
+        original_size = registry.current_image.size
+
+        result = await registry.execute("rotate", clockwise=False)
+
+        assert result.success
+        assert result.tool_name == "rotate"
+        assert "counter-clockwise" in result.description.lower()
+        assert result.image_base64 is not None
+        # For square images, size should be swapped
+        assert registry.current_image.size == (original_size[1], original_size[0])
+
+    @pytest.mark.asyncio
+    async def test_execute_reset(self, temp_image):
         """Test reset tool."""
         registry = ToolRegistry(temp_image)
 
         # Modify image first
-        registry.execute("zoom", factor=2.0)
+        await registry.execute("zoom", factor=2.0)
         assert registry.current_image.size == (200, 200)
 
         # Reset
-        result = registry.execute("reset")
+        result = await registry.execute("reset")
         assert result.success
         assert registry.current_image.size == (100, 100)
 
-    def test_execute_unknown_tool(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_execute_unknown_tool(self, temp_image):
         """Test executing unknown tool returns error."""
         registry = ToolRegistry(temp_image)
-        result = registry.execute("unknown_tool")
+        result = await registry.execute("unknown_tool")
 
         assert not result.success
         assert "unknown_tool" in result.error
 
-    def test_execute_without_image(self):
+    @pytest.mark.asyncio
+    async def test_execute_without_image(self):
         """Test executing tool without image returns error."""
         registry = ToolRegistry()
-        result = registry.execute("zoom", factor=2.0)
+        result = await registry.execute("zoom", factor=2.0)
 
         assert not result.success
         assert "No image" in result.description or "No image" in result.error
 
-    def test_tool_history(self, temp_image):
+    @pytest.mark.asyncio
+    async def test_tool_history(self, temp_image):
         """Test that tool history is tracked."""
         registry = ToolRegistry(temp_image)
 
-        registry.execute("zoom", factor=1.5)
-        registry.execute("adjust_contrast", factor=1.2)
+        await registry.execute("zoom", factor=1.5)
+        await registry.execute("adjust_contrast", factor=1.2)
 
         history = registry.history
         assert len(history) == 2
@@ -150,7 +222,7 @@ class TestToolRegistry:
         """Test registering a custom tool."""
         registry = ToolRegistry()
 
-        def custom_execute(**kwargs):
+        async def custom_execute(**kwargs):
             return ToolResult(
                 success=True,
                 tool_name="custom",
@@ -168,6 +240,33 @@ class TestToolRegistry:
         schemas = registry.get_tool_schemas()
         tool_names = {s["function"]["name"] for s in schemas}
         assert "custom" in tool_names
+
+    def test_disabled_tools(self):
+        """Test that disabled_tools prevents tool registration."""
+        registry = ToolRegistry(disabled_tools=["zoom", "crop", "search_web"])
+        schemas = registry.get_tool_schemas()
+        tool_names = {s["function"]["name"] for s in schemas}
+
+        # Disabled tools should not be registered
+        assert "zoom" not in tool_names
+        assert "crop" not in tool_names
+        assert "search_web" not in tool_names
+
+        # Other tools should still be registered
+        assert "adjust_contrast" in tool_names
+        assert "threshold" in tool_names
+        assert "reset" in tool_names
+
+    def test_disabled_tools_empty_list(self):
+        """Test that empty disabled_tools list registers all tools."""
+        registry_all = ToolRegistry(disabled_tools=[])
+        registry_none = ToolRegistry()
+
+        schemas_all = registry_all.get_tool_schemas()
+        schemas_none = registry_none.get_tool_schemas()
+
+        # Should have same tools
+        assert len(schemas_all) == len(schemas_none)
 
 
 class TestAgenticConfig:
@@ -251,7 +350,6 @@ class TestAgenticProcessor:
 
             result = await processor.analyze(
                 image_path=temp_image,
-                _task="localization",
                 metadata={"modality": "MRI"},
             )
 
@@ -284,8 +382,6 @@ class TestAgenticLocalizationProcessor:
             task_name="localization",
             model_name="openai/gpt-4o",
             batch_size=1,
-            use_retrieval=False,
-            retrieval_type="bm25",
             output_dir=tmp_path,
             skip_existing=False,
         )
@@ -378,8 +474,9 @@ class TestAgenticWebSearchIntegration:
         assert "query" in function_def["parameters"]["required"]
         assert function_def["parameters"]["properties"]["query"]["type"] == "string"
 
-    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
-    def test_search_web_tool_execution(self, mock_search, temp_image):
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature")
+    async def test_search_web_tool_execution(self, mock_search, temp_image):
         """Test search_web tool execution with mocking."""
         # Mock successful search result
         from nova_retrieval_vlm.retrieval.web_search import SearchResult
@@ -401,54 +498,57 @@ class TestAgenticWebSearchIntegration:
         registry.set_image(temp_image)
 
         # Test search_web tool execution
-        result = registry.execute(
-            "search_web", query="glioblastoma MRI findings", search_type="pubmed"
+        result = await registry.execute(
+            "search_web", query="glioblastoma MRI findings", search_type="general"
         )
 
         assert result.success is True
         assert "Found 1" in result.description
         assert result.metadata["results_count"] == 1
         assert result.metadata["query"] == "glioblastoma MRI findings"
-        assert result.metadata["search_type"] == "pubmed"
 
         # Verify the search was called with correct parameters
         mock_search.assert_called_once_with(
-            query="glioblastoma MRI findings", max_results=5, search_type="pubmed"
+            query="glioblastoma MRI findings", max_results=5, search_type="general"
         )
 
-    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
-    def test_search_web_error_handling(self, mock_search, temp_image):
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature")
+    async def test_search_web_error_handling(self, mock_search, temp_image):
         """Test search_web tool error handling."""
-        mock_search.side_effect = Exception("Search failed")
+        from nova_retrieval_vlm.retrieval.web_search import SearchError
+
+        mock_search.side_effect = SearchError("test", "Search failed")
 
         registry = ToolRegistry()
         registry.set_image(temp_image)
 
-        result = registry.execute("search_web", query="test query")
+        result = await registry.execute("search_web", query="test query")
 
         assert result.success is False
-        assert "search failed" in result.description.lower()
-        assert "error" in result.metadata
+        assert result.error is not None
 
-    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature_sync")
-    def test_search_web_empty_results(self, mock_search, temp_image):
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_literature")
+    async def test_search_web_empty_results(self, mock_search, temp_image):
         """Test search_web tool with empty results."""
         mock_search.return_value = []
 
         registry = ToolRegistry()
         registry.set_image(temp_image)
 
-        result = registry.execute("search_web", query="obscure condition")
+        result = await registry.execute("search_web", query="obscure condition")
 
-        assert result.success is False  # Implementation returns False for no results
+        # Empty results should be success=True (no results found is valid)
+        assert result.success is True
         assert (
-            "no results" in result.description.lower()
-            or "no pubmed results" in result.description.lower()
+            "no" in result.description.lower()
+            or "0" in result.description
         )
         assert result.metadata["results_count"] == 0
 
     @patch("nova_retrieval_vlm.retrieval.web_search.PubMedSearchEngine")
-    def test_search_result_creation(self, mock_engine):
+    def test_search_result_creation(self, _mock_engine):
         """Test SearchResult dataclass creation and validation."""
         from nova_retrieval_vlm.retrieval.web_search import SearchResult
 
@@ -470,3 +570,167 @@ class TestAgenticWebSearchIntegration:
         assert result.reliability_score == 0.85
         assert result.medical_relevance == 0.9
         assert "glioblastoma" in result.extracted_entities
+
+
+class TestAgenticImageSearchIntegration:
+    """Tests for image search integration in agentic tools."""
+
+    @pytest.fixture
+    def temp_image(self):
+        """Create a temporary test image."""
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            img = Image.new("RGB", (100, 100), color="white")
+            img.save(f.name)
+            yield Path(f.name)
+            # Cleanup
+            Path(f.name).unlink(missing_ok=True)
+
+    def test_tool_registry_includes_search_images(self):
+        """Test that search_images tool is included in tool registry."""
+        registry = ToolRegistry()
+        schemas = registry.get_tool_schemas()
+
+        search_images_schema = next(
+            (schema for schema in schemas if schema["function"]["name"] == "search_images"),
+            None,
+        )
+
+        assert search_images_schema is not None, "search_images tool not found in registry"
+
+        # Verify tool schema structure
+        function_def = search_images_schema["function"]
+        assert function_def["name"] == "search_images"
+        assert "query" in function_def["parameters"]["required"]
+        assert function_def["parameters"]["properties"]["query"]["type"] == "string"
+        # Check optional parameters
+        assert "modality" in function_def["parameters"]["properties"]
+        assert "body_part" in function_def["parameters"]["properties"]
+
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_images")
+    async def test_search_images_tool_execution(self, mock_search, temp_image):
+        """Test search_images tool execution with mocking."""
+        from nova_retrieval_vlm.retrieval.image_search import ImageSearchResult
+
+        mock_search.return_value = [
+            ImageSearchResult(
+                title="Brain MRI Glioblastoma",
+                image_url="https://openi.nlm.nih.gov/images/12345.jpg",
+                thumbnail_url="https://openi.nlm.nih.gov/thumbs/12345.jpg",
+                source_url="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12345/",
+                source="openi",
+                modality="MRI",
+                body_part="brain",
+                caption="T1-weighted MRI showing enhancing mass",
+                reliability_score=0.9,
+            )
+        ]
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        # Test search_images tool execution
+        result = await registry.execute("search_images", query="glioblastoma MRI")
+
+        assert result.success is True
+        assert "Found 1" in result.description
+        assert result.metadata["results_count"] == 1
+        assert result.metadata["query"] == "glioblastoma MRI"
+
+        # Verify the search was called with correct parameters
+        mock_search.assert_called_once_with(
+            query="glioblastoma MRI", max_results=5, modality=None, body_part=None
+        )
+
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_images")
+    async def test_search_images_with_filters(self, mock_search, temp_image):
+        """Test search_images tool with modality and body_part filters."""
+        from nova_retrieval_vlm.retrieval.image_search import ImageSearchResult
+
+        mock_search.return_value = [
+            ImageSearchResult(
+                title="Brain CT Scan",
+                image_url="https://openi.nlm.nih.gov/images/67890.jpg",
+                thumbnail_url=None,
+                source_url="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC67890/",
+                source="openi",
+                modality="CT",
+                body_part="brain",
+                reliability_score=0.85,
+            )
+        ]
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        result = await registry.execute(
+            "search_images", query="hemorrhage", modality="CT", body_part="brain"
+        )
+
+        assert result.success is True
+        mock_search.assert_called_once_with(
+            query="hemorrhage", max_results=5, modality="CT", body_part="brain"
+        )
+
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_images")
+    async def test_search_images_error_handling(self, mock_search, temp_image):
+        """Test search_images tool error handling."""
+        from nova_retrieval_vlm.retrieval.image_search import ImageSearchError
+
+        mock_search.side_effect = ImageSearchError("Open-i", "API unavailable")
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        result = await registry.execute("search_images", query="test query")
+
+        assert result.success is False
+        assert result.error is not None
+
+    @pytest.mark.asyncio
+    @patch("nova_retrieval_vlm.agentic.tools.search_medical_images")
+    async def test_search_images_empty_results(self, mock_search, temp_image):
+        """Test search_images tool with empty results."""
+        mock_search.return_value = []
+
+        registry = ToolRegistry()
+        registry.set_image(temp_image)
+
+        result = await registry.execute("search_images", query="extremely rare condition")
+
+        # Empty results should be success=True
+        assert result.success is True
+        assert "no" in result.description.lower() or "0" in result.description
+        assert result.metadata["results_count"] == 0
+
+    def test_image_search_result_creation(self):
+        """Test ImageSearchResult dataclass creation and validation."""
+        from nova_retrieval_vlm.retrieval.image_search import ImageSearchResult
+
+        result = ImageSearchResult(
+            title="Test Brain MRI",
+            image_url="https://example.com/image.jpg",
+            thumbnail_url="https://example.com/thumb.jpg",
+            source_url="https://example.com/article",
+            source="openi",
+            modality="MRI",
+            body_part="brain",
+            diagnosis="glioblastoma",
+            caption="T1-weighted MRI showing enhancing mass in right frontal lobe",
+            reliability_score=0.9,
+        )
+
+        assert result.title == "Test Brain MRI"
+        assert result.image_url == "https://example.com/image.jpg"
+        assert result.source == "openi"
+        assert result.modality == "MRI"
+        assert result.body_part == "brain"
+        assert result.reliability_score == 0.9
+
+        # Test to_dict method
+        result_dict = result.to_dict()
+        assert result_dict["title"] == "Test Brain MRI"
+        assert result_dict["modality"] == "MRI"
+        assert "reliability" in result_dict

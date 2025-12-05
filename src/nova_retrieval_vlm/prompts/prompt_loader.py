@@ -125,11 +125,21 @@ def combine_prompts(system_prompt: str, task_prompt: str, mode: str) -> str:
     """
     if mode == "single_turn":
         # For single-turn mode, emphasize comprehensive one-shot analysis
-        return f"{system_prompt}\n\n<comprehensive_analysis_instructions>\n{task_prompt}\n</comprehensive_analysis_instructions>\n\nProvide your complete analysis in this single response."
+        return (
+            f"{system_prompt}\n\n"
+            f"<comprehensive_analysis_instructions>\n{task_prompt}\n"
+            f"</comprehensive_analysis_instructions>\n\n"
+            f"Provide your complete analysis in this single response."
+        )
 
     elif mode == "agentic":
         # For agentic mode, emphasize tool usage and multi-turn reasoning
-        return f"{system_prompt}\n\n<agentic_analysis_instructions>\n{task_prompt}\n</agentic_analysis_instructions>\n\nBegin your agentic analysis process."
+        return (
+            f"{system_prompt}\n\n"
+            f"<agentic_analysis_instructions>\n{task_prompt}\n"
+            f"</agentic_analysis_instructions>\n\n"
+            f"Begin your agentic analysis process."
+        )
 
     else:
         raise ValueError(f"Unknown mode: {mode}. Expected 'agentic' or 'single_turn'.")

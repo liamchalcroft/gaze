@@ -2,7 +2,7 @@
 
 Provides a registry of tools that can be called by VLMs during analysis,
 including zoom, crop, contrast adjustment, intensity thresholding,
-flipping, rotation, and visual retrieval (planned).
+flipping, rotation, and web/image search.
 """
 
 from __future__ import annotations
@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -20,6 +23,9 @@ from beartype import beartype
 from loguru import logger
 from PIL import Image
 
+from nova_retrieval_vlm.retrieval.image_search import ImageSearchError
+from nova_retrieval_vlm.retrieval.image_search import search_medical_images
+from nova_retrieval_vlm.retrieval.web_search import SearchError
 from nova_retrieval_vlm.retrieval.web_search import search_medical_literature
 from nova_retrieval_vlm.visual_reasoning.image_ops import adjust_contrast
 from nova_retrieval_vlm.visual_reasoning.image_ops import apply_intensity_threshold
@@ -28,6 +34,10 @@ from nova_retrieval_vlm.visual_reasoning.image_ops import flip_horizontal
 from nova_retrieval_vlm.visual_reasoning.image_ops import flip_vertical
 from nova_retrieval_vlm.visual_reasoning.image_ops import rotate_90
 from nova_retrieval_vlm.visual_reasoning.image_ops import zoom_image
+
+
+class ToolExecutionError(Exception):
+    """Raised when a tool execution fails due to invalid state."""
 
 
 @dataclass
@@ -49,175 +59,286 @@ class VisualTool:
     name: str
     description: str
     parameters: dict[str, dict[str, Any]]
-    execute: Callable[..., ToolResult]
+    execute: Callable[..., Awaitable[ToolResult]]
+    requires_image: bool = True
 
 
-def _image_to_base64(image: Image.Image, quality: int = 85) -> str:
+@beartype
+def image_to_base64(image: Image.Image, quality: int = 85) -> str:
     """Convert PIL Image to base64 JPEG string."""
-    buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="JPEG", quality=quality)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    with io.BytesIO() as buffer:
+        image.convert("RGB").save(buffer, format="JPEG", quality=quality)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 class ToolRegistry:
-    """Registry of visual tools available for agentic analysis."""
+    """Registry of visual tools available for agentic analysis.
 
-    def __init__(self, image_path: Path | None = None):
-        """Initialize tool registry with optional source image."""
+    Supports async context manager protocol for proper resource cleanup:
+        async with ToolRegistry(image_path) as registry:
+            result = await registry.execute("zoom", factor=2.0)
+    """
+
+    @beartype
+    def __init__(
+        self,
+        image_path: Path | None = None,
+        disabled_tools: list[str] | None = None,
+    ) -> None:
+        """Initialize tool registry with optional source image.
+
+        Args:
+            image_path: Path to the source image for tool operations
+            disabled_tools: List of tool names to exclude from registration
+        """
         self._tools: dict[str, VisualTool] = {}
         self._image_path = image_path
         self._current_image: Image.Image | None = None
         self._tool_history: list[ToolResult] = []
-
-        # Note: Web search manager initialized lazily to avoid async/sync issues
-        self._web_searcher = None
-
-        # Register default tools
+        self._image_lock = asyncio.Lock()
+        self._disabled_tools = set(disabled_tools or [])
         self._register_default_tools()
 
+    async def __aenter__(self) -> ToolRegistry:
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Async context manager exit with cleanup."""
+        self.close()
+
+    @beartype
+    def close(self) -> None:
+        """Close and release all resources."""
+        if self._current_image is not None:
+            self._current_image.close()
+            self._current_image = None
+        self._tool_history.clear()
+
+    @contextmanager
+    def _update_image(self) -> Iterator[Image.Image]:
+        """Context manager for safe image updates with automatic cleanup.
+
+        Yields the current image, then replaces it with whatever was assigned
+        to self._current_image and closes the old image.
+
+        Usage:
+            with self._update_image() as img:
+                self._current_image = some_operation(img)
+        """
+        if self._current_image is None:
+            raise ToolExecutionError("No image loaded")
+        old_image = self._current_image
+        try:
+            yield old_image
+        finally:
+            if self._current_image is not old_image:
+                old_image.close()
+
+    def _should_register(self, tool_name: str) -> bool:
+        """Check if a tool should be registered based on disabled_tools config."""
+        return tool_name not in self._disabled_tools
+
+    @beartype
     def _register_default_tools(self) -> None:
         """Register the default set of visual tools."""
-        # Zoom tool
-        self.register(
-            VisualTool(
-                name="zoom",
-                description="Magnify image for detail analysis. Use 2.0-4.0 factor.",
-                parameters={
-                    "factor": {
-                        "type": "number",
-                        "description": "Zoom factor: 1.0=unchanged, 2.0=2x zoom.",
-                        "minimum": 0.5,
-                        "maximum": 4.0,
-                    }
-                },
-                execute=self._execute_zoom,
-            )
-        )
-
-        # Crop tool
-        self.register(
-            VisualTool(
-                name="crop",
-                description="Extract rectangular region for focused analysis.",
-                parameters={
-                    "box": {
-                        "type": "array",
-                        "description": "Box [x1,y1,x2,y2] normalized (0-1) coordinates.",
-                        "items": {"type": "number", "minimum": 0, "maximum": 1},
-                        "minItems": 4,
-                        "maxItems": 4,
-                    }
-                },
-                execute=self._execute_crop,
-            )
-        )
-
-        # Contrast adjustment tool
-        self.register(
-            VisualTool(
-                name="adjust_contrast",
-                description="Enhance or reduce image contrast to better distinguish tissue boundaries and subtle findings. Critical for detecting low-contrast lesions.",
-                parameters={
-                    "factor": {
-                        "type": "number",
-                        "description": "Contrast factor: 1.0=no change, >1.0=increase contrast, <1.0=decrease contrast. Try 1.5-2.5 for subtle findings.",
-                        "minimum": 0.5,
-                        "maximum": 3.0,
-                    }
-                },
-                execute=self._execute_contrast,
-            )
-        )
-
-        # Intensity threshold tool
-        self.register(
-            VisualTool(
-                name="threshold",
-                description="Apply intensity windowing to highlight specific tissue types or abnormalities. Essential for MRI density analysis.",
-                parameters={
-                    "lower": {
-                        "type": "integer",
-                        "description": "Lower bound: Minimum intensity to display (0-255). Use 50-120 for dark tissues, 150-200 for bright tissues.",
-                        "minimum": 0,
-                        "maximum": 254,
+        if self._should_register("zoom"):
+            self.register(
+                VisualTool(
+                    name="zoom",
+                    description="Magnify image for detail analysis. Use 2.0-4.0 factor.",
+                    parameters={
+                        "factor": {
+                            "type": "number",
+                            "description": "Zoom factor: 1.0=unchanged, 2.0=2x zoom.",
+                            "minimum": 0.5,
+                            "maximum": 4.0,
+                        }
                     },
-                    "upper": {
-                        "type": "integer",
-                        "description": "Upper bound: Maximum intensity to display (0-255). Must be higher than lower bound.",
-                        "minimum": 1,
-                        "maximum": 255,
+                    execute=self._execute_zoom,
+                )
+            )
+
+        if self._should_register("crop"):
+            self.register(
+                VisualTool(
+                    name="crop",
+                    description="Extract rectangular region for focused analysis.",
+                    parameters={
+                        "box": {
+                            "type": "array",
+                            "description": "Box [x1,y1,x2,y2] normalized (0-1) coordinates.",
+                            "items": {"type": "number", "minimum": 0, "maximum": 1},
+                            "minItems": 4,
+                            "maxItems": 4,
+                        }
                     },
-                },
-                execute=self._execute_threshold,
+                    execute=self._execute_crop,
+                )
             )
-        )
 
-        # Flip horizontal tool
-        self.register(
-            VisualTool(
-                name="flip_horizontal",
-                description="Mirror the image left-right. Critical for assessing bilateral symmetry and comparing hemispheric structures.",
-                parameters={},
-                execute=self._execute_flip_horizontal,
-            )
-        )
-
-        # Flip vertical tool
-        self.register(
-            VisualTool(
-                name="flip_vertical",
-                description="Mirror the image top-bottom. Useful for standardizing orientation and viewing from different perspectives.",
-                parameters={},
-                execute=self._execute_flip_vertical,
-            )
-        )
-
-        # Rotate tool
-        self.register(
-            VisualTool(
-                name="rotate",
-                description="Rotate image by 90 degrees clockwise or counterclockwise. Essential for standardizing view orientation and examining anatomical relationships from different angles.",
-                parameters={
-                    "clockwise": {
-                        "type": "boolean",
-                        "description": "If true, rotate clockwise; if false, rotate counter-clockwise",
-                        "default": True,
-                    }
-                },
-                execute=self._execute_rotate,
-            )
-        )
-
-        # Reset tool
-        self.register(
-            VisualTool(
-                name="reset",
-                description="Return to the original full image, discarding all previous modifications. Essential when you need to start over or examine the complete context after focused analysis.",
-                parameters={},
-                execute=self._execute_reset,
-            )
-        )
-
-        # Web search tool for medical information
-        self.register(
-            VisualTool(
-                name="search_web",
-                description="Search the web for current medical information, guidelines, research papers, and reference cases. Use Radiopaedia, PubMed, and medical sites to verify findings and explore differential diagnoses.",
-                parameters={
-                    "query": {
-                        "type": "string",
-                        "description": "Medical search query. Include condition, imaging modality, and key findings. Examples: 'glioblastoma MRI T1 contrast enhancement', 'cerebellar hemangioblastoma radiopaedia', 'brain metastasis differential diagnosis'",
+        if self._should_register("adjust_contrast"):
+            self.register(
+                VisualTool(
+                    name="adjust_contrast",
+                    description=(
+                        "Enhance or reduce image contrast to better distinguish tissue "
+                        "boundaries and subtle findings."
+                    ),
+                    parameters={
+                        "factor": {
+                            "type": "number",
+                            "description": "Contrast factor: 1.0=no change, >1.0=increase, <1.0=decrease.",
+                            "minimum": 0.5,
+                            "maximum": 3.0,
+                        }
                     },
-                    "search_type": {
-                        "type": "string",
-                        "description": "Type of search: 'diagnosis' for clinical info, 'research' for recent studies, 'guidelines' for protocols, 'anatomy' for normal variants, or 'general' for broad search. Default: 'general'.",
-                        "enum": ["diagnosis", "research", "guidelines", "anatomy", "general"],
-                        "default": "general",
-                    },
-                },
-                execute=self._execute_search_web,
+                    execute=self._execute_contrast,
+                )
             )
-        )
+
+        if self._should_register("threshold"):
+            self.register(
+                VisualTool(
+                    name="threshold",
+                    description=(
+                        "Apply intensity windowing to highlight specific tissue types "
+                        "or abnormalities."
+                    ),
+                    parameters={
+                        "lower": {
+                            "type": "integer",
+                            "description": "Lower intensity bound (0-254).",
+                            "minimum": 0,
+                            "maximum": 254,
+                        },
+                        "upper": {
+                            "type": "integer",
+                            "description": "Upper intensity bound (1-255). Must be > lower.",
+                            "minimum": 1,
+                            "maximum": 255,
+                        },
+                    },
+                    execute=self._execute_threshold,
+                )
+            )
+
+        if self._should_register("flip_horizontal"):
+            self.register(
+                VisualTool(
+                    name="flip_horizontal",
+                    description="Mirror the image left-right for bilateral symmetry assessment.",
+                    parameters={},
+                    execute=self._execute_flip_horizontal,
+                )
+            )
+
+        if self._should_register("flip_vertical"):
+            self.register(
+                VisualTool(
+                    name="flip_vertical",
+                    description="Mirror the image top-bottom for orientation standardization.",
+                    parameters={},
+                    execute=self._execute_flip_vertical,
+                )
+            )
+
+        if self._should_register("rotate"):
+            self.register(
+                VisualTool(
+                    name="rotate",
+                    description="Rotate image by 90 degrees clockwise or counter-clockwise.",
+                    parameters={
+                        "clockwise": {
+                            "type": "boolean",
+                            "description": "If true, rotate clockwise; if false, counter-clockwise.",
+                            "default": True,
+                        }
+                    },
+                    execute=self._execute_rotate,
+                )
+            )
+
+        if self._should_register("reset"):
+            self.register(
+                VisualTool(
+                    name="reset",
+                    description="Return to the original full image, discarding all modifications.",
+                    parameters={},
+                    execute=self._execute_reset,
+                )
+            )
+
+        if self._should_register("search_web"):
+            self.register(
+                VisualTool(
+                    name="search_web",
+                    description=(
+                        "Search PubMed for medical literature, guidelines, "
+                        "research papers, and reference cases."
+                    ),
+                    parameters={
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Medical search query. Include condition, imaging "
+                                "modality, and key findings."
+                            ),
+                        },
+                        "search_type": {
+                            "type": "string",
+                            "description": "Type of search.",
+                            "enum": ["diagnosis", "research", "guidelines", "anatomy", "general"],
+                            "default": "general",
+                        },
+                    },
+                    execute=self._execute_search_web,
+                    requires_image=False,
+                )
+            )
+
+        if self._should_register("search_images"):
+            self.register(
+                VisualTool(
+                    name="search_images",
+                    description=(
+                        "Search NIH Open-i for reference medical images. "
+                        "Returns image URLs with captions and metadata."
+                    ),
+                    parameters={
+                        "query": {
+                            "type": "string",
+                            "description": "Medical image search query.",
+                        },
+                        "modality": {
+                            "type": "string",
+                            "description": "Filter by imaging modality.",
+                            "enum": ["MRI", "CT", "X-ray", "Ultrasound", "PET", "Mammography", "any"],
+                        },
+                        "body_part": {
+                            "type": "string",
+                            "description": "Filter by body part.",
+                            "enum": [
+                                "brain",
+                                "head",
+                                "chest",
+                                "abdomen",
+                                "spine",
+                                "pelvis",
+                                "cardiac",
+                                "any",
+                            ],
+                        },
+                    },
+                    execute=self._execute_search_images,
+                    requires_image=False,
+                )
+            )
 
     @beartype
     def register(self, tool: VisualTool) -> None:
@@ -227,20 +348,21 @@ class ToolRegistry:
     @beartype
     def set_image(self, image_path: Path) -> None:
         """Set the source image for tool operations."""
+        if self._current_image is not None:
+            self._current_image.close()
         self._image_path = image_path
-        self._current_image = Image.open(image_path)
+        with Image.open(image_path) as img:
+            self._current_image = img.copy()
         self._tool_history.clear()
 
     @beartype
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Get OpenAI-compatible tool schemas for all registered tools.
-
-        Returns schemas in OpenAI function calling format with strict mode support.
-        """
+        """Get OpenAI-compatible tool schemas for all registered tools."""
         schemas = []
         for tool in self._tools.values():
-            # Build parameter properties with proper types
             properties = {}
+            required_params = []
+
             for param_name, param_def in tool.parameters.items():
                 prop: dict[str, Any] = {"type": param_def.get("type", "string")}
                 if "description" in param_def:
@@ -249,7 +371,8 @@ class ToolRegistry:
                     prop["enum"] = param_def["enum"]
                 if "default" in param_def:
                     prop["default"] = param_def["default"]
-                # Handle array types
+                else:
+                    required_params.append(param_name)
                 if param_def.get("type") == "array" and "items" in param_def:
                     prop["items"] = param_def["items"]
                 properties[param_name] = prop
@@ -262,7 +385,7 @@ class ToolRegistry:
                     "parameters": {
                         "type": "object",
                         "properties": properties,
-                        "required": list(tool.parameters.keys()),
+                        "required": required_params,
                         "additionalProperties": False,
                     },
                 },
@@ -281,22 +404,19 @@ class ToolRegistry:
                 error=f"Tool '{tool_name}' not found in registry",
             )
 
-        if self._current_image is None and self._image_path is not None:
-            self._current_image = Image.open(self._image_path)
+        tool = self._tools[tool_name]
 
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name=tool_name,
-                description="No image loaded",
-                error="No image has been set for tool operations",
-            )
+        if tool.requires_image:
+            await self._ensure_image_loaded()
+            if self._current_image is None:
+                return ToolResult(
+                    success=False,
+                    tool_name=tool_name,
+                    description="No image loaded",
+                    error="No image has been set for tool operations",
+                )
 
-        tool_func = self._tools[tool_name].execute
-        if asyncio.iscoroutinefunction(tool_func):
-            result = await tool_func(**kwargs)
-        else:
-            result = tool_func(**kwargs)
+        result = await tool.execute(**kwargs)
         self._tool_history.append(result)
         return result
 
@@ -305,72 +425,57 @@ class ToolRegistry:
         """Get the history of tool executions."""
         return self._tool_history.copy()
 
+    @beartype
+    async def _ensure_image_loaded(self) -> None:
+        """Lazy load the image with async lock to prevent race conditions."""
+        if self._current_image is None and self._image_path is not None:
+            async with self._image_lock:
+                if self._current_image is None:
+                    with Image.open(self._image_path) as img:
+                        self._current_image = img.copy()
+
     @property
     def current_image(self) -> Image.Image | None:
-        """Get the current working image (lazy loads if needed)."""
-        if self._current_image is None and self._image_path is not None:
-            self._current_image = Image.open(self._image_path)
+        """Get the currently loaded image (may be None if not yet loaded)."""
         return self._current_image
 
-    def _execute_zoom(self, factor: float) -> ToolResult:
+    @beartype
+    async def _execute_zoom(self, factor: float) -> ToolResult:
         """Execute zoom tool."""
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name="zoom",
-                description="No image loaded for zoom operation",
-                error="Cannot zoom - no image has been loaded. Please ensure an image is set before using tools.",
-            )
-
-        if factor < 0.5 or factor > 4.0:
+        if not 0.5 <= factor <= 4.0:
             return ToolResult(
                 success=False,
                 tool_name="zoom",
                 description=f"Invalid zoom factor: {factor:.2f}",
-                error=f"Zoom factor {factor:.2f} outside valid range [0.5, 4.0]. "
-                f"Recommend using 2.0-3.0 for detailed examination, or 0.5-1.0 for overview.",
+                error=f"Zoom factor must be between 0.5 and 4.0, got {factor:.2f}",
             )
 
-        original_size = self._current_image.size
-        self._current_image = zoom_image(self._current_image, factor)
+        with self._update_image() as img:
+            original_size = img.size
+            self._current_image = zoom_image(img, factor)
+
         new_size = self._current_image.size
-
-        guidance = ""
-        if factor > 2.5:
-            guidance = " Warning: High zoom factor may reduce image quality. Consider using crop tool for focused examination."
-        elif factor < 1.0:
-            guidance = " Use this for an overview before detailed analysis."
-
         return ToolResult(
             success=True,
             tool_name="zoom",
-            description=f"Zoomed image by factor {factor:.1f}x from {original_size} to {new_size} pixels.{guidance}",
-            image_base64=_image_to_base64(self._current_image),
+            description=f"Zoomed {factor:.1f}x: {original_size} -> {new_size} px",
+            image_base64=image_to_base64(self._current_image),
             metadata={
                 "factor": factor,
                 "original_size": original_size,
                 "new_size": new_size,
-                "size_change": f"{new_size[0] / original_size[0]:.2f}x",
             },
         )
 
-    def _execute_crop(self, box: list[float]) -> ToolResult:
+    @beartype
+    async def _execute_crop(self, box: list[float]) -> ToolResult:
         """Execute crop tool."""
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name="crop",
-                description="No image loaded for crop operation",
-                error="Cannot crop - no image has been loaded. Please ensure an image is set before using tools.",
-            )
-
         if len(box) != 4:
             return ToolResult(
                 success=False,
                 tool_name="crop",
-                description=f"Invalid crop box format: {box}",
-                error=f"Crop requires 4 coordinates [x1, y1, x2, y2], got {len(box)} values. "
-                f"Coordinates should be normalized (0-1). Example: [0.2, 0.3, 0.8, 0.7] for center region.",
+                description=f"Invalid crop box: expected 4 values, got {len(box)}",
+                error=f"Crop requires [x1, y1, x2, y2], got {len(box)} values",
             )
 
         x1, y1, x2, y2 = box
@@ -379,8 +484,7 @@ class ToolRegistry:
                 success=False,
                 tool_name="crop",
                 description=f"Crop coordinates out of range: {box}",
-                error="All crop coordinates must be between 0 and 1 (normalized). "
-                "Got values outside this range. Please check your coordinate selection.",
+                error="All coordinates must be between 0 and 1",
             )
 
         if x2 <= x1 or y2 <= y1:
@@ -388,140 +492,141 @@ class ToolRegistry:
                 success=False,
                 tool_name="crop",
                 description=f"Invalid crop region: [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}]",
-                error="Crop coordinates must satisfy x2 > x1 and y2 > y1. "
-                "Your selection creates an invalid rectangle. Check your coordinate order.",
+                error="Crop coordinates must satisfy x2 > x1 and y2 > y1",
             )
 
-        original_size = self._current_image.size
-        box_tuple = (x1, y1, x2, y2)
-        self._current_image = crop_image(self._current_image, box_tuple)
+        with self._update_image() as img:
+            original_size = img.size
+            self._current_image = crop_image(img, (x1, y1, x2, y2))
+
         new_size = self._current_image.size
-
         area_percentage = (x2 - x1) * (y2 - y1) * 100
-        guidance = ""
-        if area_percentage < 5:
-            guidance = " Small crop area selected. Ensure this contains the region of interest."
-        elif area_percentage > 80:
-            guidance = (
-                " Large crop area selected. Consider if more focused cropping would be beneficial."
-            )
 
         return ToolResult(
             success=True,
             tool_name="crop",
-            description=f"Cropped to region [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}] ({area_percentage:.1f}% of image, {new_size} pixels).{guidance}",
-            image_base64=_image_to_base64(self._current_image),
+            description=f"Cropped to [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}] ({area_percentage:.1f}%)",
+            image_base64=image_to_base64(self._current_image),
             metadata={
                 "box": box,
                 "original_size": original_size,
                 "new_size": new_size,
                 "area_percentage": round(area_percentage, 1),
-                "pixel_box": [
-                    int(x1 * original_size[0]),
-                    int(y1 * original_size[1]),
-                    int(x2 * original_size[0]),
-                    int(y2 * original_size[1]),
-                ],
             },
         )
 
-    def _execute_contrast(self, factor: float) -> ToolResult:
+    @beartype
+    async def _execute_contrast(self, factor: float) -> ToolResult:
         """Execute contrast adjustment tool."""
-        if self._current_image is None:
+        if not 0.5 <= factor <= 3.0:
             return ToolResult(
                 success=False,
                 tool_name="adjust_contrast",
-                description="No image loaded",
-                error="No image available",
+                description=f"Invalid contrast factor: {factor:.2f}",
+                error=f"Contrast factor must be between 0.5 and 3.0, got {factor:.2f}",
             )
 
-        self._current_image = adjust_contrast(self._current_image, factor)
+        with self._update_image() as img:
+            original_size = img.size
+            self._current_image = adjust_contrast(img, factor)
+
         return ToolResult(
             success=True,
             tool_name="adjust_contrast",
-            description=f"Adjusted contrast by factor {factor:.1f}",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"factor": factor},
+            description=f"Adjusted contrast by factor {factor:.1f}x",
+            image_base64=image_to_base64(self._current_image),
+            metadata={"factor": factor, "size": original_size},
         )
 
-    def _execute_threshold(self, lower: int, upper: int) -> ToolResult:
+    @beartype
+    async def _execute_threshold(self, lower: int, upper: int) -> ToolResult:
         """Execute intensity threshold tool."""
-        if self._current_image is None:
+        if not 0 <= lower <= 254:
             return ToolResult(
                 success=False,
                 tool_name="threshold",
-                description="No image loaded",
-                error="No image available",
+                description=f"Invalid lower bound: {lower}",
+                error=f"Lower bound must be between 0 and 254, got {lower}",
             )
 
-        self._current_image = apply_intensity_threshold(self._current_image, lower, upper)
+        if not 1 <= upper <= 255:
+            return ToolResult(
+                success=False,
+                tool_name="threshold",
+                description=f"Invalid upper bound: {upper}",
+                error=f"Upper bound must be between 1 and 255, got {upper}",
+            )
+
+        if lower >= upper:
+            return ToolResult(
+                success=False,
+                tool_name="threshold",
+                description=f"Invalid range: [{lower}, {upper}]",
+                error=f"Lower bound ({lower}) must be less than upper bound ({upper})",
+            )
+
+        with self._update_image() as img:
+            original_size = img.size
+            self._current_image = apply_intensity_threshold(img, lower, upper)
+
         return ToolResult(
             success=True,
             tool_name="threshold",
             description=f"Applied threshold [{lower}, {upper}]",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"lower": lower, "upper": upper},
+            image_base64=image_to_base64(self._current_image),
+            metadata={"lower": lower, "upper": upper, "size": original_size},
         )
 
-    def _execute_flip_horizontal(self) -> ToolResult:
+    @beartype
+    async def _execute_flip_horizontal(self) -> ToolResult:
         """Execute horizontal flip tool."""
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name="flip_horizontal",
-                description="No image loaded",
-                error="No image available",
-            )
+        with self._update_image() as img:
+            self._current_image = flip_horizontal(img)
 
-        self._current_image = flip_horizontal(self._current_image)
         return ToolResult(
             success=True,
             tool_name="flip_horizontal",
-            description="Flipped image horizontally (left-right)",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"operation": "flip_horizontal"},
+            description="Flipped image horizontally",
+            image_base64=image_to_base64(self._current_image),
+            metadata={"size": self._current_image.size},
         )
 
-    def _execute_flip_vertical(self) -> ToolResult:
+    @beartype
+    async def _execute_flip_vertical(self) -> ToolResult:
         """Execute vertical flip tool."""
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name="flip_vertical",
-                description="No image loaded",
-                error="No image available",
-            )
+        with self._update_image() as img:
+            self._current_image = flip_vertical(img)
 
-        self._current_image = flip_vertical(self._current_image)
         return ToolResult(
             success=True,
             tool_name="flip_vertical",
-            description="Flipped image vertically (top-bottom)",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"operation": "flip_vertical"},
+            description="Flipped image vertically",
+            image_base64=image_to_base64(self._current_image),
+            metadata={"size": self._current_image.size},
         )
 
-    def _execute_rotate(self, clockwise: bool = True) -> ToolResult:
+    @beartype
+    async def _execute_rotate(self, clockwise: bool = True) -> ToolResult:
         """Execute rotation tool."""
-        if self._current_image is None:
-            return ToolResult(
-                success=False,
-                tool_name="rotate",
-                description="No image loaded",
-                error="No image available",
-            )
+        with self._update_image() as img:
+            original_size = img.size
+            self._current_image = rotate_90(img, clockwise=clockwise)
 
-        self._current_image = rotate_90(self._current_image, clockwise=clockwise)
         direction = "clockwise" if clockwise else "counter-clockwise"
         return ToolResult(
             success=True,
             tool_name="rotate",
-            description=f"Rotated image 90 degrees {direction}",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"clockwise": clockwise, "new_size": self._current_image.size},
+            description=f"Rotated 90° {direction}",
+            image_base64=image_to_base64(self._current_image),
+            metadata={
+                "clockwise": clockwise,
+                "original_size": original_size,
+                "new_size": self._current_image.size,
+            },
         )
 
-    def _execute_reset(self) -> ToolResult:
+    @beartype
+    async def _execute_reset(self) -> ToolResult:
         """Reset to original image."""
         if self._image_path is None:
             return ToolResult(
@@ -531,98 +636,169 @@ class ToolRegistry:
                 error="Cannot reset - no original image path stored",
             )
 
-        self._current_image = Image.open(self._image_path)
+        if self._current_image is not None:
+            self._current_image.close()
+        with Image.open(self._image_path) as img:
+            self._current_image = img.copy()
+
         return ToolResult(
             success=True,
             tool_name="reset",
             description="Reset to original image",
-            image_base64=_image_to_base64(self._current_image),
-            metadata={"original_size": self._current_image.size},
+            image_base64=image_to_base64(self._current_image),
+            metadata={"size": self._current_image.size},
         )
 
+    @beartype
     async def _execute_search_web(self, query: str, search_type: str = "general") -> ToolResult:
-        """Search PubMed for medical literature with enhanced reliability scoring."""
-        try:
-            logger.info(f"Searching PubMed for: '{query}' (type: {search_type})")
+        """Search PubMed for medical literature."""
+        logger.info(f"Searching PubMed: '{query}' (type: {search_type})")
 
-            # Perform async medical literature search
+        try:
             search_results = await search_medical_literature(
                 query=query,
                 max_results=5,
                 search_type=search_type,
             )
-
-            if not search_results:
-                return ToolResult(
-                    success=False,
-                    tool_name="search_web",
-                    description=f"No PubMed results found for '{query}'",
-                    error="No relevant medical literature found in PubMed",
-                    metadata={"query": query, "search_type": search_type, "results_count": 0},
-                )
-
-            # Format results for LLM consumption
-            formatted_results = []
-            sources = []
-            avg_reliability = 0.0
-            content_types = []
-
-            for i, result in enumerate(search_results, 1):
-                sources.append(result.source)
-                avg_reliability += result.reliability_score
-                content_types.append(result.content_type)
-
-                # Create detailed result summary
-                summary = f"{i}. **{result.title}**\n"
-                summary += f"   **Source:** {result.source} (Reliability: {result.reliability_score:.2f})\n"
-                summary += f"   **Type:** {result.content_type} | **Open Access:** {'Yes' if result.open_access else 'No'}\n"
-                if result.publication_date:
-                    summary += f"   **Date:** {result.publication_date}\n"
-                if result.journal:
-                    summary += f"   **Journal:** {result.journal}\n"
-
-                # Add content/abstract
-                if result.content and result.content != result.title:
-                    summary += f"   **Content:** {result.content[:500]}{'...' if len(result.content) > 500 else ''}\n"
-                else:
-                    summary += "   **Summary:** No abstract available\n"
-
-                # Add key entities if found
-                if hasattr(result, "extracted_entities") and result.extracted_entities:
-                    summary += f"   **Key terms:** {', '.join(result.extracted_entities[:5])}\n"
-
-                summary += f"   **URL:** {result.url}\n"
-                formatted_results.append(summary)
-
-            # Calculate average reliability
-            avg_reliability = avg_reliability / len(search_results)
-
-            # Combine all results
-            formatted_summary = "\n## PubMed Search Results\n\n" + "\n\n".join(formatted_results)
-
-            return ToolResult(
-                success=True,
-                tool_name="search_web",
-                description=f"Found {len(search_results)} PubMed articles",
-                image_base64=None,
-                metadata={
-                    "query": query,
-                    "search_type": search_type,
-                    "results_count": len(search_results),
-                    "sources": list(set(sources)),
-                    "avg_reliability": round(avg_reliability, 2),
-                    "content_types": list(set(content_types)),
-                    "open_access_count": sum(1 for r in search_results if r.open_access),
-                    "formatted_results": formatted_summary,
-                },
-            )
-
-        except Exception as e:
-            logger.error(f"PubMed search failed: {e}")
+        except SearchError as e:
             return ToolResult(
                 success=False,
                 tool_name="search_web",
                 description=f"PubMed search failed for '{query}'",
-                error=f"PubMed search error: {str(e)}",
-                metadata={"query": query, "search_type": search_type, "error": str(e)},
+                error=str(e),
+                metadata={"query": query, "search_type": search_type},
             )
+
+        if not search_results:
+            return ToolResult(
+                success=True,
+                tool_name="search_web",
+                description=f"No results found for '{query}'",
+                metadata={"query": query, "search_type": search_type, "results_count": 0},
+            )
+
+        formatted_results = []
+        sources = []
+        total_reliability = 0.0
+        content_types = []
+
+        for i, result in enumerate(search_results, 1):
+            sources.append(result.source)
+            total_reliability += result.reliability_score
+            content_types.append(result.content_type)
+
+            lines = [
+                f"{i}. **{result.title}**",
+                f"   **Source:** {result.source} (Reliability: {result.reliability_score:.2f})",
+                f"   **Type:** {result.content_type} | **Open Access:** {'Yes' if result.open_access else 'No'}",
+            ]
+            if result.publication_date:
+                lines.append(f"   **Date:** {result.publication_date}")
+            if result.journal:
+                lines.append(f"   **Journal:** {result.journal}")
+            if result.content and result.content != result.title:
+                content_preview = result.content[:500] + ("..." if len(result.content) > 500 else "")
+                lines.append(f"   **Content:** {content_preview}")
+            if result.extracted_entities:
+                lines.append(f"   **Key terms:** {', '.join(result.extracted_entities[:5])}")
+            lines.append(f"   **URL:** {result.url}")
+            formatted_results.append("\n".join(lines))
+
+        formatted_summary = "\n## PubMed Search Results\n\n" + "\n\n".join(formatted_results)
+        avg_reliability = total_reliability / len(search_results)
+
+        return ToolResult(
+            success=True,
+            tool_name="search_web",
+            description=f"Found {len(search_results)} PubMed articles",
+            metadata={
+                "query": query,
+                "search_type": search_type,
+                "results_count": len(search_results),
+                "sources": list(set(sources)),
+                "avg_reliability": round(avg_reliability, 2),
+                "content_types": list(set(content_types)),
+                "open_access_count": sum(1 for r in search_results if r.open_access),
+                "formatted_results": formatted_summary,
+            },
+        )
+
+    @beartype
+    async def _execute_search_images(
+        self, query: str, modality: str = "any", body_part: str = "any"
+    ) -> ToolResult:
+        """Search NIH Open-i for reference medical images."""
+        modality_filter = None if modality == "any" else modality
+        body_part_filter = None if body_part == "any" else body_part
+        logger.info(f"Searching images: '{query}' (modality: {modality_filter}, body: {body_part_filter})")
+
+        try:
+            search_results = await search_medical_images(
+                query=query,
+                max_results=5,
+                modality=modality_filter,
+                body_part=body_part_filter,
+            )
+        except ImageSearchError as e:
+            return ToolResult(
+                success=False,
+                tool_name="search_images",
+                description=f"Image search failed for '{query}'",
+                error=str(e),
+                metadata={"query": query, "modality": modality_filter, "body_part": body_part_filter},
+            )
+
+        if not search_results:
+            return ToolResult(
+                success=True,
+                tool_name="search_images",
+                description=f"No images found for '{query}'",
+                metadata={
+                    "query": query,
+                    "modality": modality_filter,
+                    "body_part": body_part_filter,
+                    "results_count": 0,
+                },
+            )
+
+        formatted_results = []
+        modalities_found = []
+        body_parts_found = []
+
+        for i, result in enumerate(search_results, 1):
+            if result.modality:
+                modalities_found.append(result.modality)
+            if result.body_part:
+                body_parts_found.append(result.body_part)
+
+            lines = [
+                f"{i}. **{result.title}**",
+                f"   **Source:** {result.source} (Reliability: {result.reliability_score:.2f})",
+                f"   **Modality:** {result.modality or 'Unknown'} | **Body Part:** {result.body_part or 'Unknown'}",
+            ]
+            if result.caption:
+                caption_preview = result.caption[:400] + ("..." if len(result.caption) > 400 else "")
+                lines.append(f"   **Caption:** {caption_preview}")
+            if result.article_title:
+                lines.append(f"   **Article:** {result.article_title[:100]}")
+            lines.append(f"   **Image URL:** {result.image_url}")
+            lines.append(f"   **Source Article:** {result.source_url}")
+            formatted_results.append("\n".join(lines))
+
+        formatted_summary = "\n## Reference Medical Images\n\n" + "\n\n".join(formatted_results)
+
+        return ToolResult(
+            success=True,
+            tool_name="search_images",
+            description=f"Found {len(search_results)} reference images",
+            metadata={
+                "query": query,
+                "modality": modality_filter,
+                "body_part": body_part_filter,
+                "results_count": len(search_results),
+                "modalities_found": list(set(modalities_found)),
+                "body_parts_found": list(set(body_parts_found)),
+                "image_urls": [r.image_url for r in search_results],
+                "formatted_results": formatted_summary,
+            },
+        )

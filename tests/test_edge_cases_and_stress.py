@@ -37,7 +37,7 @@ VALID_UNIFIED_RESPONSE = json.dumps(
 class TestEdgeCaseInputs:
     """Test edge cases with unusual or malformed inputs."""
 
-    @patch("nova_retrieval_vlm.processors.localization.OpenAIAdapter")
+    @patch("nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter")
     def test_empty_batch_processing(self, mock_adapter):
         """Test processors handle empty batches gracefully."""
         # Mock the adapter to avoid API key issues
@@ -55,7 +55,7 @@ class TestEdgeCaseInputs:
         asyncio.run(test_empty())
 
     def test_mismatched_batch_sizes(self, mock_image):
-        """Test handling of mismatched image and metadata array sizes."""
+        """Test that mismatched image and metadata array sizes fail fast."""
         mismatched_batch = BatchData(
             images=[mock_image, mock_image, mock_image],  # 3 images
             metadata=[{"id": 1}, {"id": 2}],  # 2 metadata entries
@@ -66,16 +66,15 @@ class TestEdgeCaseInputs:
 
         async def test_mismatch():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
                 mock_adapter_class.return_value = mock_adapter
 
-                # Should handle mismatch gracefully (likely process up to min length)
-                responses = await processor.process_batch(mismatched_batch, 0)
-                # The behavior depends on implementation - could be 2 or 3 responses
-                assert len(responses) >= 0
+                # Should fail fast with strict=True - mismatched lengths are an error
+                with pytest.raises(ValueError):
+                    await processor.process_batch(mismatched_batch, 0)
 
         asyncio.run(test_mismatch())
 
@@ -108,7 +107,7 @@ class TestEdgeCaseInputs:
 
         async def test_nulls():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -138,7 +137,7 @@ class TestEdgeCaseInputs:
 
         async def test_large_metadata():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -170,7 +169,7 @@ class TestEdgeCaseInputs:
 
         async def test_invalid_paths():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -202,7 +201,7 @@ class TestEdgeCaseInputs:
 
         async def test_unicode():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -326,7 +325,7 @@ class TestConcurrencyAndRaceConditions:
             processor = LocalizationProcessor(processor_config)
 
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
 
@@ -403,7 +402,7 @@ class TestConcurrencyAndRaceConditions:
             nonlocal failure_count
 
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
 
@@ -463,7 +462,7 @@ class TestMemoryAndPerformanceStress:
 
         async def process_large_batch():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -495,7 +494,7 @@ class TestMemoryAndPerformanceStress:
             processor = LocalizationProcessor(processor_config)
 
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -531,7 +530,7 @@ class TestMemoryAndPerformanceStress:
 
             async def process_small():
                 with patch(
-                    "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                    "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
                 ) as mock_adapter_class:
                     mock_adapter = AsyncMock()
                     mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -551,7 +550,7 @@ class TestMemoryAndPerformanceStress:
 
         async def process_large():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -694,7 +693,7 @@ class TestResourceLimitsAndBoundaryConditions:
 
         async def test_extreme_batch():
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (VALID_UNIFIED_RESPONSE, MagicMock())
@@ -742,7 +741,7 @@ class TestNetworkAndIOFailures:
                 return ('{"boxes": []}', MagicMock())
 
         with patch(
-            "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+            "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
         ) as mock_adapter_class:
             mock_adapter = AsyncMock()
             mock_adapter.generate = unreliable_generate
@@ -801,7 +800,7 @@ class TestNetworkAndIOFailures:
 
         for corrupted_response, log in corrupted_responses:
             with patch(
-                "nova_retrieval_vlm.processors.localization.OpenAIAdapter"
+                "nova_retrieval_vlm.models.openai_adapter.OpenAIAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.generate.return_value = (corrupted_response, log)

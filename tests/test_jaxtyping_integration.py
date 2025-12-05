@@ -42,12 +42,19 @@ class TestTensorValidation:
 class TestMedicalWorkflow:
     """Tests for medical imaging workflow."""
 
-    def test_validate_medical_workflow(self):
-        """Test complete workflow validation returns expected structure."""
-        result = validate_medical_workflow(["dummy1.jpg", "dummy2.jpg"])
-        # The workflow may fail if files don't exist, but should return expected keys
-        assert "success" in result
-        assert "tensors" in result or "error" in result
+    def test_validate_medical_workflow_missing_files(self):
+        """Test workflow raises ValueError for missing image files."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Image file not found"):
+            validate_medical_workflow(["dummy1.jpg", "dummy2.jpg"])
+
+    def test_validate_medical_workflow_empty_list(self):
+        """Test workflow raises ValueError for empty path list."""
+        import pytest
+
+        with pytest.raises(ValueError, match="No image paths provided"):
+            validate_medical_workflow([])
 
 
 class TestImageOps:

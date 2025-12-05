@@ -5,7 +5,7 @@ import pytest
 from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
 
 
-@patch("nova_retrieval_vlm.evaluation.diagnosis.gpt4o_semantic_match")
+@patch("nova_retrieval_vlm.evaluation.diagnosis.llm_semantic_match")
 def test_evaluate_diagnosis_simple(mock_semantic_match):
     """Test diagnosis evaluation with mocked semantic matching."""
 

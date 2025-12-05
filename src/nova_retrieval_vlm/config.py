@@ -82,7 +82,6 @@ class AgenticConfig:
     enabled_tools: list[str] = field(default_factory=list)
     disabled_tools: list[str] = field(default_factory=list)
     single_shot: bool = False
-    use_retrieval: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""

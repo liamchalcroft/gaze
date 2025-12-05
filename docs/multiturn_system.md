@@ -91,8 +91,8 @@ For visual multi-turn mode:
 # Multi-turn analysis
 python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
 
-# With retrieval
-python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn use_retrieval=true
+# With agentic tools
+python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
 ```
 
 ## Template Files

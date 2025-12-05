@@ -89,6 +89,8 @@ class TestEvaluation:
             "map50": 0.9,
             "map50_95": 0.8,
             "acc50": 0.75,
+            "tp30": 10,
+            "fp30": 2,
         }
 
         # Call the function
@@ -118,6 +120,7 @@ class TestEvaluation:
             "meteor": 0.65,
             "modality_f1": 0.85,
             "clinical_f1": 0.72,
+            "binary_accuracy": 0.88,
             "binary_f1": 0.90,
         }
 
