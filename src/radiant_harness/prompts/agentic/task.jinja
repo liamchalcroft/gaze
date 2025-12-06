@@ -1,0 +1,59 @@
+{# GENERIC AGENTIC TASK PROMPT - Template for multi-turn analysis #}
+{# Supports text-only, single image, and multi-image input modes. #}
+{# Specific tasks are defined by the dataset implementation. #}
+
+{% if task_instructions %}
+**TASK:**
+
+{{ task_instructions }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**INPUT IMAGES:**
+
+{% if images|length == 1 %}
+- Image: {{ images[0].path.name }} ({{ images[0].width }}x{{ images[0].height }})
+{% else %}
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.path.name }} ({{ img.width }}x{{ img.height }})
+{% endfor %}
+{% endif %}
+{% elif image_info %}
+**IMAGE INFORMATION:**
+
+{{ image_info }}
+{% endif %}
+
+{% if context %}
+**CONTEXT:**
+
+{{ context }}
+{% endif %}
+
+{% if output_format %}
+**OUTPUT FORMAT:**
+
+{{ output_format }}
+{% endif %}
+
+**MULTI-TURN CONTROL:**
+
+Your response must include a "continue" field:
+- Set `"continue": true` if you need to make more tool calls or gather more information
+- Set `"continue": false` when your analysis is complete and you're ready to provide the final response
+
+**STRATEGY:**
+
+{% if has_images %}
+- **Turn 1**: Initial survey and identify areas requiring investigation. Set `continue: true`.
+- **Turn 2+**: Progressive investigation using tools as needed. Set `continue: true` until done.
+- **Final Turn**: Complete synthesis with all findings. Set `continue: false`.
+{% else %}
+- **Turn 1**: Initial assessment based on provided information. Set `continue: true` if further research needed.
+- **Turn 2+**: Refine analysis with additional context or evidence. Set `continue: true` until done.
+- **Final Turn**: Complete synthesis with final assessment. Set `continue: false`.
+{% endif %}
+
+Only set "continue": false when you have fully completed your analysis.
+
+Begin your analysis.

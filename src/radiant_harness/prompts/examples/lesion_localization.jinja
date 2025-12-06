@@ -1,0 +1,66 @@
+{# EXAMPLE: Lesion Localization with Bounding Boxes #}
+{# Use this template for detecting and localizing abnormalities in medical images. #}
+{# Requires at least one image - does not support text-only mode. #}
+
+**TASK:**
+
+{% if images and images|length > 1 %}
+Detect and localize all abnormalities, lesions, or pathological findings across all provided images.
+For each finding, specify which image it appears in.
+{% else %}
+Detect and localize all abnormalities, lesions, or pathological findings in this image.
+{% endif %}
+
+For each finding:
+1. Identify the abnormality type (e.g., mass, lesion, hemorrhage, edema)
+2. Describe its visual characteristics (shape, intensity, boundaries)
+3. Provide a bounding box in normalized coordinates [x_min, y_min, x_max, y_max]
+4. Estimate your confidence in the localization (0.0-1.0)
+{% if images and images|length > 1 %}
+5. Specify which image the finding appears in
+{% endif %}
+
+{% if clinical_history %}
+**CLINICAL HISTORY:** {{ clinical_history }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**IMAGES:**
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.width }}x{{ img.height }}
+{% endfor %}
+{% endif %}
+
+**OUTPUT FORMAT:**
+
+```json
+{
+  "findings": [
+    {
+{% if images and images|length > 1 %}
+      "image_index": 0,
+      "image_label": "string (which image)",
+{% endif %}
+      "type": "string (abnormality type)",
+      "description": "string (visual characteristics)",
+      "location": "string (anatomical region)",
+      "bbox": [x_min, y_min, x_max, y_max],
+      "confidence": 0.0-1.0
+    }
+  ],
+  "no_abnormality_detected": false,
+  "reasoning": "string (explain your detection approach)",
+  "continue": true/false
+}
+```
+
+**GUIDELINES:**
+
+- Bounding boxes use normalized coordinates (0.0-1.0) relative to image dimensions
+- x_min, y_min = top-left corner; x_max, y_max = bottom-right corner
+- If no abnormalities are found, set `no_abnormality_detected: true` and explain why
+- Use visual tools (zoom, contrast) to examine suspicious regions closely
+- Report all distinct findings, not just the most prominent one
+{% if images and images|length > 1 %}
+- Findings that appear in multiple images should be reported for each image
+{% endif %}

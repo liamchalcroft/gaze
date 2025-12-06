@@ -1,0 +1,103 @@
+{# EXAMPLE: Disease Staging and Prognosis Assessment #}
+{# Supports text-only (from clinical history), single image, or multi-image staging. #}
+
+**TASK:**
+
+Assess disease staging and prognosis based on {% if images and images|length > 0 %}the imaging findings{% else %}the clinical information provided{% endif %}.
+
+{% if condition %}
+**Condition to stage:** {{ condition }}
+{% endif %}
+
+Provide:
+1. Disease stage according to relevant staging systems
+{% if images and images|length > 0 %}
+2. Key imaging features that determine the stage
+{% else %}
+2. Key clinical features that determine the stage
+{% endif %}
+3. Prognostic factors{% if images and images|length > 0 %} visible on imaging{% endif %}
+4. Treatment implications of the staging
+
+{% if clinical_history %}
+**CLINICAL HISTORY:** {{ clinical_history }}
+{% endif %}
+
+{% if patient_info %}
+**PATIENT INFORMATION:** {{ patient_info }}
+{% endif %}
+
+{% if lab_values %}
+**LABORATORY VALUES:** {{ lab_values }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**IMAGES:**
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.width }}x{{ img.height }}
+{% endfor %}
+{% endif %}
+
+**OUTPUT FORMAT:**
+
+```json
+{
+  "diagnosis": "string (confirmed or suspected diagnosis)",
+  "staging": {
+    "system": "string (staging system used, e.g., TNM, WHO grade)",
+    "stage": "string (stage designation)",
+    "components": {
+      "description": "string (breakdown of staging components)"
+    },
+    "confidence": 0.0-1.0
+  },
+  "prognostic_factors": [
+    {
+{% if images and images|length > 0 %}
+      "factor": "string (imaging feature)",
+{% else %}
+      "factor": "string (clinical/lab feature)",
+{% endif %}
+      "finding": "string (what was observed)",
+      "implication": "favorable/unfavorable/neutral"
+    }
+  ],
+{% if images and images|length > 0 %}
+  "key_measurements": [
+    {
+      "measurement": "string (what was measured)",
+      "value": "string (value with units)",
+{% if images and images|length > 1 %}
+      "image_index": 0,
+{% endif %}
+      "significance": "string (why this matters)"
+    }
+  ],
+{% endif %}
+  "treatment_implications": "string (how staging affects treatment decisions)",
+  "follow_up_recommendations": ["list of recommended follow-up"],
+  "limitations": "string (factors limiting staging accuracy)",
+  "continue": true/false
+}
+```
+
+**STAGING GUIDELINES:**
+
+- Use established staging systems appropriate for the disease
+{% if images and images|length > 0 %}
+- Document all measurable disease
+- Note features associated with prognosis (necrosis, enhancement patterns, etc.)
+{% endif %}
+- Consider searching medical literature for current staging criteria
+- Be explicit about staging system version/year if applicable
+{% if not images or images|length == 0 %}
+- Note that staging based on clinical history alone may be limited
+- Recommend imaging studies that would improve staging accuracy
+{% endif %}
+
+**COMMON STAGING SYSTEMS:**
+
+Tumors: TNM staging, WHO grading (brain tumors), Rai/Binet (leukemia)
+Brain lesions: Modified Rankin Scale, ASPECTS (stroke), Fazekas (white matter)
+Liver: Child-Pugh, MELD, Barcelona Clinic (HCC)
+Lung: TNM, mountain staging

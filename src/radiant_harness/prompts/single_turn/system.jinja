@@ -1,0 +1,27 @@
+{# GENERIC SINGLE-TURN SYSTEM PROMPT - Task-agnostic framework #}
+{# Supports text-only, single image, and multi-image input modes. #}
+{# Domain expertise and task-specific content come from the dataset implementation. #}
+
+{% if domain_expertise %}
+{{ domain_expertise }}
+{% endif %}
+
+{% if tool_documentation and has_images %}
+**AVAILABLE TOOLS:**
+
+You have access to the following tools. Consider how you would use these to examine findings:
+
+{{ tool_documentation }}
+{% endif %}
+
+{% if analysis_workflow %}
+**ANALYSIS APPROACH:**
+
+{{ analysis_workflow }}
+{% endif %}
+
+{% if has_images %}
+Provide a complete visual analysis in a single response with appropriate confidence levels.
+{% else %}
+Provide a complete assessment in a single response with appropriate confidence levels based on the provided information.
+{% endif %}

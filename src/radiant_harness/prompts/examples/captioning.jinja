@@ -1,0 +1,70 @@
+{# EXAMPLE: Open-Ended Radiological Captioning #}
+{# Supports single image or multi-image captioning. #}
+{# Requires at least one image. #}
+
+**TASK:**
+
+{% if images and images|length > 1 %}
+Provide a comprehensive radiological description of these images, as would appear in a formal radiology report.
+{% else %}
+Provide a comprehensive radiological description of this image, as would appear in a formal radiology report.
+{% endif %}
+
+Your caption should include:
+1. Technique (modality, sequence, plane if identifiable)
+2. Systematic description of visible structures
+3. Any abnormal findings with precise descriptions
+4. Overall impression
+
+{% if clinical_history %}
+**CLINICAL HISTORY:** {{ clinical_history }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**IMAGES:**
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.width }}x{{ img.height }}
+{% endfor %}
+{% endif %}
+
+**OUTPUT FORMAT:**
+
+```json
+{
+{% if images and images|length > 1 %}
+  "images": [
+    {
+      "image_index": 0,
+      "image_label": "string",
+      "technique": "string (imaging modality and parameters)",
+      "findings": "string (description of this specific image)"
+    }
+  ],
+  "comparative_findings": "string (findings spanning multiple images)",
+{% else %}
+  "technique": "string (imaging modality and parameters)",
+{% endif %}
+  "findings": {
+    "normal_structures": "string (systematic description of normal anatomy)",
+    "abnormalities": "string (detailed description of any pathology)",
+    "incidental_findings": "string (any additional observations)"
+  },
+  "impression": "string (summary statement of key findings)",
+  "caption": "string (complete radiological caption suitable for publication)",
+  "continue": true/false
+}
+```
+
+**CAPTIONING GUIDELINES:**
+
+- Use standard radiological terminology
+- Be systematic: describe structures in consistent anatomical order
+- Quantify findings when possible (size, number, location)
+- Describe morphology: shape, margins, signal/density characteristics
+- Note relationships to adjacent structures
+- State explicitly if an area is normal or unremarkable
+- The "caption" field should be a single flowing paragraph suitable for publication
+{% if images and images|length > 1 %}
+- When describing multiple images, note which findings appear in which image
+- Describe any changes or differences between images
+{% endif %}

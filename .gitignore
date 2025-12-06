@@ -179,7 +179,6 @@ datasets/
 raw_data/
 
 # Model checkpoints and weights
-models/
 checkpoints/
 *.pth
 *.pt

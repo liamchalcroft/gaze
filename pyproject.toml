@@ -5,6 +5,7 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = ["examples/"]
 
 [tool.ruff.lint]
 select = [
@@ -45,15 +46,9 @@ ignore = [
 "tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001"]
 "scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
 "run_tests.py" = ["T201", "S603", "PLW1510"]
-"src/nova_retrieval_vlm/visualization/**/*.py" = ["T201", "PTH123"]
-"src/nova_retrieval_vlm/knowledge_base/**/*.py" = ["N814", "N817", "PLW0603", "S110", "ARG001", "PERF401", "E402", "PLW2901", "SIM102"]
-"src/nova_retrieval_vlm/retrieval/**/*.py" = ["N814"]
-"src/nova_retrieval_vlm/tensor_ops.py" = ["N812", "PLW0602", "PLW0603"]
-"src/nova_retrieval_vlm/prompts/**/*.py" = ["PLW0603"]
-"src/nova_retrieval_vlm/models/openrouter_adapter.py" = ["S310"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["nova_retrieval_vlm"]
+known-first-party = ["radiant_harness"]
 force-single-line = true
 
 [tool.pyright]
@@ -98,7 +93,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["nova_retrieval_vlm"]
+source = ["radiant_harness"]
 omit = [
     "*/tests/*",
     "*/scripts/*",
@@ -124,73 +119,25 @@ authors = [
 license = {text = "MIT"}
 requires-python = ">=3.10,<4.0"
 dependencies = [
-    "timm",
-    "datasets",
-    "torchmetrics[detection]",
-    # Configuration & Logging
-    "hydra-core",
-    "omegaconf",
+    # Core runtime
     "loguru",
-    "python-dotenv",
-    # Data & Scientific Computing
-    "numpy",
-    "pandas",
-    "scipy",
-    "scikit-learn",
-    "scikit-image",
-    # Image Processing & Medical
+    "beartype",
     "pillow",
-    "opencv-python",
-    "nibabel",
-    "pydicom",
-    # Retrieval & Search
-    "haystack-ai",
-    "faiss-cpu",
-    "pypdf",
-    "langchain",
-    "readability-lxml",
-    "simhash",
-    "langdetect",
-    # API Clients
+    "numpy",
     "openai",
-    "anthropic",
     "httpx",
     "requests",
-    # Evaluation Metrics
-    "rouge-score",
-    "sacrebleu",
-    "bert-score",
-    "radgraph",
-    # Visualization
-    "matplotlib",
-    "seaborn",
-    "plotly",
-    "streamlit",
-    # Utilities
-    "tqdm",
-    "more-itertools",
-    "toolz",
-    "pydantic-settings",
-    # Type Safety & Runtime Checking
-    "jaxtyping",
-    "beartype",
-    "jax[cpu]",
-    "torch>=2.7.1",
-    "torchvision>=0.22.1",
-    "transformers>=4.52.4",
-    "sentence-transformers>=5.1.0",
-    "aiohttp>=3.12.13",
+    "aiohttp",
     "minijinja>=2.12.0",
-    "pyyaml>=6.0.2",
+    # Optional tooling
     "pytest-asyncio>=0.23.8",
 ]
-name = "nova-retrieval-vlm"
+name = "radiant-harness"
 version = "0.1.0"
-description = "Vision-language model evaluation framework for the NOVA brain MRI dataset"
+description = "Radiant Harness: standalone agentic tool harness for VLMs (radiology-focused)"
 readme = "README.md"
 
 [project.scripts]
-nova-vlm = "nova_retrieval_vlm.cli:main"
 
 [dependency-groups]
 dev = [

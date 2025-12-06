@@ -1,0 +1,86 @@
+{# EXAMPLE: Diagnosis with Differential Diagnoses #}
+{# Supports text-only (from history), single image, or multi-image diagnosis. #}
+
+**TASK:**
+
+{% if images and images|length > 1 %}
+Analyze these medical images and provide a diagnostic assessment including:
+{% elif images and images|length == 1 %}
+Analyze this medical image and provide a diagnostic assessment including:
+{% else %}
+Based on the clinical information provided, provide a diagnostic assessment including:
+{% endif %}
+
+1. Primary diagnosis (most likely condition)
+2. Differential diagnoses (alternative possibilities ranked by likelihood)
+{% if images and images|length > 0 %}
+3. Supporting evidence from the image(s)
+{% else %}
+3. Supporting evidence from the clinical history
+{% endif %}
+4. Recommended follow-up studies if needed
+
+{% if clinical_history %}
+**CLINICAL HISTORY:** {{ clinical_history }}
+{% endif %}
+
+{% if patient_info %}
+**PATIENT INFORMATION:** {{ patient_info }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**IMAGES:**
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.width }}x{{ img.height }}
+{% endfor %}
+{% endif %}
+
+**OUTPUT FORMAT:**
+
+```json
+{
+  "primary_diagnosis": {
+    "condition": "string (diagnosis name)",
+    "icd10_code": "string (ICD-10 code if known)",
+    "confidence": 0.0-1.0,
+{% if images and images|length > 0 %}
+    "evidence": ["list of imaging findings supporting this diagnosis"]
+{% else %}
+    "evidence": ["list of clinical factors supporting this diagnosis"]
+{% endif %}
+  },
+  "differential_diagnoses": [
+    {
+      "condition": "string",
+      "confidence": 0.0-1.0,
+      "evidence": ["supporting findings"],
+      "distinguishing_features": "string (what would rule this in/out)"
+    }
+  ],
+  "key_findings": [
+    {
+      "finding": "string",
+{% if images and images|length > 0 %}
+      "location": "string (anatomical location)",
+{% endif %}
+      "significance": "string (clinical meaning)"
+    }
+  ],
+  "recommendations": ["list of recommended follow-up actions"],
+  "limitations": "string (factors limiting diagnostic confidence)",
+  "continue": true/false
+}
+```
+
+**GUIDELINES:**
+
+- Provide at least 2-3 differential diagnoses when appropriate
+{% if images and images|length > 0 %}
+- Base confidence scores on the strength of imaging evidence
+- Note any imaging artifacts or quality issues that affect interpretation
+{% else %}
+- Base confidence scores on the specificity of clinical presentation
+- Note any missing information that would improve diagnostic accuracy
+{% endif %}
+- Use medical literature search to verify diagnostic criteria if uncertain
+- Consider patient demographics and clinical context if provided

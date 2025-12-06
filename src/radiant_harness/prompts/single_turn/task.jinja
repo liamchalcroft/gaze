@@ -1,0 +1,39 @@
+{# GENERIC SINGLE-TURN TASK PROMPT - Template for single-response analysis #}
+{# Supports text-only, single image, and multi-image input modes. #}
+{# Specific tasks are defined by the dataset implementation. #}
+
+{% if task_instructions %}
+**TASK:**
+
+{{ task_instructions }}
+{% endif %}
+
+{% if images and images|length > 0 %}
+**INPUT IMAGES:**
+
+{% if images|length == 1 %}
+- Image: {{ images[0].path.name }} ({{ images[0].width }}x{{ images[0].height }})
+{% else %}
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.path.name }} ({{ img.width }}x{{ img.height }})
+{% endfor %}
+{% endif %}
+{% elif image_info %}
+**IMAGE INFORMATION:**
+
+{{ image_info }}
+{% endif %}
+
+{% if context %}
+**CONTEXT:**
+
+{{ context }}
+{% endif %}
+
+{% if output_format %}
+**OUTPUT FORMAT:**
+
+{{ output_format }}
+{% endif %}
+
+Provide your complete analysis in a single response. Set "continue": false.

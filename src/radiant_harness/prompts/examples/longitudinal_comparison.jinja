@@ -1,0 +1,99 @@
+{# EXAMPLE: Longitudinal/Multi-Image Comparison #}
+{# Specifically designed for comparing multiple images over time or across modalities. #}
+{# Requires at least 2 images. #}
+
+**TASK:**
+
+Compare the provided images and assess changes or differences between them.
+
+{% if comparison_type == "temporal" or comparison_type == "longitudinal" %}
+This is a **longitudinal comparison** - assess disease progression or treatment response over time.
+{% elif comparison_type == "multisequence" %}
+This is a **multi-sequence comparison** - correlate findings across different imaging sequences.
+{% else %}
+Identify and describe the differences and similarities between the images.
+{% endif %}
+
+Key questions to address:
+1. What findings are present in each image?
+2. What has changed between images (size, appearance, new findings)?
+3. What is the clinical significance of any changes?
+4. Are there findings that are better visualized in one image versus another?
+
+{% if clinical_history %}
+**CLINICAL HISTORY:** {{ clinical_history }}
+{% endif %}
+
+{% if time_interval %}
+**TIME INTERVAL:** {{ time_interval }}
+{% endif %}
+
+{% if treatment %}
+**INTERVAL TREATMENT:** {{ treatment }}
+{% endif %}
+
+{% if images and images|length >= 2 %}
+**IMAGES:**
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.width }}x{{ img.height }}
+{% endfor %}
+{% else %}
+**ERROR:** This template requires at least 2 images for comparison.
+{% endif %}
+
+**OUTPUT FORMAT:**
+
+```json
+{
+  "image_descriptions": [
+    {
+      "image_index": 0,
+      "image_label": "string",
+      "key_findings": ["list of significant findings in this image"],
+      "technique": "string (modality/sequence if identifiable)"
+    }
+  ],
+  "comparison_findings": [
+    {
+      "finding": "string (what is being compared)",
+      "image_1_description": "string (appearance in first image)",
+      "image_2_description": "string (appearance in second image)",
+      "change_type": "new/resolved/increased/decreased/unchanged/different_appearance",
+      "quantification": "string (measurable change if applicable)",
+      "clinical_significance": "string (what this change means)"
+    }
+  ],
+  "overall_assessment": {
+{% if comparison_type == "temporal" or comparison_type == "longitudinal" %}
+    "progression_status": "improved/stable/progressed/mixed",
+    "response_category": "string (e.g., RECIST criteria if applicable)",
+{% endif %}
+    "summary": "string (overall comparison summary)",
+    "confidence": 0.0-1.0
+  },
+  "recommendations": ["list of follow-up recommendations"],
+  "limitations": "string (factors limiting comparison accuracy)",
+  "continue": true/false
+}
+```
+
+**COMPARISON GUIDELINES:**
+
+- Be systematic: compare corresponding anatomical regions across images
+- Quantify changes when possible (e.g., lesion size in mm, percentage change)
+- Note any technical differences that may affect comparison (positioning, contrast timing)
+- For temporal studies, use standardized response criteria when applicable (RECIST, RANO, etc.)
+- Identify findings that are only visible in certain sequences/timepoints
+- Consider whether changes are clinically significant vs. measurement variability
+
+**COMMON COMPARISON SCENARIOS:**
+
+Temporal (follow-up):
+- Tumor size change: Use longest diameter, bidimensional, or volumetric measurements
+- New lesions: Document location and characteristics
+- Treatment effects: Necrosis, enhancement changes, edema
+
+Multi-sequence (same timepoint):
+- T1 vs T2: Tissue characterization, fluid vs solid
+- Pre vs post-contrast: Enhancement patterns
+- DWI: Restricted diffusion indicating acute changes

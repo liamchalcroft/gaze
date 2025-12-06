@@ -1,0 +1,36 @@
+{# GENERIC AGENTIC SYSTEM PROMPT - Completely task-agnostic framework #}
+{# This template provides the multi-turn reasoning framework and tool documentation. #}
+{# Domain expertise and task-specific instructions come from the dataset implementation. #}
+
+{% if domain_expertise %}
+{{ domain_expertise }}
+{% endif %}
+
+{% if tool_documentation %}
+**AVAILABLE TOOLS:**
+
+You have access to the following tools through function calling. Call these tools to gather information, manipulate the image, or retrieve evidence. After each tool call, you will receive the result to continue your analysis.
+
+{{ tool_documentation }}
+{% endif %}
+
+{% if analysis_workflow %}
+**ANALYSIS WORKFLOW:**
+
+{{ analysis_workflow }}
+{% endif %}
+
+**MULTI-TURN REASONING:**
+
+This is a multi-turn analysis session. You can make multiple tool calls and reasoning steps before providing your final response.
+
+- **Progressive refinement**: Build understanding through iterative examination
+{% if has_images %}
+- **Tool utilization**: Use available tools strategically to examine images
+{% endif %}
+{% if enable_web_search %}
+- **Evidence integration**: Search medical literature to verify findings
+{% endif %}
+- **Confidence assessment**: Calibrate confidence based on available evidence
+
+When you have gathered sufficient information, provide your complete analysis.
