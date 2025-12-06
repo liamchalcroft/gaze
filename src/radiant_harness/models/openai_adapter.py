@@ -63,10 +63,6 @@ class OpenAIAdapter(AdapterProtocol):
             raise APIError(f"OpenAI request timed out: {e}", model_name=self.model_name) from e
         except OpenAIError as e:  # pragma: no cover - dependency error surface
             raise APIError(f"OpenAI request failed: {e}", model_name=self.model_name) from e
-        except Exception as e:  # pragma: no cover - safety net
-            raise ModelError(
-                f"Unexpected error from OpenAI client: {e}", model_name=self.model_name
-            ) from e
 
         if not completion.choices:
             raise ModelError("OpenAI returned no choices", model_name=self.model_name)

@@ -47,13 +47,13 @@ The ablation study framework allows systematic evaluation of different component
 
 ```bash
 # Run baseline study using CLI directly
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   --config-name ablation_baseline \
   task=diagnosis \
   paths.output_dir=./results/ablation/baseline_study
 
 # Run single configuration test
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   --config-name ablation_config \
   task=localization \
   agentic.ablation_mode=full_factorial \
@@ -180,7 +180,7 @@ paths:
 
 ```bash
 # Test specific tool combinations
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   --config-name ablation_config \
   task=diagnosis \
   agentic.ablation_mode=full_factorial \
@@ -229,7 +229,7 @@ The framework generates:
 1. **API Rate Limits**
    ```bash
    # Reduce batch size and add delays
-   uv run python -m nova_retrieval_vlm.cli \
+   uv run python -m src.cli \
      task=diagnosis \
      batch_size=1 \
      max_iterations=1
@@ -238,7 +238,7 @@ The framework generates:
 2. **Memory Issues**
    ```bash
    # Use smaller batch sizes
-   uv run python -m nova_retrieval_vlm.cli \
+   uv run python -m src.cli \
      task=localization \
      batch_size=1 \
    ```
@@ -246,7 +246,7 @@ The framework generates:
 3. **Configuration Errors**
    ```bash
    # Validate configuration
-   uv run python -c "from nova_retrieval_vlm.config import Config; print('Config valid')"
+   uv run python -c "from src.config import Config; print('Config valid')"
    ```
 
 ### Debug Mode
@@ -261,8 +261,8 @@ export LOGURU_LEVEL=DEBUG
 
 The ablation study framework integrates seamlessly with the existing NOVA VLM infrastructure:
 
-- **Uses same NOVA dataset loader** from `src/nova_retrieval_vlm/data/nova_dataset.py`
-- **Leverages existing evaluation metrics** in `src/nova_retrieval_vlm/evaluation/`
+- **Uses same NOVA dataset loader** from `src/src/data/nova_dataset.py`
+- **Leverages existing evaluation metrics** in `src/src/evaluation/`
 - **Follows same processor pattern** as other processors
 - **Uses Hydra configuration system** for flexible parameter management
 - **Maintains type safety** with jaxtyping and beartype

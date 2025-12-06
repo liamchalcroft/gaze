@@ -45,7 +45,7 @@ python scripts/download_nova.py --data-dir $DATA_DIR
 
 #### Simple Localization Task
 ```bash
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   task=localization \
   model.name=openai/gpt-4o-mini:free \
   max_iterations=5
@@ -53,7 +53,7 @@ uv run python -m nova_retrieval_vlm.cli \
 
 #### Agentic Processing
 ```bash
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   task=localization \
   agentic.enabled=true \
   agentic.use_tools=true \
@@ -62,7 +62,7 @@ uv run python -m nova_retrieval_vlm.cli \
 
 #### Multi-turn Analysis
 ```bash
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   task=diagnosis \
   approach=multiturn \
   model.name=anthropic/claude-3.5-sonnet
@@ -90,38 +90,38 @@ Provide differential diagnosis based on imaging findings.
 ### Baseline
 Single-turn analysis without retrieval.
 ```bash
-uv run python -m nova_retrieval_vlm.cli approach=baseline
+uv run python -m src.cli approach=baseline
 ```
 
 ### Multi-turn
 Iterative reasoning with conditional continuation.
 ```bash
-uv run python -m nova_retrieval_vlm.cli approach=multiturn
+uv run python -m src.cli approach=multiturn
 ```
 
 ### Visual Operations
 Interactive visual reasoning with zoom/crop/contrast.
 ```bash
-uv run python -m nova_retrieval_vlm.cli approach=visual
+uv run python -m src.cli approach=visual
 ```
 
 ### Comprehensive
 All capabilities combined.
 ```bash
-uv run python -m nova_retrieval_vlm.cli approach=comprehensive
+uv run python -m src.cli approach=comprehensive
 ```
 
 ### Agentic Mode
 Multi-turn reasoning with visual tools and web search integration.
 ```bash
 # Enable agentic processing
-uv run python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true
+uv run python -m src.cli task=localization agentic.enabled=true
 
 # With visual reasoning and tools
-uv run python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
+uv run python -m src.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
 
 # Configure max turns
-uv run python -m nova_retrieval_vlm.cli task=localization agentic.enabled=true agentic.max_turns=5
+uv run python -m src.cli task=localization agentic.enabled=true agentic.max_turns=5
 ```
 
 ## Model Selection
@@ -158,14 +158,14 @@ max_iterations: 15
 
 Use with:
 ```bash
-python -m nova_retrieval_vlm.cli --config-path=configs --config-name=experiment
+python -m src.cli --config-path=configs --config-name=experiment
 ```
 
 ## Batch Processing
 
 ### Process Full Dataset
 ```bash
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   task=localization \
   max_iterations=0 \
   batch_size=8
@@ -173,7 +173,7 @@ uv run python -m nova_retrieval_vlm.cli \
 
 ### Resume Interrupted Runs
 ```bash
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   task=localization \
   skip_existing=true
 ```
@@ -187,7 +187,7 @@ uv run python scripts/plot_results.py --input-dir runs/experiment
 
 ### Interactive GUI
 ```bash
-uv run streamlit run nova_retrieval_vlm/visualization/gui.py
+uv run streamlit run src/visualization/gui.py
 ```
 
 ## Troubleshooting
@@ -215,7 +215,7 @@ uv run streamlit run nova_retrieval_vlm/visualization/gui.py
 ### Debug Mode
 ```bash
 export LOGURU_LEVEL=DEBUG
-uv run python -m nova_retrieval_vlm.cli task=localization --verbose
+uv run python -m src.cli task=localization --verbose
 ```
 
 For more details, see the [main README](../README.md) and [troubleshooting section](../README.md#troubleshooting).

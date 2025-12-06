@@ -17,7 +17,7 @@ The NOVA VLM framework enables systematic evaluation of vision-language models o
 
 ```mermaid
 graph TD
-    A[nova_retrieval_vlm/] --> B[src/nova_retrieval_vlm/]
+    A[src/] --> B[src/src/]
     A --> C[tests/]
     A --> D[scripts/]
     A --> E[docs/]
@@ -50,7 +50,7 @@ graph TD
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/nova_retrieval_vlm/` | Main Python package with all core functionality |
+| `src/src/` | Main Python package with all core functionality |
 | `tests/` | Test suite (150+ tests) |
 | `scripts/` | Benchmarking and data processing utilities |
 | `docs/` | Documentation and usage guides |
@@ -70,8 +70,8 @@ graph TD
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-org/nova_retrieval_vlm.git
-   cd nova_retrieval_vlm
+   git clone https://github.com/your-org/src.git
+   cd src
    ```
 
 2. **Install dependencies:**
@@ -110,21 +110,21 @@ The framework uses Hydra for configuration management, allowing flexible paramet
 
 ```bash
 # Localization (object detection)
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=localization \
   model.name=openai/gpt-4o \
   paths.data_dir=$DATA_DIR \
   paths.output_dir=runs/localization
 
 # Caption generation
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=caption \
   model.name=anthropic/claude-3.5-sonnet \
   paths.data_dir=$DATA_DIR \
   paths.output_dir=runs/caption
 
 # Medical diagnosis
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=diagnosis \
   model.name=openai/gpt-4o \
   paths.data_dir=$DATA_DIR \
@@ -135,21 +135,21 @@ python -m nova_retrieval_vlm.cli \
 
 ```bash
 # Agentic localization with visual tools
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=localization \
   agentic.enabled=true \
   agentic.use_tools=true \
   model.name=openai/gpt-4o
 
 # Agentic diagnosis with multi-turn reasoning
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=diagnosis \
   agentic.enabled=true \
   agentic.max_turns=5 \
   model.name=anthropic/claude-3.5-sonnet
 
 # Multi-turn analysis
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=diagnosis \
   approach=multiturn \
   model.name=openai/gpt-4o
@@ -159,7 +159,7 @@ python -m nova_retrieval_vlm.cli \
 
 ```bash
 # Process entire dataset
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   task=localization \
   max_iterations=0 \
   batch_size=8 \
@@ -174,7 +174,7 @@ bash scripts/run_full_benchmarks.sh
 Launch the Streamlit GUI for interactive exploration:
 
 ```bash
-streamlit run src/nova_retrieval_vlm/visualization/gui.py
+streamlit run src/src/visualization/gui.py
 ```
 
 ### Model Support
@@ -197,19 +197,19 @@ Override any parameter via command line:
 
 ```bash
 # Model settings
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   model.temperature=0.3 \
   model.max_tokens=2048 \
   model.timeout=120
 
 # Agentic settings
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   agentic.enabled=true \
   agentic.use_tools=true \
   agentic.max_turns=5
 
 # Processing settings
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
   batch_size=4 \
   max_iterations=10 \
   request_delay=2.0
@@ -235,7 +235,7 @@ batch_size: 2
 ```
 
 ```bash
-python -m nova_retrieval_vlm.cli --config-path=config --config-name=experiment
+python -m src.cli --config-path=config --config-name=experiment
 ```
 
 ## Evaluation Metrics
@@ -257,7 +257,7 @@ Results are automatically saved with detailed logs and can be visualized using b
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=nova_retrieval_vlm --cov-report=html
+uv run pytest --cov=src --cov-report=html
 
 # Run specific test file
 uv run pytest tests/test_agentic.py -v
@@ -290,7 +290,7 @@ uv run pyright src/
 If you use this framework in your research, please cite:
 
 ```bibtex
-@article{nova_retrieval_vlm,
+@article{src,
   title={Retrieval-Augmented Vision-Language Models for Medical Imaging Analysis},
   author={Research Team},
   journal={Medical Image Analysis},

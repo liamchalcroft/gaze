@@ -28,7 +28,7 @@ cd examples/nova
 uv sync
 # Configure .env with API keys (OPENROUTER_API_KEY / OPENAI_API_KEY)
 python scripts/download_nova.py --data-dir ./data/nova
-uv run python -m nova_retrieval_vlm.cli task=localization
+uv run python -m src.cli task=localization
 ```
 
 ## Architecture

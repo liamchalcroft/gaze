@@ -89,7 +89,7 @@ System prompts define:
 ### Basic Usage
 
 ```python
-from nova_retrieval_vlm.prompts.system_prompts import get_system_prompt
+from src.prompts.system_prompts import get_system_prompt
 
 # Get a system prompt for a specific mode
 system_prompt = get_system_prompt("baseline")
@@ -98,7 +98,7 @@ system_prompt = get_system_prompt("baseline")
 ### Enhanced Prompt Creation
 
 ```python
-from nova_retrieval_vlm.prompts.prompt_loader import create_enhanced_prompt
+from src.prompts.prompt_loader import create_enhanced_prompt
 
 # Create an enhanced prompt with system prompt integration
 enhanced_prompt = create_enhanced_prompt(
@@ -120,7 +120,7 @@ enhanced_prompt = create_enhanced_prompt(
 The system can automatically detect the appropriate mode from template names:
 
 ```python
-from nova_retrieval_vlm.prompts.prompt_loader import get_mode_from_template
+from src.prompts.prompt_loader import get_mode_from_template
 
 # Automatic mode detection
 mode = get_mode_from_template("multiturn/step1.jinja")  # Returns "multiturn"
@@ -185,7 +185,7 @@ enhanced_prompt = create_enhanced_prompt(
 
 To add a new mode:
 
-1. Add the system prompt to `src/nova_retrieval_vlm/prompts/system_prompts.py`
+1. Add the system prompt to `src/src/prompts/system_prompts.py`
 2. Update the `get_system_prompt()` function
 3. Add mode detection logic to `get_mode_from_template()`
 4. Update the `combine_prompts()` function if needed

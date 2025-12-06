@@ -9,7 +9,7 @@ The prompt system uses Jinja2 templates for both system prompts and task-specifi
 ### System Prompt Templates
 
 ```
-src/nova_retrieval_vlm/prompts/system/
+src/src/prompts/system/
 ├── base.jinja           # Base template with common instructions
 ├── baseline.jinja       # Baseline analysis mode
 ├── multiturn.jinja      # Multi-turn reasoning mode
@@ -85,12 +85,12 @@ Child templates override blocks with mode-specific instructions.
 ### Basic Usage
 
 ```python
-from nova_retrieval_vlm.prompts.prompt_loader import (
+from src.prompts.prompt_loader import (
     create_enhanced_prompt,
     load_prompt,
     get_mode_from_template,
 )
-from nova_retrieval_vlm.prompts.system_prompts import get_system_prompt
+from src.prompts.system_prompts import get_system_prompt
 
 # Load prompt with automatic mode detection
 prompt = create_enhanced_prompt(
@@ -108,24 +108,24 @@ system_prompt = get_system_prompt("multiturn")
 
 ```bash
 # Baseline analysis
-python -m nova_retrieval_vlm.cli task=caption approach=baseline
+python -m src.cli task=caption approach=baseline
 
 # Multi-turn analysis
-python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
+python -m src.cli task=diagnosis approach=multiturn
 
 # Visual multi-turn with web search
-python -m nova_retrieval_vlm.cli task=localization approach=visual_multiturn visual_rounds=3
+python -m src.cli task=localization approach=visual_multiturn visual_rounds=3
 ```
 
 ### Advanced Usage
 
 ```python
-from nova_retrieval_vlm.prompts.prompt_loader import (
+from src.prompts.prompt_loader import (
     load_prompt,
     get_mode_from_template,
     combine_prompts,
 )
-from nova_retrieval_vlm.prompts.system_prompts import get_system_prompt
+from src.prompts.system_prompts import get_system_prompt
 
 # Available modes
 modes = ["baseline", "multiturn", "visual", "web_search", "comprehensive"]
@@ -155,13 +155,13 @@ System prompts support context variables that can be passed to customize behavio
 
 To customize system prompts:
 
-1. **Modify existing templates**: Edit the Jinja files in `src/nova_retrieval_vlm/prompts/system/`
+1. **Modify existing templates**: Edit the Jinja files in `src/src/prompts/system/`
 2. **Add new modes**: Create new Jinja templates and add them to the loader
 3. **Override system prompts**: Use `system_prompt_override` parameter
 
 ### Adding New Modes
 
-1. Create a new Jinja template in `src/nova_retrieval_vlm/prompts/system/`
+1. Create a new Jinja template in `src/src/prompts/system/`
 2. Extend the base template: `{% extends "system/base.jinja" %}`
 3. Override blocks as needed using `{{ super() }}`
 4. Add the mode to the loader's `system_modes` dictionary

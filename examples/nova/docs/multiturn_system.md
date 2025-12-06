@@ -89,15 +89,15 @@ For visual multi-turn mode:
 
 ```bash
 # Multi-turn analysis
-python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
+python -m src.cli task=diagnosis approach=multiturn
 
 # With agentic tools
-python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
+python -m src.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
 ```
 
 ## Template Files
 
-Located in `src/nova_retrieval_vlm/prompts/`:
+Located in `src/src/prompts/`:
 
 - `multiturn/step1.jinja` - Initial analysis
 - `multiturn/step2.jinja` - Guideline integration

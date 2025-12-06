@@ -177,6 +177,11 @@ data/
 !data/.gitkeep
 datasets/
 raw_data/
+# Allow tracked example sources (re-include after broad data ignore)
+!examples/nova/src/data/
+!examples/nova/src/data/**
+!examples/nova/src/evaluation/
+!examples/nova/src/evaluation/**
 
 # Model checkpoints and weights
 checkpoints/
@@ -196,6 +201,9 @@ logs/
 eval*/
 !outputs/.gitkeep
 !runs/.gitkeep
+# Re-include NOVA example evaluation code
+!examples/nova/src/evaluation/
+!examples/nova/src/evaluation/**
 
 # Cache directories
 cache/

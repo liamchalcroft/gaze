@@ -13,7 +13,7 @@ from loguru import logger
 from PIL import Image
 from PIL import ImageDraw
 
-from nova_retrieval_vlm.utils.confidence_calibration_utils import calculate_reliability_diagram_data
+from src.utils.confidence_calibration_utils import calculate_reliability_diagram_data
 
 
 def overlay_boxes(

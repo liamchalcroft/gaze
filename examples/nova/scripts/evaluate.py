@@ -22,10 +22,10 @@ from loguru import logger
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nova_retrieval_vlm.data.nova_dataset import NovaDataset
-from nova_retrieval_vlm.evaluation.caption import evaluate_caption
-from nova_retrieval_vlm.evaluation.detection import evaluate_detection
-from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
+from src.data.nova_dataset import NovaDataset
+from src.evaluation.caption import evaluate_caption
+from src.evaluation.detection import evaluate_detection
+from src.evaluation.diagnosis import evaluate_diagnosis_nova_official
 
 
 @beartype

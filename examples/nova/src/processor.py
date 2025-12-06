@@ -11,8 +11,8 @@ from typing import Any
 
 from beartype import beartype
 
-from nova_retrieval_vlm.nova.schemas import NOVA_SCHEMA
-from nova_retrieval_vlm.nova.schemas import validate_nova_response
+from src.schemas import NOVA_SCHEMA
+from src.schemas import validate_nova_response
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn

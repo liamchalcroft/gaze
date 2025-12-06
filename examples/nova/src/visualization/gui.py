@@ -16,8 +16,8 @@ from beartype import beartype
 from datasets import load_dataset
 from PIL import Image
 
-from nova_retrieval_vlm.nova import NOVAAgenticProcessor
-from nova_retrieval_vlm.utils.confidence_calibration_utils import load_calibration_data_from_files
+from src.processor import NOVAAgenticProcessor
+from src.utils.confidence_calibration_utils import load_calibration_data_from_files
 
 from .plotting import overlay_boxes
 from .plotting import plot_ablation_comparison

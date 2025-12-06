@@ -32,7 +32,7 @@ This document summarizes the comprehensive integration and enhancement of the NO
 
 ### Core Framework Files
 ```
-src/nova_retrieval_vlm/
+src/src/
 ├── agentic/
 │   ├── processor.py          # Enhanced with calibration tracking
 │   ├── tools.py              # Improved error handling and web search
@@ -77,20 +77,20 @@ python scripts/analyze_integrated_ablation_results.py \
   --output-dir analysis/full_factorial
 
 # Launch interactive GUI
-streamlit run src/nova_retrieval_vlm/visualization/gui.py
+streamlit run src/src/visualization/gui.py
 ```
 
 ### CLI Integration (Existing Interface)
 ```bash
 # Use existing CLI with ablation mode
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   --config-name ablation_config \
   task=diagnosis \
   agentic.ablation_mode=full_factorial \
   paths.output_dir=./results/ablation_study
 
 # Test single configuration
-uv run python -m nova_retrieval_vlm.cli \
+uv run python -m src.cli \
   --config-name ablation_config \
   task=localization \
   agentic.single_config=reasoning_enabled
@@ -98,7 +98,7 @@ uv run python -m nova_retrieval_vlm.cli \
 
 ### Research Mode Configuration
 ```python
-from nova_retrieval_vlm.nova import NOVAAgenticProcessor
+from src.processor import NOVAAgenticProcessor
 
 # Create NOVA processor for analysis
 processor = NOVAAgenticProcessor(

@@ -71,7 +71,7 @@ flowchart TD
 The NOVA-specific processor that orchestrates multi-turn analysis using the generic harness:
 
 ```python
-from nova_retrieval_vlm.nova import NOVAAgenticProcessor
+from src.processor import NOVAAgenticProcessor
 
 processor = NOVAAgenticProcessor(
     model_name="x-ai/grok-4.1-fast:free",
@@ -139,7 +139,7 @@ flowchart LR
 ```
 
 ```python
-from nova_retrieval_vlm.retrieval.enhanced_web_search import search_medical_literature_sync
+from src.retrieval.enhanced_web_search import search_medical_literature_sync
 
 # Search with automatic medical source prioritization
 results = search_medical_literature_sync(
@@ -237,7 +237,7 @@ class AgenticResult:
 The NOVAAgenticProcessor handles all tasks (captioning, diagnosis, localization) in a unified analysis:
 
 ```python
-from nova_retrieval_vlm.nova import NOVAAgenticProcessor
+from src.processor import NOVAAgenticProcessor
 
 processor = NOVAAgenticProcessor(
     model_name="openai/gpt-4o",
@@ -261,12 +261,12 @@ print(result.final_response["localization"])
 
 ```bash
 # Enable agentic processing with Grok model
-python -m nova_retrieval_vlm.cli task=localization \
+python -m src.cli task=localization \
     model.name=x-ai/grok-4.1-fast:free \
     agentic.enabled=true
 
 # Configure agentic options with reasoning
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
     task=diagnosis \
     model.name=x-ai/grok-4.1-fast:free \
     agentic.enabled=true \
@@ -276,7 +276,7 @@ python -m nova_retrieval_vlm.cli \
     model.reasoning_enabled=true
 
 # Example with web search enabled
-python -m nova_retrieval_vlm.cli \
+python -m src.cli \
     task=diagnosis \
     model.name=x-ai/grok-4.1-fast:free \
     agentic.enabled=true \

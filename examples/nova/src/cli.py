@@ -19,13 +19,13 @@ from typing import Any
 from loguru import logger
 from PIL import Image
 
-from nova_retrieval_vlm.config import NOVAConfig
-from nova_retrieval_vlm.config import TaskType
-from nova_retrieval_vlm.data import NovaDataset
-from nova_retrieval_vlm.evaluation.caption import evaluate_caption
-from nova_retrieval_vlm.evaluation.detection import evaluate_detection
-from nova_retrieval_vlm.evaluation.diagnosis import evaluate_diagnosis_nova_official
-from nova_retrieval_vlm.nova import NOVAAgenticProcessor
+from src.config import NOVAConfig
+from src.config import TaskType
+from src.data import NovaDataset
+from src.evaluation.caption import evaluate_caption
+from src.evaluation.detection import evaluate_detection
+from src.evaluation.diagnosis import evaluate_diagnosis_nova_official
+from src.processor import NOVAAgenticProcessor
 
 # Import result type from radiant_harness
 from radiant_harness import AgenticResult
@@ -169,8 +169,7 @@ def compute_metrics(
         Dictionary of metrics
     """
     if not results:
-        logger.warning("No results generated; skipping metric computation")
-        return {}
+        raise ValueError("No results generated; cannot compute metrics")
 
     if len(results) != len(ground_truth):
         raise ValueError(
@@ -320,10 +319,10 @@ def main() -> None:
 
     # Configure logging
     if args.verbose:
-        logger.enable("nova_retrieval_vlm")
+        logger.enable("src")
         logger.enable("radiant_harness")
     else:
-        logger.disable("nova_retrieval_vlm")
+        logger.disable("src")
 
     # Create configuration
     config = NOVAConfig(

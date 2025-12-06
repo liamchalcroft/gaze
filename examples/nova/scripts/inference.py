@@ -140,7 +140,7 @@ def run_inference(config_path: str | Path, output_dir: str | Path | None = None)
 
     # Import and run the CLI
     try:
-        from nova_retrieval_vlm.cli import main as cli_main
+        from src.cli import main as cli_main
 
         logger.info(f"Running with overrides: {overrides}")
 
