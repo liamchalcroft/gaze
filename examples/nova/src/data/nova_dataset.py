@@ -50,7 +50,7 @@ class NovaDataset:
             raise RuntimeError("HuggingFace dataset is missing download checksums for mapping")
 
         self.hf_to_gt_index = {}
-        gt_filenames = self.ground_truth.get_filenames()
+        gt_filenames = self.ground_truth.list_all_filenames()
         gt_filename_to_idx = {name: idx for idx, name in enumerate(gt_filenames)}
 
         for hf_index, (filepath, _info) in enumerate(checksums.items()):

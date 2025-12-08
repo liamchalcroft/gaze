@@ -50,7 +50,7 @@ async def predict_with_model(model_name: str, image: Image.Image, task: str) -> 
 
     try:
         result = await processor.analyze(
-            image_path=temp_path,
+            images=temp_path,
             metadata={"requested_task": task},
         )
         return {
