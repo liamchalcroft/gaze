@@ -10,6 +10,36 @@ from typing import Any
 from beartype import beartype
 from loguru import logger
 
+# Default model for semantic matching - cost-efficient SOTA model via OpenRouter
+DEFAULT_SEMANTIC_MATCH_MODEL = "x-ai/grok-4.1-fast:free"
+
+# Pre-compiled regex patterns for better performance
+_DASH_PATTERN = re.compile(r"\s*–\s*")
+_DOUBLE_SPACE_PATTERN = re.compile(r"  +")
+
+# Common medical abbreviation mappings - use frozenset for faster lookups
+_ABBREVIATION_MAPPING = {
+    "sod": "septo-optic dysplasia",
+    "acc": "agenesis of corpus callosum",
+    "cpa": "cerebellopontine angle",
+    "avm": "arteriovenous malformation",
+    "pnet": "primitive neuroectodermal tumor",
+    "gbm": "glioblastoma multiforme",
+    "mri": "magnetic resonance imaging",
+    "ct": "computed tomography",
+    "dwi": "diffusion weighted imaging",
+    "flair": "fluid attenuated inversion recovery",
+    "dc": "dermoid cyst",
+    "ec": "epidermoid cyst",
+    "ac": "arachnoid cyst",
+    "cm": "cavernous malformation",
+    "vs": "vestibular schwannoma",
+    "an": "acoustic neuroma",
+    "da": "diffuse axonal injury",
+    "sah": "subarachnoid hemorrhage",
+    "ich": "intracerebral hemorrhage",
+}
+
 
 @beartype
 def normalize_diagnosis_string(diag: str) -> str:
@@ -21,43 +51,19 @@ def normalize_diagnosis_string(diag: str) -> str:
     - En-dash vs hyphen
     - Common abbreviations
     - Plural/singular variations
+
+    Optimized with pre-compiled regex patterns for better performance.
     """
     if not diag:
         return ""
 
-    normalized = (
-        diag.lower()
-        .strip()
-        .replace(" – ", "-")  # en-dash with spaces to hyphen
-        .replace(" –", "-")  # en-dash to hyphen
-        .replace("  ", " ")  # double spaces to single
-    )
+    # Use pre-compiled regex patterns for better performance
+    normalized = diag.lower().strip()
+    normalized = _DASH_PATTERN.sub("-", normalized)
+    normalized = _DOUBLE_SPACE_PATTERN.sub(" ", normalized)
 
-    # Common medical abbreviation mappings
-    abbreviations = {
-        "sod": "septo-optic dysplasia",
-        "acc": "agenesis of corpus callosum",
-        "cpa": "cerebellopontine angle",
-        "avm": "arteriovenous malformation",
-        "pnet": "primitive neuroectodermal tumor",
-        "gbm": "glioblastoma multiforme",
-        "mri": "magnetic resonance imaging",
-        "ct": "computed tomography",
-        "dwi": "diffusion weighted imaging",
-        "flair": "fluid attenuated inversion recovery",
-        "dc": "dermoid cyst",
-        "ec": "epidermoid cyst",
-        "ac": "arachnoid cyst",
-        "cm": "cavernous malformation",
-        "vs": "vestibular schwannoma",
-        "an": "acoustic neuroma",
-        "da": "diffuse axonal injury",
-        "sah": "subarachnoid hemorrhage",
-        "ich": "intracerebral hemorrhage",
-    }
-
-    # Expand common abbreviations
-    for abbrev, full in abbreviations.items():
+    # Expand common abbreviations using the pre-defined mapping
+    for abbrev, full in _ABBREVIATION_MAPPING.items():
         if normalized == abbrev:
             normalized = full
         elif normalized.startswith(abbrev + " "):
@@ -137,7 +143,7 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
 
 @beartype
 async def llm_semantic_match_async(
-    pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free"
+    pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL
 ) -> bool:
     """
     Use LLM semantic matching between prediction and reference diagnosis (async).
@@ -155,7 +161,7 @@ async def llm_semantic_match_async(
     Raises:
         ValueError: If LLM API call fails (semantic matching is required for NOVA evaluation).
     """
-    from src.models import get_model_client
+    from ..models import get_model_client
 
     prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
@@ -185,7 +191,7 @@ or "NO" if they refer to different conditions.
 
 
 @beartype
-def llm_semantic_match(pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fast:free") -> bool:
+def llm_semantic_match(pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL) -> bool:
     """
     Synchronous wrapper for LLM semantic matching.
 
@@ -215,7 +221,7 @@ def llm_semantic_match(pred: str, ref: str, model_name: str = "x-ai/grok-4.1-fas
 def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
-    model_name: str = "x-ai/grok-4.1-fast:free",
+    model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
 ) -> dict[str, float]:
     """
     Official NOVA diagnosis evaluation using LLM semantic matching.
@@ -257,7 +263,10 @@ def evaluate_diagnosis_nova_official(
             top1_pred = p[0] if p else None
 
             # Top-1 evaluation - use fast exact match first, then LLM semantic matching
-            if top1_pred and (exact_diagnosis_match(str(top1_pred), str(r)) or llm_semantic_match(str(top1_pred), str(r), model_name)):
+            if top1_pred and (
+                exact_diagnosis_match(str(top1_pred), str(r))
+                or llm_semantic_match(str(top1_pred), str(r), model_name)
+            ):
                 top1_count += 1
 
             # Top-5 evaluation - use fast exact match first, then LLM for remaining
@@ -276,7 +285,9 @@ def evaluate_diagnosis_nova_official(
             all_preds.extend(p)
         else:
             # Handle single predictions - use fast exact match first, then LLM
-            if exact_diagnosis_match(str(p), str(r)) or llm_semantic_match(str(p), str(r), model_name):
+            if exact_diagnosis_match(str(p), str(r)) or llm_semantic_match(
+                str(p), str(r), model_name
+            ):
                 top1_count += 1
                 top5_count += 1
 

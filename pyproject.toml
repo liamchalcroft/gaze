@@ -67,17 +67,6 @@ reportUnusedFunction = false
 reportDuplicateImport = true
 reportUnnecessaryTypeIgnoreComment = false
 
-# Relax type checking for legitimate patterns globally
-reportUnknownParameterType = false
-reportUnknownArgumentType = false
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportMissingParameterType = false
-reportArgumentType = false
-reportAttributeAccessIssue = false
-reportCallIssue = false
-reportConstantRedefinition = false
-
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --strict-markers --tb=short"
@@ -129,8 +118,6 @@ dependencies = [
     "requests",
     "aiohttp",
     "minijinja>=2.12.0",
-    # Optional tooling
-    "pytest-asyncio>=0.23.8",
 ]
 name = "radiant-harness"
 version = "0.1.0"
@@ -138,6 +125,13 @@ description = "Radiant Harness: standalone agentic tool harness for VLMs (radiol
 readme = "README.md"
 
 [project.scripts]
+
+[project.optional-dependencies]
+nova = [
+    "torch",
+    "torchvision",
+    "datasets",
+]
 
 [dependency-groups]
 dev = [

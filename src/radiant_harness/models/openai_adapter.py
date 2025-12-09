@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from beartype import beartype
 from loguru import logger
 from openai import APITimeoutError
 from openai import AsyncOpenAI
@@ -18,6 +19,7 @@ from radiant_harness.models.adapter_protocol import AdapterProtocol
 class OpenAIAdapter(AdapterProtocol):
     """Adapter around OpenAI's Chat Completions API (text + vision)."""
 
+    @beartype
     def __init__(
         self,
         model_name: str,
@@ -33,10 +35,19 @@ class OpenAIAdapter(AdapterProtocol):
 
     @property
     def client(self) -> AsyncOpenAI:
+        """Get or create the AsyncOpenAI client.
+
+        The client is lazily initialized to avoid unnecessary API key
+        validation at module import time.
+
+        Returns:
+            Configured AsyncOpenAI client instance
+        """
         if self._client is None:
             self._client = AsyncOpenAI()
         return self._client
 
+    @beartype
     async def generate_chat(
         self,
         messages: list[dict[str, Any]],
@@ -54,9 +65,7 @@ class OpenAIAdapter(AdapterProtocol):
                 temperature=temperature,
                 tools=tools,
                 response_format=response_format,
-                reasoning=(
-                    {"effort": self.reasoning_effort} if self.reasoning_enabled else None
-                ),
+                reasoning=({"effort": self.reasoning_effort} if self.reasoning_enabled else None),
                 cache_control={"type": "ephemeral"} if self.enable_caching else None,
             )
         except APITimeoutError as e:

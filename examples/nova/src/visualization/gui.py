@@ -16,9 +16,8 @@ from beartype import beartype
 from datasets import load_dataset
 from PIL import Image
 
-from src.processor import NOVAAgenticProcessor
-from src.utils.confidence_calibration_utils import load_calibration_data_from_files
-
+from ..processor import NOVAAgenticProcessor
+from ..utils.confidence_calibration_utils import load_calibration_data_from_files
 from .plotting import overlay_boxes
 from .plotting import plot_ablation_comparison
 
@@ -321,11 +320,13 @@ def render_raw_data_dashboard(ablation_data: dict[str, Any]) -> None:
         # Evaluation metrics
         eval_metrics_path = results_dir / "evaluation_metrics.json"
         if eval_metrics_path.exists():
-            with open(eval_metrics_path) as f:
-                eval_metrics = json.load(f)
-
-            st.write("**Evaluation Metrics**")
-            st.json(eval_metrics)
+            try:
+                with open(eval_metrics_path) as f:
+                    eval_metrics = json.load(f)
+                st.write("**Evaluation Metrics**")
+                st.json(eval_metrics)
+            except (OSError, json.JSONDecodeError) as e:
+                st.error(f"Error loading evaluation metrics: {e}")
 
 
 def main() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -11,6 +12,27 @@ class HarnessError(Exception):
 
 class ToolExecutionError(HarnessError):
     """Raised when a tool execution fails due to invalid state or parameters."""
+
+
+class TemplateError(HarnessError):
+    """Raised when template loading or rendering fails.
+
+    Attributes:
+        template_path: Path to the template that failed
+        original_error: The underlying error that caused the failure
+    """
+
+    def __init__(
+        self,
+        message: str,
+        template_path: Path | str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        self.template_path = template_path
+        self.original_error = original_error
+        if template_path:
+            message = f"{message} (template: {template_path})"
+        super().__init__(message)
 
 
 class UnknownToolError(HarnessError):

@@ -24,6 +24,8 @@ from beartype import beartype
 from loguru import logger
 from PIL import Image
 
+from radiant_harness.config import AgenticConfig
+from radiant_harness.config import get_config
 from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
@@ -59,6 +61,7 @@ class ImageInput:
     height: int = 0
     encoded: EncodedImage | None = None
 
+    @beartype
     def load(self) -> None:
         """Load image and populate dimensions and encoding."""
         with Image.open(self.path) as img:
@@ -86,19 +89,18 @@ class AgenticProcessorBase(ABC):
     - Structured JSON output via subclass-provided schema
     """
 
-    MAX_TURNS = 20
-
     def __init__(
         self,
         model_name: str = "openai/gpt-4o",
         use_tools: bool = True,
         use_web_search: bool = False,
-        max_turns: int = 10,
+        max_turns: int | None = None,
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
         enable_caching: bool = True,
         disabled_tools: list[str] | None = None,
         adapter_factory: Callable[[], AdapterProtocol] | None = None,
+        config: AgenticConfig | None = None,
     ) -> None:
         """Initialize agentic processor.
 
@@ -106,15 +108,23 @@ class AgenticProcessorBase(ABC):
             model_name: Model name for analysis
             use_tools: Enable visual tools
             use_web_search: Enable web/image search tools
-            max_turns: Maximum turns before forced completion (clamped to MAX_TURNS)
+            max_turns: Maximum turns before forced completion (uses config default if None)
             reasoning_enabled: Enable model's internal reasoning
             reasoning_effort: Reasoning effort level ("high", "medium", "low")
             enable_caching: Enable prompt caching
             disabled_tools: Specific tool names to disable
+            adapter_factory: Optional factory for custom model adapter
+            config: Agentic configuration. If None, uses global default.
 
         Raises:
             ValueError: If max_turns < 1
         """
+        # Get configuration
+        self._config = config or get_config().agentic
+
+        # Handle max_turns with defaults
+        if max_turns is None:
+            max_turns = self._config.default_max_turns
         if max_turns < 1:
             raise ValueError(f"max_turns must be >= 1, got {max_turns}")
 
@@ -122,11 +132,12 @@ class AgenticProcessorBase(ABC):
         self.use_tools = use_tools
         self.use_web_search = use_web_search
 
-        if max_turns > self.MAX_TURNS:
+        # Clamp to absolute maximum
+        if max_turns > self._config.max_turns_limit:
             logger.warning(
-                f"max_turns={max_turns} exceeds MAX_TURNS={self.MAX_TURNS}, clamping"
+                f"max_turns={max_turns} exceeds max_turns_limit={self._config.max_turns_limit}, clamping"
             )
-        self.max_turns = min(max_turns, self.MAX_TURNS)
+        self.max_turns = min(max_turns, self._config.max_turns_limit)
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
         self.enable_caching = enable_caching
@@ -140,6 +151,7 @@ class AgenticProcessorBase(ABC):
         # Lazy-initialized model adapter
         self._model_adapter: AdapterProtocol | None = None
 
+    @beartype
     def _ensure_initialized(self) -> None:
         """Ensure model adapter is initialized."""
         if self._model_adapter is None:
@@ -153,6 +165,7 @@ class AgenticProcessorBase(ABC):
                     enable_caching=self.enable_caching,
                 )
 
+    @beartype
     def _create_tool_registry(
         self,
         images: list[ImageInput],
@@ -248,6 +261,7 @@ class AgenticProcessorBase(ABC):
         """
         ...
 
+    @beartype
     def calculate_confidence(
         self,
         response: dict[str, Any],  # noqa: ARG002 - Available for subclass override
@@ -318,8 +332,9 @@ class AgenticProcessorBase(ABC):
             )
         finally:
             if tool_registry is not None:
-                tool_registry.close()
+                await tool_registry.aclose()
 
+    @beartype
     def _normalize_image_inputs(
         self,
         images: list[Path] | Path | None,
@@ -352,15 +367,15 @@ class AgenticProcessorBase(ABC):
         system_prompt = self.get_system_prompt(images=images, metadata=metadata)
         policy_lines = [
             f"Multi-turn session with a maximum of {self.max_turns} turns.",
-            "Return JSON every turn with a boolean field \"continue\".",
-            "Set \"continue\": true when you need more tools/analysis; false when final.",
+            'Return JSON every turn with a boolean field "continue".',
+            'Set "continue": true when you need more tools/analysis; false when final.',
             "Final response must satisfy the provided response schema.",
         ]
         system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
         # Inject tool documentation when tools are available so the model knows how to call them
         if tool_registry:
-            tool_docs = tool_registry.generate_prompt_documentation()
+            tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
             if tool_docs:
                 system_prompt = f"{system_prompt}\n\nAvailable tools:\n{tool_docs}"
         user_message = self.get_user_message(images=images, metadata=metadata)
@@ -386,8 +401,9 @@ class AgenticProcessorBase(ABC):
             {"role": "user", "content": user_content},
         ]
 
-        # _ensure_initialized() guarantees adapter exists; assert for type narrowing
-        assert self._model_adapter is not None
+        # _ensure_initialized() guarantees adapter exists
+        if self._model_adapter is None:
+            raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
         model_adapter = self._model_adapter
 
         # Always expose available tool schemas when a registry exists (search-only runs
@@ -405,8 +421,8 @@ class AgenticProcessorBase(ABC):
             # Generate response
             response_text, tool_calls, gen_log = await model_adapter.generate_chat(
                 messages=messages,
-                max_tokens=8192,
-                temperature=0.0,
+                max_tokens=self._config.default_max_tokens,
+                temperature=self._config.default_temperature,
                 tools=current_tools,
                 response_format=current_schema,
             )
@@ -431,6 +447,16 @@ class AgenticProcessorBase(ABC):
                             arguments=tc["arguments"],
                         )
                     )
+
+            if typed_tool_calls and tool_registry is None:
+                raise AgenticProcessingError(
+                    "Model requested tool calls but tools are disabled or unavailable",
+                    turns_completed=turn_idx + 1,
+                    partial_response={
+                        "error": "tools_unavailable",
+                        "tools": [tc.name for tc in typed_tool_calls],
+                    },
+                )
 
             # Record turn
             turn = Turn(
@@ -564,6 +590,7 @@ class AgenticProcessorBase(ABC):
             confidence=confidence,
         )
 
+    @beartype
     async def _execute_tools(
         self,
         tool_calls: list[ToolCall],
@@ -593,7 +620,12 @@ class AgenticProcessorBase(ABC):
                     )
                 tool_args = parsed
             else:
-                # Type is dict[str, Any] | str; if not str, must be dict
+                if not isinstance(tool_call.arguments, dict):
+                    raise AgenticProcessingError(
+                        f"Tool arguments for '{tool_call.name}' must be a dict, got {type(tool_call.arguments).__name__}",
+                        turns_completed=turn_idx + 1,
+                        partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
+                    )
                 tool_args = tool_call.arguments
 
             logger.debug(f"Executing: {tool_call.name}({tool_args})")
@@ -621,6 +653,7 @@ class AgenticProcessorBase(ABC):
 
         return results
 
+    @beartype
     def _format_tool_results(self, tool_results: list[ToolResult]) -> str:
         """Format tool results for logging."""
         if not tool_results:

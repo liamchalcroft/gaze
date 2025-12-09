@@ -2,19 +2,22 @@ import json
 import random
 from pathlib import Path
 
+from beartype import beartype
 from datasets import Dataset
 from datasets import load_dataset
+from loguru import logger
 from PIL import Image
 from PIL import ImageDraw
 
 
+@beartype
 def visualize_samples(
     num_samples: int = 5,
     out_dir: str | None = None,
     cache_dir: str | None = None,
     trust_remote_code: bool = False,
     overlay: bool = False,
-):
+) -> None:
     """
     Save a few NOVA samples (images + metadata) via Hugging Face.
 
@@ -25,7 +28,7 @@ def visualize_samples(
         trust_remote_code: Whether to set trust_remote_code in load_dataset.
         overlay: Whether to overlay bbox_gold and bbox_raters.
     """
-    print("Loading NOVA test split from Hugging Face...")
+    logger.info("Loading NOVA test split from Hugging Face...")
     ds = load_dataset(
         "c-i-ber/Nova",
         split="train",
@@ -36,7 +39,7 @@ def visualize_samples(
     assert isinstance(ds, Dataset), f"Expected Dataset, got {type(ds).__name__}"
     total = len(ds)
     count = min(num_samples, total)
-    print(f"Selecting {count}/{total} samples.")
+    logger.info(f"Selecting {count}/{total} samples.")
 
     base = Path(out_dir) if out_dir else Path.cwd() / "viz_samples"
     images_dir = base / "images"
@@ -96,6 +99,6 @@ def visualize_samples(
         }
         with open(meta_dir / f"sample_{idx}.json", "w") as f:
             json.dump(meta, f, indent=2)
-        print(f"Saved sample {idx} to {out_img}")
+        logger.info(f"Saved sample {idx} to {out_img}")
 
-    print("Visualization complete.")
+    logger.info("Visualization complete.")

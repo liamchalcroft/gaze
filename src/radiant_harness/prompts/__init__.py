@@ -14,6 +14,8 @@ from beartype import beartype
 from minijinja import Environment
 from typing_extensions import assert_never
 
+from radiant_harness.exceptions import TemplateError
+
 
 class AnalysisMode(str, Enum):
     """Analysis modes for prompt generation.
@@ -40,13 +42,43 @@ def load_template(
         Rendered template string
 
     Raises:
-        FileNotFoundError: If template file doesn't exist
-    """
-    with open(template_path, encoding="utf-8") as f:
-        template_content = f.read()
+        TemplateError: If template file doesn't exist or rendering fails
 
-    env = Environment()
-    return env.render_str(template_content, **context)
+    Example:
+        from pathlib import Path
+        from radiant_harness.prompts import load_template
+
+        prompt = load_template(
+            Path("prompts/system.jinja"),
+            {"task": "diagnosis", "modality": "MRI"}
+        )
+    """
+    try:
+        with open(template_path, encoding="utf-8") as f:
+            template_content = f.read()
+    except FileNotFoundError as e:
+        raise TemplateError(
+            f"Template file not found: {template_path}",
+            template_path=template_path,
+            original_error=e,
+        ) from e
+    except OSError as e:
+        raise TemplateError(
+            f"Failed to read template file: {e}",
+            template_path=template_path,
+            original_error=e,
+        ) from e
+
+    try:
+        env = Environment()
+        return env.render_str(template_content, **context)
+    except Exception as e:
+        # minijinja raises various exceptions for syntax/render errors
+        raise TemplateError(
+            f"Failed to render template: {e}",
+            template_path=template_path,
+            original_error=e,
+        ) from e
 
 
 @beartype

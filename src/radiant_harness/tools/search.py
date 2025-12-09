@@ -111,7 +111,9 @@ async def _execute_search_images(
     """Search NIH Open-i for reference medical images."""
     modality_filter = None if modality == "any" else modality
     body_part_filter = None if body_part == "any" else body_part
-    logger.info(f"Searching images: '{query}' (modality: {modality_filter}, body: {body_part_filter})")
+    logger.info(
+        f"Searching images: '{query}' (modality: {modality_filter}, body: {body_part_filter})"
+    )
 
     try:
         search_results = await search_medical_images(

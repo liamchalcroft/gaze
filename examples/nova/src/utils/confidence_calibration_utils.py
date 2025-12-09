@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 from beartype import beartype
 from loguru import logger
@@ -27,8 +26,8 @@ DEFAULT_MIN_CONFIDENCE = 0.7  # Default threshold for filtering reliable predict
 
 @beartype
 def calculate_reliability_diagram_data(
-    confidences: list[float] | npt.NDArray[np.floating[Any]],
-    correct: list[bool] | npt.NDArray[np.bool_],
+    confidences: list[float] | np.ndarray,
+    correct: list[bool] | np.ndarray,
     n_bins: int = DEFAULT_N_BINS,
 ) -> dict[str, Any]:
     """Calculate reliability diagram data for confidence calibration analysis.
@@ -90,9 +89,9 @@ def calculate_reliability_diagram_data(
 
 @beartype
 def analyze_confidence_levels(
-    confidences: list[float] | npt.NDArray[np.floating[Any]],
+    confidences: list[float] | np.ndarray,
     confidence_levels: list[str],
-    correct: list[bool] | npt.NDArray[np.bool_],
+    correct: list[bool] | np.ndarray,
     level_order: list[str] | None = None,
 ) -> dict[str, Any]:
     """Analyze performance by confidence level categories.
@@ -159,9 +158,9 @@ def analyze_confidence_levels(
 
 @beartype
 def analyze_reliability_flags(
-    reliable_flags: list[bool] | npt.NDArray[np.bool_],
-    confidences: list[float] | npt.NDArray[np.floating[Any]],
-    correct: list[bool] | npt.NDArray[np.bool_],
+    reliable_flags: list[bool] | np.ndarray,
+    confidences: list[float] | np.ndarray,
+    correct: list[bool] | np.ndarray,
 ) -> dict[str, Any]:
     """Analyze reliability flag performance and discrimination.
 
@@ -473,7 +472,9 @@ def add_calibration_metadata_to_batch(
             enhanced_result["calibration_metadata"] = {
                 "confidence": result.get("confidence", 0.0),
                 "confidence_level": final_response.get("confidence_level", "unknown"),
-                "reliable_flag": reliability_flag_data.get("reliable") if reliability_flag_data else None,
+                "reliable_flag": reliability_flag_data.get("reliable")
+                if reliability_flag_data
+                else None,
                 "final_prediction": final_response.get("final_prediction", {}),
                 "research_metrics": result.get("research_metrics", {}),
             }

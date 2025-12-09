@@ -19,8 +19,8 @@ from radiant_harness.tools.image_ops import flip_horizontal
 from radiant_harness.tools.image_ops import flip_vertical
 from radiant_harness.tools.image_ops import rotate_90
 from radiant_harness.tools.image_ops import zoom_image
-from radiant_harness.tools.registry import Tool
 from radiant_harness.tools.registry import encode_image
+from radiant_harness.tools.tool import Tool
 from radiant_harness.types import ToolResult
 
 if TYPE_CHECKING:
@@ -29,16 +29,17 @@ if TYPE_CHECKING:
 
 def _require_image(registry: ToolRegistry) -> Image.Image:
     """Get current image from registry, raising if none is loaded."""
-    if registry.current_image is None:
+    image_manager = registry.get_image_manager()
+    if image_manager.current_image is None:
         raise ToolExecutionError("Tool requires a loaded image but none is active")
-    return registry.current_image
+    return image_manager.current_image
 
 
 def _get_current_image(registry: ToolRegistry) -> Image.Image:
     """Get current image after a transform (guaranteed non-None by transform_image)."""
-    img = registry.current_image
+    image_manager = registry.get_image_manager()
+    img = image_manager.current_image
     if img is None:
-        # This should never happen after transform_image, but satisfies type checker
         raise ToolExecutionError("Image unexpectedly None after transform")
     return img
 
@@ -47,9 +48,10 @@ async def _execute_zoom(registry: ToolRegistry, factor: float) -> ToolResult:
     """Execute zoom tool."""
     image = _require_image(registry)
     original_size = image.size
+    image_manager = registry.get_image_manager()
 
     try:
-        registry.transform_image(lambda img: zoom_image(img, factor))
+        image_manager.transform_image(lambda img: zoom_image(img, factor))
     except ValueError as e:
         raise ToolExecutionError(f"Invalid zoom factor: {e}") from e
 
@@ -75,12 +77,21 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     if len(box) != 4:
         raise ToolExecutionError(f"Crop requires [x1, y1, x2, y2], got {len(box)} values")
 
+    # Validate box values are within [0, 1] range
+    for i, value in enumerate(box):
+        if not 0 <= value <= 1:
+            raise ToolExecutionError(
+                f"Crop coordinates must be in range [0, 1]. "
+                f"Got {['x1', 'y1', 'x2', 'y2'][i]}={value}"
+            )
+
     image = _require_image(registry)
     x1, y1, x2, y2 = box
     original_size = image.size
+    image_manager = registry.get_image_manager()
 
     try:
-        registry.transform_image(lambda img: crop_image(img, (x1, y1, x2, y2)))
+        image_manager.transform_image(lambda img: crop_image(img, (x1, y1, x2, y2)))
     except ValueError as e:
         raise ToolExecutionError(f"Invalid crop region: {e}") from e
 
@@ -107,9 +118,10 @@ async def _execute_contrast(registry: ToolRegistry, factor: float) -> ToolResult
     """Execute contrast adjustment tool."""
     image = _require_image(registry)
     original_size = image.size
+    image_manager = registry.get_image_manager()
 
     try:
-        registry.transform_image(lambda img: adjust_contrast(img, factor))
+        image_manager.transform_image(lambda img: adjust_contrast(img, factor))
     except ValueError as e:
         raise ToolExecutionError(f"Invalid contrast factor: {e}") from e
 
@@ -129,9 +141,10 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
     """Execute intensity threshold tool."""
     image = _require_image(registry)
     original_size = image.size
+    image_manager = registry.get_image_manager()
 
     try:
-        registry.transform_image(lambda img: apply_intensity_threshold(img, lower, upper))
+        image_manager.transform_image(lambda img: apply_intensity_threshold(img, lower, upper))
     except ValueError as e:
         raise ToolExecutionError(f"Invalid threshold bounds: {e}") from e
 
@@ -150,7 +163,8 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
 async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
     """Execute horizontal flip tool."""
     _require_image(registry)
-    registry.transform_image(flip_horizontal)
+    image_manager = registry.get_image_manager()
+    image_manager.transform_image(flip_horizontal)
 
     current = _get_current_image(registry)
     encoded = encode_image(current)
@@ -167,7 +181,8 @@ async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
 async def _execute_flip_vertical(registry: ToolRegistry) -> ToolResult:
     """Execute vertical flip tool."""
     _require_image(registry)
-    registry.transform_image(flip_vertical)
+    image_manager = registry.get_image_manager()
+    image_manager.transform_image(flip_vertical)
 
     current = _get_current_image(registry)
     encoded = encode_image(current)
@@ -185,8 +200,9 @@ async def _execute_rotate(registry: ToolRegistry, clockwise: bool = True) -> Too
     """Execute rotation tool."""
     image = _require_image(registry)
     original_size = image.size
+    image_manager = registry.get_image_manager()
 
-    registry.transform_image(lambda img: rotate_90(img, clockwise=clockwise))
+    image_manager.transform_image(lambda img: rotate_90(img, clockwise=clockwise))
 
     current = _get_current_image(registry)
     direction = "clockwise" if clockwise else "counter-clockwise"
@@ -207,11 +223,11 @@ async def _execute_rotate(registry: ToolRegistry, clockwise: bool = True) -> Too
 
 async def _execute_reset(registry: ToolRegistry) -> ToolResult:
     """Reset to original image."""
-    if registry.image_path is None:
+    image_manager = registry.get_image_manager()
+    if image_manager.image_path is None:
         raise ToolExecutionError("Cannot reset: no original image path stored")
 
-    with Image.open(registry.image_path) as img:
-        registry.current_image = img.copy()
+    image_manager.reset_to_original()
 
     current = _get_current_image(registry)
     encoded = encode_image(current)
@@ -360,8 +376,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
             Tool(
                 name="threshold",
                 description=(
-                    "Apply intensity windowing to highlight specific tissue types "
-                    "or abnormalities."
+                    "Apply intensity windowing to highlight specific tissue types or abnormalities."
                 ),
                 parameters={
                     "lower": {

@@ -77,10 +77,14 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         if radgraph is not installed.
 
     Raises:
-        ValueError: If preds and refs have different lengths.
+        ValueError: If preds and refs have different lengths or are empty.
     """
     _ensure_nltk_data()
 
+    if not preds:
+        raise ValueError("Cannot evaluate empty predictions list")
+    if not refs:
+        raise ValueError("Cannot evaluate empty references list")
     if len(preds) != len(refs):
         raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {len(refs)}")
     bleu = sacrebleu.corpus_bleu(preds, [refs])
@@ -91,15 +95,18 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     # METEOR calculation with proper tokenization
     # Prepare references for METEOR (list of lists format)
     # Convert tuples back to lists for METEOR compatibility
-    ref_tokens = [[list(_cached_word_tokenize(ref))] for ref in refs]
+    # METEOR expects list of reference lists, not list of lists of lists
+    ref_tokens = [list(_cached_word_tokenize(ref)) for ref in refs]
     pred_tokens = [list(_cached_word_tokenize(pred)) for pred in preds]
 
     # Calculate METEOR scores - fail on invalid inputs
+    # METEOR scores are in 0-1 range natively
+    # Wrap each reference in a list since METEOR expects multiple references per prediction
     meteor_scores = [
-        nltk_meteor_score(ref_tokens[i], pred_token) for i, pred_token in enumerate(pred_tokens)
+        nltk_meteor_score([ref_tokens[i]], pred_token) for i, pred_token in enumerate(pred_tokens)
     ]
 
-    meteor = float(sum(meteor_scores) / len(meteor_scores) * 100)
+    meteor = float(sum(meteor_scores) / len(meteor_scores))
 
     # RadGraph F1 (optional heavy dependency)
     radgraph_f1 = _calculate_radgraph_f1(refs, preds)
@@ -204,7 +211,7 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         "bleu": float(bleu.score) / 100.0,  # Normalize from 0-100 to 0-1
         "bert_f1": bert_f1_score / 100.0,  # Normalize from 0-100 to 0-1
         "radgraph_f1": radgraph_f1,  # Already in 0-1 range
-        "meteor": meteor / 100.0,  # Normalize from 0-100 to 0-1
+        "meteor": meteor,  # Already in 0-1 range (NLTK native)
         "modality_f1": modality_f1,  # Already in 0-1 range
         "clinical_f1": clinical_f1,  # Already in 0-1 range
         "binary_accuracy": binary_accuracy,  # Accuracy of abnormal/normal classification

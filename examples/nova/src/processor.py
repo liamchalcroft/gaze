@@ -11,12 +11,13 @@ from typing import Any
 
 from beartype import beartype
 
-from src.schemas import NOVA_SCHEMA
-from src.schemas import validate_nova_response
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
 from radiant_harness import create_prompt
+
+from .schemas import NOVA_SCHEMA
+from .schemas import validate_nova_response
 
 # Path to NOVA prompts directory
 NOVA_PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -123,9 +124,7 @@ class NOVAAgenticProcessor(AgenticProcessorBase):
                 "\nProvide complete captioning, diagnosis, and localization analysis."
             )
         else:
-            context_parts.append(
-                "\nProvide your clinical assessment and differential diagnoses."
-            )
+            context_parts.append("\nProvide your clinical assessment and differential diagnoses.")
 
         return "".join(context_parts)
 
@@ -157,12 +156,16 @@ class NOVAAgenticProcessor(AgenticProcessorBase):
 
         # Bonus for differential diagnoses
         if differentials := diagnosis.get("differential_diagnoses"):
-            confidence += min(len(differentials) * CONFIDENCE_PER_DIFFERENTIAL, CONFIDENCE_MAX_BONUS)
+            confidence += min(
+                len(differentials) * CONFIDENCE_PER_DIFFERENTIAL, CONFIDENCE_MAX_BONUS
+            )
 
         # Bonus for localizations
         localization = response.get("localization", {})
         if localizations := localization.get("localizations"):
-            confidence += min(len(localizations) * CONFIDENCE_PER_LOCALIZATION, CONFIDENCE_MAX_BONUS)
+            confidence += min(
+                len(localizations) * CONFIDENCE_PER_LOCALIZATION, CONFIDENCE_MAX_BONUS
+            )
 
         # Bonus for tool usage
         tool_turns = sum(1 for t in turns if t.tool_calls)

@@ -10,6 +10,7 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
+from beartype import beartype
 from loguru import logger
 
 
@@ -17,7 +18,7 @@ from loguru import logger
 class GroundTruthLocalization:
     """Ground truth localization data."""
 
-    bbox: tuple[float, float, float, float]  # (x, y, width, height)
+    bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) - converted from dataset's (x, y, width, height)
 
 
 @dataclass
@@ -36,7 +37,8 @@ class GroundTruth:
 class NovaGroundTruth:
     """Load and access NOVA ground truth data from CSV files."""
 
-    def __init__(self, nova_dir: str = "~/Nova"):
+    @beartype
+    def __init__(self, nova_dir: str = "~/Nova") -> None:
         """Initialize ground truth loader.
 
         Args:
@@ -46,7 +48,7 @@ class NovaGroundTruth:
         self._ground_truth: dict[str, GroundTruth] = {}
         self._load_data()
 
-    def _load_data(self):
+    def _load_data(self) -> None:
         """Load all ground truth data from CSV files."""
         if not self.nova_dir.exists():
             raise FileNotFoundError(f"NOVA directory not found: {self.nova_dir}")
@@ -58,7 +60,7 @@ class NovaGroundTruth:
 
         logger.info(f"Loaded {len(self._ground_truth)} ground truth samples")
 
-    def _load_captions(self):
+    def _load_captions(self) -> None:
         """Load caption data from captions.csv."""
         captions_file = self.nova_dir / "captions.csv"
         if not captions_file.exists():
@@ -81,7 +83,7 @@ class NovaGroundTruth:
                 else:
                     self._ground_truth[filename].caption = row["caption"]
 
-    def _load_case_metadata(self):
+    def _load_case_metadata(self) -> None:
         """Load case metadata including diagnosis from case_metadata.csv."""
         metadata_file = self.nova_dir / "case_metadata.csv"
         if not metadata_file.exists():
@@ -104,7 +106,7 @@ class NovaGroundTruth:
                 gt.clinical_history = metadata["clinical_history"]
                 gt.final_diagnosis = metadata["final_diagnosis"]
 
-    def _load_bboxes(self):
+    def _load_bboxes(self) -> None:
         """Load bounding box data from bboxes_gold.csv."""
         bboxes_file = self.nova_dir / "bboxes_gold.csv"
         if not bboxes_file.exists():
@@ -117,16 +119,23 @@ class NovaGroundTruth:
                 if filename not in self._ground_truth:
                     continue  # Skip if no corresponding caption/case
 
+                # Convert from (x, y, width, height) to (x1, y1, x2, y2) format
+                x = float(row["x"])
+                y = float(row["y"])
+                width = float(row["width"])
+                height = float(row["height"])
+
                 bbox = GroundTruthLocalization(
                     bbox=(
-                        float(row["x"]),
-                        float(row["y"]),
-                        float(row["width"]),
-                        float(row["height"]),
+                        x,           # x1
+                        y,           # y1
+                        x + width,   # x2
+                        y + height,  # y2
                     )
                 )
                 self._ground_truth[filename].localizations.append(bbox)
 
+    @beartype
     def get_ground_truth(self, filename: str) -> GroundTruth | None:
         """Get ground truth for a specific filename.
 
@@ -138,30 +147,36 @@ class NovaGroundTruth:
         """
         return self._ground_truth.get(filename)
 
-    def get_ground_truth_by_subject_id(self, subject_id: int) -> GroundTruth | None:
+    @beartype
+    def get_ground_truth_by_subject_id(self, subject_id: int) -> GroundTruth:
         """Get ground truth by subject ID (matches prediction subject IDs).
 
-        This attempts to map numeric subject IDs to filenames.
+        Args:
+            subject_id: Numeric subject ID (0-indexed)
+
+        Returns:
+            GroundTruth data for the subject
+
+        Raises:
+            IndexError: If subject_id is out of range
         """
-        # Convert subject_id to expected filename format
-        # Subject IDs in predictions might be 0-based indices
         filenames = list(self._ground_truth.keys())
 
-        if 0 <= subject_id < len(filenames):
-            filename = filenames[subject_id]
-            gt = self._ground_truth[filename]
-            return gt
+        if not (0 <= subject_id < len(filenames)):
+            raise IndexError(
+                f"Subject ID {subject_id} out of range. "
+                f"Valid range: 0-{len(filenames) - 1} ({len(filenames)} samples)"
+            )
 
-        return None
+        filename = filenames[subject_id]
+        return self._ground_truth[filename]
 
+    @beartype
     def list_all_filenames(self) -> list[str]:
         """Get list of all available filenames."""
         return list(self._ground_truth.keys())
 
+    @beartype
     def __len__(self) -> int:
         """Number of ground truth samples."""
         return len(self._ground_truth)
-
-    def __iter__(self):
-        """Iterate over ground truth samples."""
-        return iter(self._ground_truth.values())

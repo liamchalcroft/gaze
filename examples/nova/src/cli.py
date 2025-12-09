@@ -19,16 +19,15 @@ from typing import Any
 from loguru import logger
 from PIL import Image
 
-from src.config import NOVAConfig
-from src.config import TaskType
-from src.data import NovaDataset
-from src.evaluation.caption import evaluate_caption
-from src.evaluation.detection import evaluate_detection
-from src.evaluation.diagnosis import evaluate_diagnosis_nova_official
-from src.processor import NOVAAgenticProcessor
-
-# Import result type from radiant_harness
 from radiant_harness import AgenticResult
+
+from .config import NOVAConfig
+from .config import TaskType
+from .data import NovaDataset
+from .evaluation.caption import evaluate_caption
+from .evaluation.detection import evaluate_detection
+from .evaluation.diagnosis import evaluate_diagnosis_nova_official
+from .processor import NOVAAgenticProcessor
 
 
 async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
@@ -80,9 +79,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         # Get image and metadata from dataset
         image = sample["image"]
         if not isinstance(image, Image.Image):
-            raise TypeError(
-                f"Sample {i} image must be a PIL Image, got {type(image).__name__}"
-            )
+            raise TypeError(f"Sample {i} image must be a PIL Image, got {type(image).__name__}")
         metadata = dict(sample.get("metadata", {}))
         metadata.setdefault("clinical_history", metadata.get("clinical_history", ""))
         metadata.setdefault("modality", metadata.get("modality", "MRI"))
@@ -180,20 +177,28 @@ def compute_metrics(
     predictions = [r.final_response for r in results]
 
     if task in (TaskType.ALL, TaskType.CAPTION):
-        pred_captions = [p.get("caption", {}).get("description", "") for p in predictions]
+        pred_captions = []
+        for i, p in enumerate(predictions):
+            caption = p.get("caption")
+            if caption is None:
+                raise KeyError(f"Prediction {i} missing 'caption' field")
+            if not isinstance(caption, dict):
+                raise TypeError(
+                    f"Prediction {i} 'caption' must be dict, got {type(caption).__name__}"
+                )
+            pred_captions.append(caption.get("description", ""))
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
         metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
 
     if task in (TaskType.ALL, TaskType.DIAGNOSIS):
         pred_diagnoses = []
-        for p in predictions:
-            diag = p.get("diagnosis", {})
+        for i, p in enumerate(predictions):
+            diag = p.get("diagnosis")
+            if diag is None:
+                raise KeyError(f"Prediction {i} missing 'diagnosis' field")
             if isinstance(diag, dict):
                 pred_diagnoses.append(
-                    diag.get("primary_diagnosis")
-                    or diag.get("diagnosis")
-                    or diag.get("text")
-                    or ""
+                    diag.get("primary_diagnosis") or diag.get("diagnosis") or diag.get("text") or ""
                 )
             else:
                 pred_diagnoses.append(str(diag))
@@ -204,8 +209,15 @@ def compute_metrics(
     if task in (TaskType.ALL, TaskType.LOCALIZATION):
         pred_boxes = []
         gt_boxes = []
-        for p, gt in zip(predictions, ground_truth, strict=True):
-            localizations = p.get("localization", {}).get("localizations", [])
+        for i, (p, gt) in enumerate(zip(predictions, ground_truth, strict=True)):
+            loc_data = p.get("localization")
+            if loc_data is None:
+                raise KeyError(f"Prediction {i} missing 'localization' field")
+            if not isinstance(loc_data, dict):
+                raise TypeError(
+                    f"Prediction {i} 'localization' must be dict, got {type(loc_data).__name__}"
+                )
+            localizations = loc_data.get("localizations", [])
             boxes = []
             scores = []
             for loc in localizations:
@@ -305,7 +317,8 @@ def parse_args() -> argparse.Namespace:
         help="Reprocess existing results",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

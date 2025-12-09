@@ -5,59 +5,81 @@ Provides core image operations: zoom, crop, contrast, threshold, flip, rotate.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from beartype import beartype
 from PIL import Image
 from PIL import ImageEnhance
 
-# Image processing constants
-MIN_IMAGE_SIZE = 10  # Minimum dimension for images and crops
+from radiant_harness.config import ImageProcessingConfig
+from radiant_harness.config import get_config
 
-# Zoom factor bounds
-MIN_ZOOM_FACTOR = 0.5
-MAX_ZOOM_FACTOR = 4.0
-
-# Contrast factor bounds - aligned with tools.py validation
-MIN_CONTRAST_FACTOR = 0.5
-MAX_CONTRAST_FACTOR = 3.0
+if TYPE_CHECKING:
+    pass
 
 
 @beartype
-def zoom_image(image: Image.Image, factor: float) -> Image.Image:
+def _get_image_config() -> ImageProcessingConfig:
+    """Get the current image processing configuration."""
+    return get_config().image
+
+
+@beartype
+def zoom_image(
+    image: Image.Image,
+    factor: float,
+    config: ImageProcessingConfig | None = None,
+) -> Image.Image:
     """Return a zoomed version of *image* by scaling with *factor*.
 
     Args:
         image: Input PIL Image
-        factor: Zoom factor (must be in range [MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR])
+        factor: Zoom factor (must be in configured range)
+        config: Optional image config. If None, uses global default.
 
     Returns:
         Zoomed image
 
     Raises:
         ValueError: If factor is out of valid range
+
+    Example:
+        from PIL import Image
+        from radiant_harness.tools.image_ops import zoom_image
+
+        img = Image.open("scan.png")
+        zoomed = zoom_image(img, 2.0)  # 2x magnification
     """
-    if not MIN_ZOOM_FACTOR <= factor <= MAX_ZOOM_FACTOR:
+    cfg = config or _get_image_config()
+
+    if not cfg.min_zoom_factor <= factor <= cfg.max_zoom_factor:
         raise ValueError(
-            f"factor must be in range [{MIN_ZOOM_FACTOR}, {MAX_ZOOM_FACTOR}], got {factor}"
+            f"factor must be in range [{cfg.min_zoom_factor}, {cfg.max_zoom_factor}], got {factor}"
         )
 
     width, height = image.size
     new_size = (int(width * factor), int(height * factor))
 
     # Ensure minimum size to prevent degenerate images
-    new_size = (max(MIN_IMAGE_SIZE, new_size[0]), max(MIN_IMAGE_SIZE, new_size[1]))
+    new_size = (max(cfg.min_image_size, new_size[0]), max(cfg.min_image_size, new_size[1]))
 
     return image.resize(new_size, Image.LANCZOS)
 
 
 @beartype
-def crop_image(image: Image.Image, box: tuple[float, float, float, float]) -> Image.Image:
+def crop_image(
+    image: Image.Image,
+    box: tuple[float, float, float, float],
+    config: ImageProcessingConfig | None = None,
+) -> Image.Image:
     """Crop *image* using normalized coordinates (x1, y1, x2, y2) in range 0-1.
 
     Args:
         image: Input PIL Image
         box: Tuple of (x1, y1, x2, y2) normalized coordinates in range [0, 1]
              where x2 > x1 and y2 > y1
+        config: Optional image config. If None, uses global default.
 
     Returns:
         Cropped image
@@ -65,27 +87,34 @@ def crop_image(image: Image.Image, box: tuple[float, float, float, float]) -> Im
     Raises:
         ValueError: If image is too small to crop, coordinates are out of range,
                    or resulting crop would be too small
+
+    Example:
+        from PIL import Image
+        from radiant_harness.tools.image_ops import crop_image
+
+        img = Image.open("scan.png")
+        # Crop center 50% of the image
+        cropped = crop_image(img, (0.25, 0.25, 0.75, 0.75))
     """
+    cfg = config or _get_image_config()
+    min_size = cfg.min_image_size
+
     width, height = image.size
     x1_norm, y1_norm, x2_norm, y2_norm = box
 
     # Validate normalized coordinates are in valid range
     if not all(0 <= coord <= 1 for coord in box):
-        raise ValueError(
-            f"All coordinates must be in range [0, 1], got box={box}"
-        )
+        raise ValueError(f"All coordinates must be in range [0, 1], got box={box}")
 
     # Validate ordering
     if x2_norm <= x1_norm or y2_norm <= y1_norm:
-        raise ValueError(
-            f"Invalid crop box: x2 must be > x1 and y2 must be > y1, got box={box}"
-        )
+        raise ValueError(f"Invalid crop box: x2 must be > x1 and y2 must be > y1, got box={box}")
 
     # Guard against images too small to crop meaningfully
-    if width < MIN_IMAGE_SIZE or height < MIN_IMAGE_SIZE:
+    if width < min_size or height < min_size:
         raise ValueError(
             f"Image too small to crop: {width}x{height}. "
-            f"Minimum size is {MIN_IMAGE_SIZE}x{MIN_IMAGE_SIZE} pixels."
+            f"Minimum size is {min_size}x{min_size} pixels."
         )
 
     # Convert normalized coordinates to pixel coordinates
@@ -103,10 +132,10 @@ def crop_image(image: Image.Image, box: tuple[float, float, float, float]) -> Im
     # Validate resulting crop size
     crop_width = x2 - x1
     crop_height = y2 - y1
-    if crop_width < MIN_IMAGE_SIZE or crop_height < MIN_IMAGE_SIZE:
+    if crop_width < min_size or crop_height < min_size:
         raise ValueError(
             f"Resulting crop region too small: {crop_width}x{crop_height} pixels. "
-            f"Minimum size is {MIN_IMAGE_SIZE}x{MIN_IMAGE_SIZE} pixels. "
+            f"Minimum size is {min_size}x{min_size} pixels. "
             f"Consider using a larger crop region."
         )
 
@@ -114,23 +143,38 @@ def crop_image(image: Image.Image, box: tuple[float, float, float, float]) -> Im
 
 
 @beartype
-def adjust_contrast(image: Image.Image, factor: float) -> Image.Image:
+def adjust_contrast(
+    image: Image.Image,
+    factor: float,
+    config: ImageProcessingConfig | None = None,
+) -> Image.Image:
     """Adjust contrast of *image* by *factor*.
 
     Args:
         image: Input PIL Image
-        factor: Contrast factor (must be in range [MIN_CONTRAST_FACTOR, MAX_CONTRAST_FACTOR]).
+        factor: Contrast factor (must be in configured range).
                 1.0 = no change, >1.0 increases contrast, <1.0 decreases contrast.
+        config: Optional image config. If None, uses global default.
 
     Returns:
         Contrast-adjusted image
 
     Raises:
         ValueError: If factor is out of valid range
+
+    Example:
+        from PIL import Image
+        from radiant_harness.tools.image_ops import adjust_contrast
+
+        img = Image.open("scan.png")
+        enhanced = adjust_contrast(img, 1.5)  # 50% more contrast
     """
-    if not MIN_CONTRAST_FACTOR <= factor <= MAX_CONTRAST_FACTOR:
+    cfg = config or _get_image_config()
+
+    if not cfg.min_contrast_factor <= factor <= cfg.max_contrast_factor:
         raise ValueError(
-            f"factor must be in range [{MIN_CONTRAST_FACTOR}, {MAX_CONTRAST_FACTOR}], got {factor}"
+            f"factor must be in range [{cfg.min_contrast_factor}, {cfg.max_contrast_factor}], "
+            f"got {factor}"
         )
 
     enhancer = ImageEnhance.Contrast(image)
@@ -151,6 +195,14 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
 
     Raises:
         ValueError: If lower < 0 or upper <= lower
+
+    Example:
+        from PIL import Image
+        from radiant_harness.tools.image_ops import apply_intensity_threshold
+
+        img = Image.open("scan.png")
+        # Window to intensities 50-200
+        windowed = apply_intensity_threshold(img, 50, 200)
     """
     if lower < 0 or upper <= lower:
         raise ValueError("invalid intensity range: lower must be >= 0 and upper must be > lower")
@@ -158,7 +210,8 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
     gray = image.convert("L")
     arr = np.array(gray)
     arr = np.clip(arr, lower, upper)
-    arr = ((arr - lower) / (upper - lower) * 255).astype(np.uint8)
+    # Rescale to 0-255 with explicit clipping to prevent floating point overflow
+    arr = np.clip((arr - lower) / (upper - lower) * 255, 0, 255).astype(np.uint8)
     return Image.fromarray(arr)
 
 

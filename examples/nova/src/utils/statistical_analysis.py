@@ -8,7 +8,6 @@ and confidence intervals for research paper preparation.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -212,7 +211,11 @@ def analyze_ablation_configurations(
     baseline_config: str = "baseline_single_shot",
     metric: str = "accuracy",
 ) -> dict[str, Any]:
-    """Perform statistical analysis of ablation configurations.
+    """Perform analysis of ablation configurations.
+
+    Note: This function works with aggregated values (single metric per configuration).
+    Statistical tests require sample-level data to be meaningful. When working
+    with aggregated values, we provide descriptive comparisons instead.
 
     Args:
         results: Dictionary mapping config names to their results
@@ -220,7 +223,7 @@ def analyze_ablation_configurations(
         metric: Which metric to analyze
 
     Returns:
-        Statistical analysis results
+        Comparative analysis results (without statistical significance)
     """
     if baseline_config not in results:
         raise ValueError(f"Baseline configuration '{baseline_config}' not found in results")
@@ -228,19 +231,20 @@ def analyze_ablation_configurations(
     baseline_data = results[baseline_config]
     if metric not in baseline_data:
         raise KeyError(f"Metric '{metric}' not found in baseline configuration '{baseline_config}'")
-    baseline_values = [baseline_data[metric]]
+    baseline_value = baseline_data[metric]
 
     summary: dict[str, int] = {
         "total_configurations": len(results),
-        "significant_improvements": 0,
-        "significant_degradations": 0,
+        "improvements": 0,
+        "degradations": 0,
     }
     comparisons: dict[str, dict[str, Any]] = {}
     analysis_results: dict[str, Any] = {
         "baseline_config": baseline_config,
-        "baseline_value": baseline_values[0] if baseline_values else 0,
+        "baseline_value": baseline_value,
         "comparisons": comparisons,
         "summary": summary,
+        "note": "Analysis based on aggregated values. Statistical significance requires sample-level data.",
     }
 
     for config_name, config_data in results.items():
@@ -249,38 +253,27 @@ def analyze_ablation_configurations(
 
         if metric not in config_data:
             raise KeyError(f"Metric '{metric}' not found in configuration '{config_name}'")
-        config_values = [config_data[metric]]
+        config_value = config_data[metric]
 
-        # Perform statistical test
-        test_result = perform_statistical_test(config_values, baseline_values, test_type="ttest")
+        difference = config_value - baseline_value
+        relative_improvement = (difference / baseline_value * 100) if baseline_value != 0 else 0
 
-        # Calculate effect size
-        effect_result = calculate_effect_size(
-            config_values, baseline_values, effect_type="cohens_d"
-        )
-
-        difference = config_values[0] - baseline_values[0] if config_values else 0
         comparison_result = {
             "config_name": config_name,
-            "config_value": config_values[0] if config_values else 0,
+            "config_value": config_value,
             "difference": difference,
-            "relative_improvement": (difference / baseline_values[0] * 100)
-            if baseline_values[0] != 0
-            else 0,
+            "relative_improvement": relative_improvement,
+            "is_improvement": difference > 0,
+            "is_degradation": difference < 0,
         }
-
-        # Merge dataclass results into comparison dict
-        comparison_result.update(asdict(test_result))
-        comparison_result.update(asdict(effect_result))
 
         comparisons[config_name] = comparison_result
 
         # Update summary
-        if test_result.significant:
-            if difference > 0:
-                summary["significant_improvements"] += 1
-            else:
-                summary["significant_degradations"] += 1
+        if difference > 0:
+            summary["improvements"] += 1
+        elif difference < 0:
+            summary["degradations"] += 1
 
     return analysis_results
 
@@ -354,7 +347,9 @@ def calculate_confidence_intervals(
     values = values[~np.isnan(values)]
 
     if len(values) == 0:
-        raise ValueError("Cannot calculate confidence intervals with empty values after NaN removal")
+        raise ValueError(
+            "Cannot calculate confidence intervals with empty values after NaN removal"
+        )
 
     mean = float(np.mean(values))
     std = float(np.std(values, ddof=1))

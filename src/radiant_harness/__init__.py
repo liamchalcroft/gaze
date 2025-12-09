@@ -109,11 +109,20 @@ from __future__ import annotations
 
 from radiant_harness.base import AgenticProcessorBase
 from radiant_harness.base import ImageInput
+from radiant_harness.config import AgenticConfig
+from radiant_harness.config import CacheConfig
+from radiant_harness.config import HarnessConfig
+from radiant_harness.config import ImageProcessingConfig
+from radiant_harness.config import RankingWeights
+from radiant_harness.config import SearchConfig
+from radiant_harness.config import get_config
+from radiant_harness.config import set_config
 from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.exceptions import APIError
 from radiant_harness.exceptions import HarnessError
 from radiant_harness.exceptions import ModelError
 from radiant_harness.exceptions import SchemaValidationError
+from radiant_harness.exceptions import TemplateError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
@@ -148,6 +157,15 @@ __all__ = [
     # Core
     "AgenticProcessorBase",
     "ImageInput",
+    # Configuration
+    "HarnessConfig",
+    "AgenticConfig",
+    "CacheConfig",
+    "SearchConfig",
+    "ImageProcessingConfig",
+    "RankingWeights",
+    "get_config",
+    "set_config",
     # Result types
     "AgenticResult",
     "Turn",
@@ -184,6 +202,7 @@ __all__ = [
     "ToolExecutionError",
     "UnknownToolError",
     "SchemaValidationError",
+    "TemplateError",
     "ModelError",
     "APIError",
 ]

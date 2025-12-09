@@ -31,4 +31,3 @@ def test_create_prompt_renders_templates(tmp_path: Path) -> None:
 def test_combine_prompts_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError):
         combine_prompts("system", "task", "unknown")
-

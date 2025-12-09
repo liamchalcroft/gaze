@@ -5,6 +5,7 @@ Provides web search and image search capabilities for LLM agents.
 
 from __future__ import annotations
 
+from radiant_harness.retrieval.image_search import ImageDownloadError
 from radiant_harness.retrieval.image_search import ImageSearchError
 from radiant_harness.retrieval.image_search import ImageSearchResult
 from radiant_harness.retrieval.image_search import MedicalImageSearchManager
@@ -27,6 +28,7 @@ __all__ = [
     # Image search
     "ImageSearchResult",
     "ImageSearchError",
+    "ImageDownloadError",
     "MedicalImageSearchManager",
     "search_medical_images",
 ]

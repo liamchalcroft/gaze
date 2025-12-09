@@ -10,16 +10,22 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import time
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
+from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
 from beartype import beartype
 from loguru import logger
+
+from radiant_harness.cache import TTLCache
+from radiant_harness.config import CacheConfig
+from radiant_harness.config import RankingWeights
+from radiant_harness.config import SearchConfig
+from radiant_harness.config import get_config
 
 # Note: SSL verification is enabled by default for security.
 # If you encounter SSL issues with specific endpoints, handle them explicitly
@@ -49,11 +55,15 @@ class SearchResult:
 
     def to_llm_dict(self) -> dict[str, Any]:
         """Convert to LLM-friendly dictionary format."""
+        config = get_config()
+        max_preview = config.search.max_content_preview_length
         return {
             "title": self.title,
             "url": self.url,
             "summary": self.snippet,
-            "content": self.content[:2000] + "..." if len(self.content) > 2000 else self.content,
+            "content": self.content[:max_preview] + "..."
+            if len(self.content) > max_preview
+            else self.content,
             "source": self.source,
             "reliability": f"{self.reliability_score:.2f}",
             "medical_relevance": f"{self.medical_relevance:.2f}",
@@ -76,13 +86,30 @@ class SearchError(Exception):
 class SearchEngine:
     """Base class for search engines with common functionality."""
 
-    def __init__(self, name: str, timeout: int = 30, max_retries: int = 3):
+    @beartype
+    def __init__(
+        self,
+        name: str,
+        config: SearchConfig | None = None,
+    ) -> None:
+        """Initialize search engine.
+
+        Args:
+            name: Engine identifier
+            config: Search configuration. If None, uses global default.
+        """
+        self._config = config or get_config().search
         self.name = name
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self.max_retries = max_retries
+        self.timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
+        self.max_retries = self._config.max_retries
         self.headers = self._get_headers()
         # Reusable session for connection pooling (lazy-initialized)
         self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def config(self) -> SearchConfig:
+        """Get the search configuration."""
+        return self._config
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a reusable aiohttp session for connection pooling."""
@@ -99,6 +126,7 @@ class SearchEngine:
             await self._session.close()
             self._session = None
 
+    @beartype
     def _get_headers(self) -> dict[str, str]:
         """Get standard headers for web requests."""
         user_agent = (
@@ -116,8 +144,20 @@ class SearchEngine:
             "Upgrade-Insecure-Requests": "1",
         }
 
+    @beartype
     async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        """Search with retry logic. Raises SearchError on failure."""
+        """Search with retry logic.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of search results
+
+        Raises:
+            SearchError: If all retry attempts fail
+        """
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -138,10 +178,20 @@ class SearchEngine:
 
         raise SearchError(self.name, "All search attempts failed", last_error)
 
+    @beartype
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
-        """Implement actual search logic in subclasses."""
+        """Implement actual search logic in subclasses.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of search results
+        """
         raise NotImplementedError
 
+    @beartype
     def _calculate_reliability(self, url: str) -> float:
         """Calculate source reliability score based on URL domain."""
         domain = urlparse(url).netloc.lower()
@@ -201,9 +251,15 @@ class PubMedSearchEngine(SearchEngine):
 
     _email_warning_logged: bool = False
 
-    def __init__(self, **kwargs):
-        super().__init__("PubMed", **kwargs)
-        self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+    @beartype
+    def __init__(self, config: SearchConfig | None = None) -> None:
+        """Initialize PubMed search engine.
+
+        Args:
+            config: Search configuration. If None, uses global default.
+        """
+        super().__init__("PubMed", config=config)
+        self.base_url = self._config.ncbi_base_url
         self.api_key = os.getenv("NCBI_API_KEY")
         self.email = self._get_optional_email()
 
@@ -349,27 +405,44 @@ class PubMedSearchEngine(SearchEngine):
 
         return results
 
+    @beartype
     def _create_snippet(self, title: str, content: str) -> str:
-        """Create a concise snippet."""
+        """Create a concise snippet from title and content.
+
+        Args:
+            title: Article title
+            content: Full content or abstract
+
+        Returns:
+            Concise snippet, preferring sentence boundaries
+        """
         if not content or content == title:
             return title
 
-        # First 200 characters of content, or first sentence
-        snippet = content[:200]
+        config = get_config()
+        # First configured number of characters of content, or first sentence
+        snippet = content[: config.search.max_snippet_length]
         sentence_end = snippet.rfind(".")
-        if sentence_end > 100:  # Prefer sentence boundaries
+        if sentence_end > config.search.max_snippet_length // 2:  # Prefer sentence boundaries
             snippet = snippet[: sentence_end + 1]
         elif len(snippet) < len(content):
             snippet += "..."
 
         return snippet.strip()
 
+    @beartype
     def _extract_medical_entities(self, text: str) -> list[str]:
         """Extract medical entities from text using configurable patterns.
 
         Override MEDICAL_ENTITY_PATTERNS class attribute to customize.
+
+        Args:
+            text: Text to extract entities from
+
+        Returns:
+            Sorted list of unique medical entities found
         """
-        entities = set()
+        entities: set[str] = set()
         text_lower = text.lower()
 
         for pattern in self.MEDICAL_ENTITY_PATTERNS:
@@ -380,10 +453,18 @@ class PubMedSearchEngine(SearchEngine):
 
 
 class WebSearchManager:
-    """Manager for web search operations with LLM agent integration."""
+    """Manager for web search operations with LLM agent integration.
+
+    Manages multiple search engines, handles caching, rate limiting,
+    and result ranking for medical literature search.
+
+    Example:
+        async with WebSearchManager() as manager:
+            results = await manager.search("glioblastoma MRI features")
+            formatted = manager.format_for_llm(results)
+    """
 
     SUPPORTED_ENGINES = {"pubmed"}
-    MAX_CACHE_SIZE = 500  # Maximum number of cached queries
     ALLOWED_SEARCH_TYPES = {
         "diagnosis",
         "guidelines",
@@ -405,34 +486,42 @@ class WebSearchManager:
     }
     DEFAULT_ENHANCEMENT = "{query} medical imaging findings"
 
+    @beartype
     def __init__(
         self,
         engines: list[str] | None = None,
-        max_results_per_engine: int = 3,
-        timeout: int = 30,
-        max_total_results: int = 10,
-        cache_duration: int = 300,  # 5 minutes
-        rate_limit_delay: float = 1.0,  # seconds between engine calls
-    ):
-        """
-        Initialize web search manager.
+        max_results_per_engine: int | None = None,
+        max_total_results: int | None = None,
+        search_config: SearchConfig | None = None,
+        cache_config: CacheConfig | None = None,
+        ranking_weights: RankingWeights | None = None,
+    ) -> None:
+        """Initialize web search manager.
 
         Args:
             engines: List of search engines to use (default: ["pubmed"])
-            max_results_per_engine: Results to fetch per engine
-            timeout: Request timeout in seconds
-            max_total_results: Maximum total results to return
-            cache_duration: Cache duration in seconds
-            rate_limit_delay: Delay between search engine calls in seconds
+            max_results_per_engine: Results to fetch per engine (overrides config)
+            max_total_results: Maximum total results to return (overrides config)
+            search_config: Search configuration. If None, uses global default.
+            cache_config: Cache configuration. If None, uses global default.
+            ranking_weights: Ranking weights. If None, uses global default.
 
         Raises:
             ValueError: If no valid engines are specified
         """
-        self.max_results_per_engine = max_results_per_engine
-        self.max_total_results = max_total_results
-        self.cache_duration = cache_duration
-        self.rate_limit_delay = rate_limit_delay
-        self._cache: dict[str, tuple[float, list[SearchResult]]] = {}
+        config = get_config()
+        self._search_config = search_config or config.search
+        self._cache_config = cache_config or config.cache
+        self._ranking_weights = ranking_weights or config.ranking
+
+        self.max_results_per_engine = (
+            max_results_per_engine or self._search_config.max_results_per_engine
+        )
+        self.max_total_results = max_total_results or self._search_config.max_total_results
+        self.rate_limit_delay = self._search_config.rate_limit_delay_seconds
+
+        # Use shared TTLCache instead of manual cache management
+        self._cache: TTLCache[list[SearchResult]] = TTLCache(self._cache_config)
 
         # Initialize search engines
         self.engines: list[SearchEngine] = []
@@ -440,7 +529,7 @@ class WebSearchManager:
 
         for engine in engines:
             if engine == "pubmed":
-                self.engines.append(PubMedSearchEngine(timeout=timeout))
+                self.engines.append(PubMedSearchEngine(config=self._search_config))
             elif engine not in self.SUPPORTED_ENGINES:
                 raise ValueError(
                     f"Unknown search engine: {engine}. Supported: {self.SUPPORTED_ENGINES}"
@@ -457,7 +546,7 @@ class WebSearchManager:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: Any,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Async context manager exit with cleanup."""
         await self.close()
@@ -467,25 +556,6 @@ class WebSearchManager:
         for engine in self.engines:
             await engine.close()
 
-    def _evict_stale_cache(self) -> None:
-        """Evict stale entries and enforce maximum cache size."""
-        current_time = time.time()
-
-        # First, remove expired entries
-        expired_keys = [
-            key for key, (timestamp, _) in self._cache.items()
-            if current_time - timestamp > self.cache_duration
-        ]
-        for key in expired_keys:
-            del self._cache[key]
-
-        # If still over limit, evict oldest entries
-        if len(self._cache) > self.MAX_CACHE_SIZE:
-            sorted_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][0])
-            keys_to_remove = sorted_keys[: len(self._cache) - self.MAX_CACHE_SIZE // 2]
-            for key in keys_to_remove:
-                del self._cache[key]
-
     @beartype
     async def search(
         self,
@@ -494,8 +564,7 @@ class WebSearchManager:
         medical_focus: bool = True,
         enhance_query: bool = True,
     ) -> list[SearchResult]:
-        """
-        Perform web search with query enhancement and result ranking.
+        """Perform web search with query enhancement and result ranking.
 
         Args:
             query: Search query
@@ -505,6 +574,10 @@ class WebSearchManager:
 
         Returns:
             Ranked list of search results
+
+        Raises:
+            ValueError: If query is empty or search_type is invalid
+            SearchError: If all search engines fail
         """
         if not query or not query.strip():
             raise ValueError("query must be a non-empty string")
@@ -512,9 +585,6 @@ class WebSearchManager:
             raise ValueError(
                 f"search_type must be one of {sorted(self.ALLOWED_SEARCH_TYPES)}, got '{search_type}'"
             )
-
-        # Evict stale cache entries periodically
-        self._evict_stale_cache()
 
         # Enhance query if requested (do this before cache key construction)
         search_query = self._enhance_query(query, search_type) if enhance_query else query
@@ -527,12 +597,11 @@ class WebSearchManager:
             f"total={self.max_total_results}|engines={engine_names}"
         )
 
-        # Check cache
-        if cache_key in self._cache:
-            timestamp, cached_results = self._cache[cache_key]
-            if time.time() - timestamp < self.cache_duration:
-                logger.debug(f"Using cached results for: {search_query}")
-                return cached_results
+        # Check cache using TTLCache (handles expiration automatically)
+        cached_results = self._cache.get(cache_key)
+        if cached_results is not None:
+            logger.debug(f"Using cached results for: {search_query}")
+            return cached_results
 
         logger.info(f"Searching for: '{search_query}' (enhanced from: '{query}')")
 
@@ -564,12 +633,13 @@ class WebSearchManager:
         # Limit results
         final_results = ranked_results[: self.max_total_results]
 
-        # Cache results
-        self._cache[cache_key] = (time.time(), final_results)
+        # Cache results using TTLCache (handles expiration automatically)
+        self._cache.set(cache_key, final_results)
 
         logger.info(f"Search complete: {len(final_results)} results from {len(all_results)} total")
         return final_results
 
+    @beartype
     def _enhance_query(self, query: str, search_type: str) -> str:
         """Enhance query based on search type using configurable templates."""
         if search_type in self.QUERY_ENHANCEMENTS:
@@ -582,13 +652,22 @@ class WebSearchManager:
 
         return self.DEFAULT_ENHANCEMENT.format(query=query)
 
+    @beartype
     def _filter_results(
         self, results: list[SearchResult], medical_focus: bool
     ) -> list[SearchResult]:
-        """Filter and deduplicate results."""
-        seen_urls = set()
-        seen_titles = set()
-        filtered_results = []
+        """Filter and deduplicate results.
+
+        Args:
+            results: List of search results to filter
+            medical_focus: Whether to prioritize medical sources
+
+        Returns:
+            Filtered and deduplicated list of results
+        """
+        seen_urls: set[str] = set()
+        seen_titles: set[str] = set()
+        filtered_results: list[SearchResult] = []
 
         for result in results:
             # Skip duplicates
@@ -616,18 +695,38 @@ class WebSearchManager:
 
         return filtered_results
 
+    @beartype
     def _rank_results(
         self, results: list[SearchResult], query: str, search_type: str
     ) -> list[SearchResult]:
-        """Rank results by relevance and quality."""
+        """Rank results by relevance and quality.
+
+        Uses configurable ranking weights to score results based on:
+        - Source reliability
+        - Medical relevance
+        - Publication recency
+        - Open access status
+        - Content type matching
+        - Query term matching
+        - Medical entity matching
+
+        Args:
+            results: List of search results to rank
+            query: Original search query
+            search_type: Type of search for content type boosts
+
+        Returns:
+            Results sorted by ranking score (descending)
+        """
         query_terms = query.lower().split()
+        weights = self._ranking_weights
 
         for result in results:
             # Base score from reliability
             score = result.reliability_score
 
             # Boost for medical relevance
-            score += result.medical_relevance * 0.3
+            score += result.medical_relevance * weights.medical_relevance_weight
 
             # Boost for recent publications (newer = higher boost)
             if result.publication_date:
@@ -636,24 +735,22 @@ class WebSearchManager:
                     year = int(match.group())
                     current_year = datetime.now().year
                     years_old = current_year - year
-                    # Newer papers get higher boost: max 0.15 for current year, decays over 15 years
-                    recency_boost = max(0.0, 0.15 * (1 - min(1.0, years_old / 15)))
+                    # Newer papers get higher boost, decays over configured years
+                    recency_boost = max(
+                        0.0,
+                        weights.recency_max_boost
+                        * (1 - min(1.0, years_old / weights.recency_decay_years)),
+                    )
                     score += recency_boost
 
             # Boost for open access
             if result.open_access:
-                score += 0.1
+                score += weights.open_access_boost
 
             # Content type boosts based on search type
-            type_boosts = {
-                "diagnosis": {"case_report": 0.2, "article": 0.1},
-                "guidelines": {"guidelines": 0.3, "review": 0.2},
-                "research": {"article": 0.2, "review": 0.1},
-                "anatomy": {"review": 0.2, "article": 0.1},
-            }
-
-            if search_type in type_boosts and result.content_type in type_boosts[search_type]:
-                score += type_boosts[search_type][result.content_type]
+            content_type_boosts = weights.content_type_boosts.get(search_type, {})
+            content_boost = content_type_boosts.get(result.content_type, 0.0)
+            score += content_boost
 
             # Query term matching
             title_lower = result.title.lower()
@@ -662,13 +759,15 @@ class WebSearchManager:
             title_matches = sum(1 for term in query_terms if term in title_lower)
             content_matches = sum(1 for term in query_terms if term in content_lower)
 
-            score += (title_matches * 0.2) + (content_matches * 0.05)
+            score += (title_matches * weights.title_match_weight) + (
+                content_matches * weights.content_match_weight
+            )
 
             # Entity matching
             entity_matches = sum(
                 1 for entity in result.extracted_entities if entity in query.lower()
             )
-            score += entity_matches * 0.1
+            score += entity_matches * weights.entity_match_weight
 
             # Store in ranking_score, preserving original reliability_score
             result.ranking_score = min(1.0, score)
@@ -677,9 +776,10 @@ class WebSearchManager:
         results.sort(key=lambda x: x.ranking_score, reverse=True)
         return results
 
-    def format_for_llm(self, results: list[SearchResult], max_content_length: int = 5000) -> str:
-        """
-        Format results for LLM consumption.
+    def format_for_llm(
+        self, results: list[SearchResult], max_content_length: int | None = None
+    ) -> str:
+        """Format results for LLM consumption.
 
         Args:
             results: Search results to format
@@ -688,6 +788,9 @@ class WebSearchManager:
         Returns:
             Formatted string for LLM
         """
+        if max_content_length is None:
+            max_content_length = get_config().search.max_content_for_llm
+
         if not results:
             return "No search results found."
 

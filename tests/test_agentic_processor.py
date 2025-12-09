@@ -19,12 +19,13 @@ class FakeAdapter(AdapterProtocol):
 
     async def generate_chat(
         self,
-        messages: list[dict[str, Any]],
-        max_tokens: int,
-        temperature: float,
-        tools: list[dict[str, Any]] | None,
-        response_format: dict[str, Any] | None,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format  # Unused
         self.calls += 1
         if self.calls == 1:
             return (
@@ -53,10 +54,12 @@ class FakeProcessor(AgenticProcessorBase):
             adapter_factory=FakeAdapter,
         )
 
-    def get_system_prompt(self, images, metadata) -> str:  # type: ignore[override]
+    def get_system_prompt(self, images=None, metadata=None) -> str:  # type: ignore[override]
+        _ = images, metadata  # Unused
         return "system"
 
-    def get_user_message(self, images, metadata) -> str:  # type: ignore[override]
+    def get_user_message(self, images=None, metadata=None) -> str:  # type: ignore[override]
+        _ = images, metadata  # Unused
         return "user"
 
     def get_response_schema(self) -> dict[str, Any] | None:
@@ -80,7 +83,10 @@ class FakeProcessor(AgenticProcessorBase):
     def validate_response(self, response: dict[str, Any]) -> bool:
         return {"continue", "result"} <= set(response)
 
-    def _create_tool_registry(self, images, active_image_index: int = 0) -> ToolRegistry | None:  # type: ignore[override]
+    def _create_tool_registry(
+        self, images=None, active_image_index: int = 0
+    ) -> ToolRegistry | None:  # type: ignore[override]
+        _ = images, active_image_index  # Unused
         tool = Tool(
             name="echo",
             description="echo back",
@@ -99,4 +105,3 @@ async def test_agentic_processor_runs_tool_and_finalizes() -> None:
     assert result.final_response["result"] == "done"
     assert result.tool_call_count == 1
     assert any(turn.tool_results for turn in result.turns if turn.role == "tool_result")
-

@@ -20,5 +20,4 @@ class AdapterProtocol(Protocol):
         temperature: float,
         tools: list[dict[str, Any]] | None,
         response_format: dict[str, Any] | None,
-    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
-        ...
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]: ...

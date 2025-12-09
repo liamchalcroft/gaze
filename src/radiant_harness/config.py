@@ -1,0 +1,189 @@
+"""Configuration classes for the radiology VLM agent harness.
+
+Provides centralized configuration for constants, limits, and tunable parameters.
+All previously hardcoded values are now configurable via these dataclasses.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from dataclasses import field
+
+
+@dataclass(frozen=True)
+class ImageProcessingConfig:
+    """Configuration for image processing operations.
+
+    Attributes:
+        min_image_size: Minimum dimension for images and crops (pixels)
+        min_zoom_factor: Minimum allowed zoom factor
+        max_zoom_factor: Maximum allowed zoom factor
+        min_contrast_factor: Minimum allowed contrast factor
+        max_contrast_factor: Maximum allowed contrast factor
+        default_jpeg_quality: Default JPEG quality for encoding (1-100)
+    """
+
+    min_image_size: int = 10
+    min_zoom_factor: float = 0.5
+    max_zoom_factor: float = 4.0
+    min_contrast_factor: float = 0.5
+    max_contrast_factor: float = 3.0
+    default_jpeg_quality: int = 85
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    """Configuration for caching behavior.
+
+    Attributes:
+        max_cache_size: Maximum number of cached entries
+        cache_duration_seconds: Time-to-live for cache entries in seconds
+        evict_ratio: Fraction of cache to evict when over limit (0.0-1.0)
+    """
+
+    max_cache_size: int = 500
+    cache_duration_seconds: int = 300  # 5 minutes
+    evict_ratio: float = 0.5
+
+
+@dataclass(frozen=True)
+class SearchConfig:
+    """Configuration for search operations.
+
+    Attributes:
+        timeout_seconds: Request timeout in seconds
+        max_retries: Maximum number of retry attempts
+        rate_limit_delay_seconds: Delay between API calls in seconds
+        max_results_per_engine: Default results to fetch per engine
+        max_total_results: Maximum total results to return
+        max_content_preview_length: Maximum characters for content preview
+        max_snippet_length: Maximum characters for snippet extraction
+        max_content_for_llm: Maximum characters for LLM formatting
+        ncbi_base_url: Base URL for NCBI E-utilities API
+        openi_base_url: Base URL for OpenI API
+    """
+
+    timeout_seconds: int = 30
+    max_retries: int = 3
+    rate_limit_delay_seconds: float = 1.0
+    max_results_per_engine: int = 5
+    max_total_results: int = 10
+    max_content_preview_length: int = 2000
+    max_snippet_length: int = 100
+    max_content_for_llm: int = 5000
+    ncbi_base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+    openi_base_url: str = "https://openi.nlm.nih.gov/api/search"
+
+
+@dataclass(frozen=True)
+class RankingWeights:
+    """Weights for search result ranking.
+
+    All weights should be positive floats. The final score is computed as:
+    score = reliability + (medical_relevance * medical_relevance_weight) + ...
+
+    Attributes:
+        medical_relevance_weight: Weight for medical relevance score
+        recency_max_boost: Maximum boost for recent publications
+        recency_decay_years: Number of years over which recency boost decays
+        open_access_boost: Boost for open access articles
+        title_match_weight: Weight per query term match in title
+        content_match_weight: Weight per query term match in content
+        entity_match_weight: Weight per medical entity match
+        content_type_boosts: Boosts by content type per search type
+    """
+
+    medical_relevance_weight: float = 0.3
+    recency_max_boost: float = 0.15
+    recency_decay_years: int = 15
+    open_access_boost: float = 0.1
+    title_match_weight: float = 0.2
+    content_match_weight: float = 0.05
+    entity_match_weight: float = 0.1
+    content_type_boosts: dict[str, dict[str, float]] = field(
+        default_factory=lambda: {
+            "diagnosis": {"case_report": 0.2, "article": 0.1},
+            "guidelines": {"guidelines": 0.3, "review": 0.2},
+            "research": {"article": 0.2, "review": 0.1},
+            "anatomy": {"review": 0.2, "article": 0.1},
+        }
+    )
+
+
+@dataclass(frozen=True)
+class AgenticConfig:
+    """Configuration for agentic processing.
+
+    Attributes:
+        max_turns_limit: Absolute maximum turns allowed (hard limit)
+        default_max_turns: Default max turns if not specified
+        default_max_tokens: Default max tokens per generation
+        default_temperature: Default temperature for generation
+    """
+
+    max_turns_limit: int = 20
+    default_max_turns: int = 10
+    default_max_tokens: int = 8192
+    default_temperature: float = 0.0
+
+
+@dataclass(frozen=True)
+class HarnessConfig:
+    """Root configuration for the radiant harness.
+
+    Provides access to all sub-configurations. Can be customized by
+    passing individual config objects or by modifying the defaults.
+
+    Example:
+        # Use defaults
+        config = HarnessConfig()
+
+        # Customize specific settings
+        config = HarnessConfig(
+            cache=CacheConfig(max_cache_size=1000),
+            search=SearchConfig(timeout_seconds=60),
+        )
+
+        # Access settings
+        print(config.image.max_zoom_factor)  # 4.0
+        print(config.cache.cache_duration_seconds)  # 300
+    """
+
+    image: ImageProcessingConfig = field(default_factory=ImageProcessingConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
+    ranking: RankingWeights = field(default_factory=RankingWeights)
+    agentic: AgenticConfig = field(default_factory=AgenticConfig)
+
+
+# Global default configuration instance
+# Can be replaced at module load time for global customization
+DEFAULT_CONFIG = HarnessConfig()
+
+
+def get_config() -> HarnessConfig:
+    """Get the current default configuration.
+
+    Returns:
+        The global default HarnessConfig instance
+    """
+    return DEFAULT_CONFIG
+
+
+def set_config(config: HarnessConfig) -> None:
+    """Set the global default configuration.
+
+    Args:
+        config: New configuration to use as default
+
+    Example:
+        from radiant_harness.config import set_config, HarnessConfig, CacheConfig
+
+        # Customize and set global config
+        custom_config = HarnessConfig(
+            cache=CacheConfig(max_cache_size=1000)
+        )
+        set_config(custom_config)
+    """
+    global DEFAULT_CONFIG  # noqa: PLW0603 - Global variable pattern for configuration
+    DEFAULT_CONFIG = config

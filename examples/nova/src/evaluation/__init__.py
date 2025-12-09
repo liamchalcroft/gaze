@@ -7,8 +7,8 @@ from pathlib import Path
 
 from beartype import beartype
 
-from src.evaluation.detection import evaluate_detection
-from src.evaluation.diagnosis import evaluate_diagnosis_nova_official
+from .detection import evaluate_detection
+from .diagnosis import evaluate_diagnosis_nova_official
 
 
 @beartype
@@ -73,7 +73,7 @@ def evaluate(
         )
 
     elif task == "caption":
-        from src.evaluation.caption import evaluate_caption
+        from .caption import evaluate_caption
 
         # Validate required fields - fail fast on missing data
         pred_caps = []
@@ -108,7 +108,9 @@ def evaluate(
             {
                 "caption_bleu": cap_scores["bleu"],
                 "caption_bert_f1": cap_scores["bert_f1"],
-                "caption_radgraph_f1": cap_scores["radgraph_f1"],  # May be None if radgraph not installed
+                "caption_radgraph_f1": cap_scores[
+                    "radgraph_f1"
+                ],  # May be None if radgraph not installed
                 "caption_meteor": cap_scores["meteor"],
                 "caption_modality_f1": cap_scores["modality_f1"],
                 "caption_clinical_f1": cap_scores["clinical_f1"],
@@ -136,7 +138,9 @@ def evaluate(
         required_metrics = ["top1", "top5", "coverage", "entropy"]
         for metric in required_metrics:
             if metric not in diag_scores:
-                raise KeyError(f"evaluate_diagnosis_nova_official missing required metric: {metric}")
+                raise KeyError(
+                    f"evaluate_diagnosis_nova_official missing required metric: {metric}"
+                )
 
         result_metrics.update(
             {

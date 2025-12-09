@@ -21,6 +21,8 @@ def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, t
 
     Handles both dict format ({"boxes": [...], "scores": [...], "labels": [...]})
     and list format (raw list of boxes).
+
+    Expects boxes in (x1, y1, x2, y2) format.
     """
     # Handle list format (raw boxes without scores/labels)
     if isinstance(data, list):
@@ -214,7 +216,9 @@ def evaluate_detection(
     # mAP@[50:95] per NOVA protocol
     ious = [
         th / 100
-        for th in range(IOU_THRESHOLD_RANGE_START, IOU_THRESHOLD_RANGE_END, IOU_THRESHOLD_RANGE_STEP)
+        for th in range(
+            IOU_THRESHOLD_RANGE_START, IOU_THRESHOLD_RANGE_END, IOU_THRESHOLD_RANGE_STEP
+        )
     ]
     m5095 = MeanAveragePrecision(iou_thresholds=ious)
     m5095.update(preds_tensors, refs_tensors)

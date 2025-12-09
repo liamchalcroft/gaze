@@ -6,16 +6,17 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import seaborn as sns
+from beartype import beartype
 from loguru import logger
 from PIL import Image
 from PIL import ImageDraw
 
-from src.utils.confidence_calibration_utils import calculate_reliability_diagram_data
+from ..utils.confidence_calibration_utils import calculate_reliability_diagram_data
 
 
+@beartype
 def overlay_boxes(
     image_path: Path,
     boxes: list[list[float]],
@@ -45,6 +46,7 @@ def overlay_boxes(
     return image
 
 
+@beartype
 def plot_metrics(
     metrics: dict[str, float],
     out_file: Path,
@@ -70,6 +72,7 @@ def plot_metrics(
     plt.close()
 
 
+@beartype
 def plot_overlays(
     run_dir: Path,
     out_dir: Path,
@@ -125,9 +128,10 @@ def plot_overlays(
     canvas.save(out_file)
 
 
+@beartype
 def plot_reliability_diagram(
-    confidences: list[float] | npt.NDArray[np.floating[Any]],
-    correct: list[bool] | npt.NDArray[np.bool_],
+    confidences: list[float] | np.ndarray,
+    correct: list[bool] | np.ndarray,
     output_path: Path,
     title: str = "Confidence Calibration",
     n_bins: int = 10,
@@ -175,6 +179,7 @@ def plot_reliability_diagram(
     plt.close()
 
 
+@beartype
 def plot_ablation_comparison(
     results: dict[str, dict[str, Any]],
     output_path: Path,
@@ -244,6 +249,7 @@ def plot_ablation_comparison(
     plt.close()
 
 
+@beartype
 def plot_confidence_level_analysis(
     confidence_levels: dict[str, dict[str, Any]],
     output_path: Path,
@@ -341,6 +347,7 @@ def plot_confidence_level_analysis(
     plt.close()
 
 
+@beartype
 def plot_reliability_flag_analysis(
     reliability_data: dict[str, dict[str, Any]],
     output_path: Path,
@@ -431,6 +438,7 @@ def plot_reliability_flag_analysis(
     plt.close()
 
 
+@beartype
 def plot_tool_usage_heatmap(
     tool_usage_data: dict[str, dict[str, int]],
     output_path: Path,
@@ -486,6 +494,7 @@ def plot_tool_usage_heatmap(
     plt.close()
 
 
+@beartype
 def plot_token_efficiency_scatter(
     results: dict[str, dict[str, Any]],
     output_path: Path,
@@ -564,6 +573,7 @@ def plot_token_efficiency_scatter(
     plt.close()
 
 
+@beartype
 def create_comprehensive_ablation_plots(
     results: dict[str, dict[str, Any]],
     output_dir: Path,

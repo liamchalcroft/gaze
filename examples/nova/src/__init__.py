@@ -16,16 +16,16 @@ This package provides tools for researchers working on medical AI,
 specifically focusing on brain MRI analysis and diagnostic tasks.
 """
 
-from src.config import NOVAConfig
-from src.config import TaskType
-from src.data import NovaDataset
-from src.evaluation.caption import evaluate_caption
-from src.evaluation.detection import evaluate_detection
-from src.evaluation.diagnosis import evaluate_diagnosis_nova_official
-from src.processor import NOVAAgenticProcessor
-from src.schemas import NOVA_SCHEMA
-from src.schemas import get_required_fields
-from src.schemas import validate_nova_response
+from .config import NOVAConfig
+from .config import TaskType
+from .data import NovaDataset
+from .evaluation.caption import evaluate_caption
+from .evaluation.detection import evaluate_detection
+from .evaluation.diagnosis import evaluate_diagnosis_nova_official
+from .processor import NOVAAgenticProcessor
+from .schemas import NOVA_SCHEMA
+from .schemas import get_required_fields
+from .schemas import validate_nova_response
 
 __version__ = "0.1.0"
 

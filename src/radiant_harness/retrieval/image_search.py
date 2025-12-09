@@ -9,16 +9,21 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import tempfile
-import time
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
 from beartype import beartype
 from loguru import logger
+
+from radiant_harness.cache import TTLCache
+from radiant_harness.config import CacheConfig
+from radiant_harness.config import SearchConfig
+from radiant_harness.config import get_config
 
 
 @dataclass
@@ -52,7 +57,9 @@ class ImageSearchResult:
             "modality": self.modality,
             "body_part": self.body_part,
             "diagnosis": self.diagnosis,
-            "caption": self.caption[:500] + "..." if self.caption and len(self.caption) > 500 else self.caption,
+            "caption": self.caption[:500] + "..."
+            if self.caption and len(self.caption) > 500
+            else self.caption,
             "article_title": self.article_title,
             "reliability": f"{self.reliability_score:.2f}",
         }
@@ -67,15 +74,44 @@ class ImageSearchError(Exception):
         super().__init__(f"{engine_name}: {message}")
 
 
-class ImageSearchEngine:
-    """Base class for image search engines."""
+class ImageDownloadError(Exception):
+    """Raised when an image download operation fails."""
 
-    def __init__(self, name: str, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, url: str, message: str, original_error: Exception | None = None):
+        self.url = url
+        self.original_error = original_error
+        super().__init__(f"Failed to download {url}: {message}")
+
+
+class ImageSearchEngine:
+    """Base class for image search engines.
+
+    Provides common functionality for searching medical image databases.
+    """
+
+    @beartype
+    def __init__(
+        self,
+        name: str,
+        config: SearchConfig | None = None,
+    ) -> None:
+        """Initialize image search engine.
+
+        Args:
+            name: Engine identifier
+            config: Search configuration. If None, uses global default.
+        """
+        self._config = config or get_config().search
         self.name = name
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self.max_retries = max_retries
+        self.timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
+        self.max_retries = self._config.max_retries
         self.headers = self._get_headers()
         self._session: aiohttp.ClientSession | None = None
+
+    @property
+    def config(self) -> SearchConfig:
+        """Get the search configuration."""
+        return self._config
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a reusable aiohttp session for connection pooling."""
@@ -101,8 +137,20 @@ class ImageSearchEngine:
             "Accept-Language": "en-US,en;q=0.9",
         }
 
+    @beartype
     async def search(self, query: str, max_results: int = 5) -> list[ImageSearchResult]:
-        """Search with retry logic."""
+        """Search with retry logic.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of image search results
+
+        Raises:
+            ImageSearchError: If all retry attempts fail
+        """
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -116,17 +164,37 @@ class ImageSearchEngine:
 
         raise ImageSearchError(self.name, "All search attempts failed", last_error)
 
+    @beartype
     async def _search_impl(self, query: str, max_results: int) -> list[ImageSearchResult]:
-        """Implement actual search logic in subclasses."""
+        """Implement actual search logic in subclasses.
+
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of image search results
+        """
         raise NotImplementedError
 
 
 class OpenISearchEngine(ImageSearchEngine):
-    """NIH Open-i Biomedical Image Search Engine."""
+    """NIH Open-i Biomedical Image Search Engine.
 
-    def __init__(self, **kwargs):
-        super().__init__("Open-i", **kwargs)
-        self.base_url = "https://openi.nlm.nih.gov/api/search"
+    Provides access to the NIH Open-i database of biomedical images,
+    including MRI, CT, X-ray, and other medical imaging modalities.
+    """
+
+    @beartype
+    def __init__(self, config: SearchConfig | None = None) -> None:
+        """Initialize Open-i search engine.
+
+        Args:
+            config: Search configuration. If None, uses global default.
+        """
+        super().__init__("Open-i", config=config)
+        self.base_url = self._config.openi_base_url
+        self.openi_base_url = "https://openi.nlm.nih.gov/"  # For URL joining
 
     async def _search_impl(self, query: str, max_results: int) -> list[ImageSearchResult]:
         params = {
@@ -151,21 +219,32 @@ class OpenISearchEngine(ImageSearchEngine):
 
         return self._parse_results(data)
 
+    @beartype
     def _parse_results(self, data: dict[str, Any]) -> list[ImageSearchResult]:
+        """Parse Open-i API response into ImageSearchResult objects.
+
+        Args:
+            data: JSON response from Open-i API
+
+        Returns:
+            List of parsed image search results
+        """
         results = []
         items = data.get("list", [])
+        skipped_count = 0
 
         for item in items:
             try:
                 image_url = item.get("imgLarge", "") or item.get("imgThumb", "")
                 thumbnail_url = item.get("imgThumb", "")
                 if not image_url:
+                    skipped_count += 1
                     continue
 
                 if image_url and not image_url.startswith("http"):
-                    image_url = urljoin("https://openi.nlm.nih.gov/", image_url)
+                    image_url = urljoin(self.openi_base_url, image_url)
                 if thumbnail_url and not thumbnail_url.startswith("http"):
-                    thumbnail_url = urljoin("https://openi.nlm.nih.gov/", thumbnail_url)
+                    thumbnail_url = urljoin(self.openi_base_url, thumbnail_url)
 
                 title = item.get("title", "Medical Image")
                 caption = item.get("caption", "")
@@ -201,9 +280,11 @@ class OpenISearchEngine(ImageSearchEngine):
                 )
                 results.append(result)
             except KeyError as e:
-                logger.debug(f"Skipping Open-i result with missing field: {e}")
-                continue
+                skipped_count += 1
+                logger.warning(f"Skipping Open-i result with missing field: {e}")
 
+        if skipped_count > 0:
+            logger.info(f"Skipped {skipped_count} malformed Open-i results")
         return results
 
     @beartype
@@ -263,23 +344,53 @@ class OpenISearchEngine(ImageSearchEngine):
 
 
 class MedicalImageSearchManager:
-    """Manager for medical image search operations."""
+    """Manager for medical image search operations.
 
-    MAX_CACHE_SIZE = 500
+    Provides a unified interface for searching multiple medical image
+    databases with caching, rate limiting, and result filtering.
 
+    Example:
+        async with MedicalImageSearchManager() as manager:
+            results = await manager.search("brain MRI glioblastoma")
+            for result in results:
+                print(f"Found: {result.title} ({result.modality})")
+    """
+
+    @beartype
     def __init__(
         self,
         engines: list[str] | None = None,
-        max_results_per_engine: int = 5,
-        timeout: int = 30,
-        cache_duration: int = 300,
+        max_results_per_engine: int | None = None,
         download_dir: Path | None = None,
-        rate_limit_delay: float = 0.5,
-    ):
-        self.max_results_per_engine = max_results_per_engine
-        self.cache_duration = cache_duration
-        self.rate_limit_delay = rate_limit_delay
-        self._cache: dict[str, tuple[float, list[ImageSearchResult]]] = {}
+        rate_limit_delay: float | None = None,
+        search_config: SearchConfig | None = None,
+        cache_config: CacheConfig | None = None,
+    ) -> None:
+        """Initialize medical image search manager.
+
+        Args:
+            engines: List of search engines to use (default: ["openi"])
+            max_results_per_engine: Results per engine (overrides config)
+            download_dir: Directory for downloaded images
+            rate_limit_delay: Delay between API calls (overrides config)
+            search_config: Search configuration. If None, uses global default.
+            cache_config: Cache configuration. If None, uses global default.
+
+        Raises:
+            ValueError: If no valid engines are specified
+        """
+        config = get_config()
+        self._search_config = search_config or config.search
+        self._cache_config = cache_config or config.cache
+
+        self.max_results_per_engine = (
+            max_results_per_engine or self._search_config.max_results_per_engine
+        )
+        self.rate_limit_delay = rate_limit_delay or self._search_config.rate_limit_delay_seconds
+
+        # Use shared TTLCache instead of manual cache management
+        self._cache: TTLCache[list[ImageSearchResult]] = TTLCache(self._cache_config)
+
         self.download_dir = download_dir or Path(tempfile.gettempdir()) / "radiant_harness_images"
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -288,7 +399,7 @@ class MedicalImageSearchManager:
         supported_engines = {"openi"}
         for engine in engines:
             if engine == "openi":
-                self.engines.append(OpenISearchEngine(timeout=timeout))
+                self.engines.append(OpenISearchEngine(config=self._search_config))
             elif engine not in supported_engines:
                 raise ValueError(
                     f"Unknown image search engine: '{engine}'. "
@@ -305,28 +416,13 @@ class MedicalImageSearchManager:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: Any,
+        exc_tb: TracebackType | None,
     ) -> None:
         await self.close()
 
     async def close(self) -> None:
         for engine in self.engines:
             await engine.close()
-
-    def _evict_stale_cache(self) -> None:
-        current_time = time.time()
-        expired_keys = [
-            key for key, (timestamp, _) in self._cache.items()
-            if current_time - timestamp > self.cache_duration
-        ]
-        for key in expired_keys:
-            del self._cache[key]
-
-        if len(self._cache) > self.MAX_CACHE_SIZE:
-            sorted_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][0])
-            keys_to_remove = sorted_keys[: len(self._cache) - self.MAX_CACHE_SIZE // 2]
-            for key in keys_to_remove:
-                del self._cache[key]
 
     @beartype
     async def search(
@@ -335,10 +431,22 @@ class MedicalImageSearchManager:
         modality: str | None = None,
         body_part: str | None = None,
     ) -> list[ImageSearchResult]:
+        """Search for medical images.
+
+        Args:
+            query: Search query string
+            modality: Optional imaging modality filter (e.g., "MRI", "CT")
+            body_part: Optional anatomical body part filter (e.g., "brain", "chest")
+
+        Returns:
+            List of image search results with metadata
+
+        Raises:
+            ValueError: If query is empty
+            ImageSearchError: If all search engines fail
+        """
         if not query or not query.strip():
             raise ValueError("query must be a non-empty string")
-
-        self._evict_stale_cache()
 
         enhanced_query = query
         if modality:
@@ -346,12 +454,13 @@ class MedicalImageSearchManager:
         if body_part:
             enhanced_query += f" {body_part}"
 
-        cache_key = f"img:{enhanced_query}"
-        if cache_key in self._cache:
-            timestamp, cached_results = self._cache[cache_key]
-            if time.time() - timestamp < self.cache_duration:
-                logger.debug(f"Using cached image results for: {query}")
-                return cached_results
+        cache_key = f"img:{enhanced_query}|mod={modality}|part={body_part}"
+
+        # Check cache using TTLCache (handles expiration automatically)
+        cached_results = self._cache.get(cache_key)
+        if cached_results is not None:
+            logger.debug(f"Using cached image results for: {query}")
+            return cached_results
 
         logger.info(f"Searching for medical images: '{enhanced_query}'")
 
@@ -384,20 +493,32 @@ class MedicalImageSearchManager:
                 r for r in all_results if r.body_part and body_part.lower() in r.body_part.lower()
             ]
 
-        seen_urls = set()
-        unique_results = []
+        seen_urls: set[str] = set()
+        unique_results: list[ImageSearchResult] = []
         for result in all_results:
             if result.image_url not in seen_urls:
                 seen_urls.add(result.image_url)
                 unique_results.append(result)
 
-        self._cache[cache_key] = (time.time(), unique_results)
+        # Cache results using TTLCache (handles expiration automatically)
+        self._cache.set(cache_key, unique_results)
 
         logger.info(f"Image search complete: {len(unique_results)} unique results")
         return unique_results
 
     @beartype
-    async def download_image(self, result: ImageSearchResult) -> Path | None:
+    async def download_image(self, result: ImageSearchResult) -> Path:
+        """Download an image from search results.
+
+        Args:
+            result: Image search result to download
+
+        Returns:
+            Path to the downloaded image file
+
+        Raises:
+            ImageDownloadError: If download fails
+        """
         extension = self._get_extension_from_url(result.image_url)
         url_hash = hashlib.md5(result.image_url.encode(), usedforsecurity=False).hexdigest()[:20]
 
@@ -408,40 +529,60 @@ class MedicalImageSearchManager:
                 return filepath
 
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(
-                    result.image_url,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response,
-            ):
-                if response.status != 200:
-                    logger.warning(f"Failed to download image: HTTP {response.status}")
-                    return None
-
-                content_type = response.headers.get("Content-Type", "")
-                if not content_type.startswith("image/"):
-                    logger.warning(f"Response is not an image: {content_type}")
-                    return None
-
-                content = await response.read()
-
-                if extension is None:
-                    extension = self._get_extension_from_content_type(content_type)
-
-                filepath = self.download_dir / f"{url_hash}{extension}"
-
-                if filepath.exists():
-                    logger.debug(f"Image already cached: {filepath}")
-                    return filepath
-
-                filepath.write_bytes(content)
-                logger.info(f"Downloaded image: {filepath}")
-                return filepath
+            # Reuse the existing session for connection pooling
+            session = await self.engines[0]._get_session() if self.engines else None
+            if session is None:
+                # Fallback to new session if no engines configured
+                async with aiohttp.ClientSession() as new_session:
+                    return await self._do_download(new_session, result, url_hash, extension)
+            return await self._do_download(session, result, url_hash, extension)
 
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-            logger.error(f"Failed to download image: {e}")
-            return None
+            raise ImageDownloadError(result.image_url, str(e), e) from e
+
+    async def _do_download(
+        self,
+        session: aiohttp.ClientSession,
+        result: ImageSearchResult,
+        url_hash: str,
+        extension: str | None,
+    ) -> Path:
+        """Perform the actual image download using the provided session.
+
+        Raises:
+            ImageDownloadError: If download fails due to HTTP error or invalid content type
+        """
+        async with session.get(
+            result.image_url,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            if response.status != 200:
+                raise ImageDownloadError(
+                    result.image_url,
+                    f"HTTP {response.status}",
+                )
+
+            content_type = response.headers.get("Content-Type", "")
+            if not content_type.startswith("image/"):
+                raise ImageDownloadError(
+                    result.image_url,
+                    f"Response is not an image: {content_type}",
+                )
+
+            content = await response.read()
+
+            if extension is None:
+                extension = self._get_extension_from_content_type(content_type)
+
+            filepath = self.download_dir / f"{url_hash}{extension}"
+
+            if filepath.exists():
+                logger.debug(f"Image already cached: {filepath}")
+                return filepath
+
+            filepath.write_bytes(content)
+            logger.info(f"Downloaded image: {filepath}")
+            return filepath
 
     def _get_extension_from_url(self, url: str) -> str | None:
         url_lower = url.lower()
@@ -473,10 +614,10 @@ class MedicalImageSearchManager:
 
 **Title:** {result.title}
 **Source:** {result.source} (Reliability: {result.reliability_score:.2f})
-**Modality:** {result.modality or 'Unknown'}
-**Body Part:** {result.body_part or 'Unknown'}
+**Modality:** {result.modality or "Unknown"}
+**Body Part:** {result.body_part or "Unknown"}
 
-**Caption:** {result.caption[:300] + '...' if result.caption and len(result.caption) > 300 else result.caption or 'No caption'}
+**Caption:** {result.caption[:300] + "..." if result.caption and len(result.caption) > 300 else result.caption or "No caption"}
 
 **Image URL:** {result.image_url}
 **Source Article:** {result.source_url}
