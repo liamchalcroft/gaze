@@ -86,7 +86,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         metadata.setdefault("image_id", metadata.get("image_id", f"sample_{i}"))
 
         # Save lossless copy temporarily for processing (avoid JPEG artifacts)
-        # Use NamedTemporaryFile for secure handling
+        # NamedTemporaryFile creates files with mode 0600 by default on Unix
         import tempfile
 
         with tempfile.NamedTemporaryFile(
@@ -94,7 +94,6 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             prefix="nova_temp_",
             dir=config.output_dir,
             delete=False,
-            mode=0o600  # Secure permissions
         ) as tmp:
             image.save(tmp.name, format="PNG", optimize=True)
             temp_image_path = Path(tmp.name)

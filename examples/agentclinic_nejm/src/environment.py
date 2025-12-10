@@ -19,6 +19,7 @@ import verifiers as vf
 from datasets import Dataset
 
 from radiant_harness.verifiers import BaseRewardFunction
+from radiant_harness.verifiers import extract_completion_text
 
 # ---------- Config ----------
 DEFAULT_DATASET_PATH = os.path.join(
@@ -95,11 +96,7 @@ def _normalize(s: str) -> str:
 
 def _to_text(completion: Any) -> str:
     """Extract text from completion."""
-    if isinstance(completion, list):
-        for msg in reversed(completion):
-            if isinstance(msg, dict) and msg.get("role") == "assistant":
-                return str(msg.get("content", ""))
-    return str(completion or "")
+    return extract_completion_text(completion)
 
 
 def _last_assistant_text(messages: vf.Messages) -> str:

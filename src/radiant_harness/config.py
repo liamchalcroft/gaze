@@ -129,6 +129,27 @@ class AgenticConfig:
 
 
 @dataclass(frozen=True)
+class VerifiersConfig:
+    """Configuration for verifiers RL training integration.
+
+    Attributes:
+        default_max_turns: Default max turns for RL episodes
+        max_tool_calls_per_turn: Maximum tool calls allowed per turn
+        enable_visual_tools: Whether to enable visual manipulation tools by default
+        enable_search_tools: Whether to enable search tools by default
+        reward_clip_min: Minimum reward value (for gradient stability)
+        reward_clip_max: Maximum reward value (for gradient stability)
+    """
+
+    default_max_turns: int = 10
+    max_tool_calls_per_turn: int = 5
+    enable_visual_tools: bool = True
+    enable_search_tools: bool = False
+    reward_clip_min: float = -1.0
+    reward_clip_max: float = 1.0
+
+
+@dataclass(frozen=True)
 class HarnessConfig:
     """Root configuration for the radiant harness.
 
@@ -155,6 +176,7 @@ class HarnessConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
     ranking: RankingWeights = field(default_factory=RankingWeights)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
+    verifiers: VerifiersConfig = field(default_factory=VerifiersConfig)
 
 
 class _ConfigHolder:

@@ -8,15 +8,15 @@ Also provides GEMeXVerifiersReward for integration with radiant_harness verifier
 
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from beartype import beartype
 
+from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
+from radiant_harness.verifiers import extract_completion_text
 
 from .answer import compute_answer_reward
 from .bbox import IMAGE_SIZE
@@ -354,39 +354,8 @@ class GEMeXVerifiersReward(BaseRewardFunction):
 
     def _extract_text(self, completion: Any) -> str:
         """Extract text from completion."""
-        if isinstance(completion, str):
-            return completion
-        if isinstance(completion, list):
-            for msg in reversed(completion):
-                if isinstance(msg, dict) and msg.get("role") == "assistant":
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        return content
-        return str(completion or "")
+        return extract_completion_text(completion)
 
     def _extract_json_response(self, text: str) -> dict[str, Any] | None:
         """Extract JSON response from text."""
-        # Try to find JSON block in markdown
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find raw JSON object
-        try:
-            start = text.find("{")
-            if start != -1:
-                depth = 0
-                for i, c in enumerate(text[start:], start):
-                    if c == "{":
-                        depth += 1
-                    elif c == "}":
-                        depth -= 1
-                        if depth == 0:
-                            return json.loads(text[start : i + 1])
-        except json.JSONDecodeError:
-            pass
-
-        return None
+        return extract_json_from_text(text)

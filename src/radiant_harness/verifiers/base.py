@@ -38,7 +38,7 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
         dataset_path: str | None = None,
         max_turns: int = 10,
         name: str = "BaseRadiantEnv",
-        log_dir: str | None = None,
+        log_dir: Path | str | None = None,
     ) -> None:
         """Initialize environment.
 
@@ -50,8 +50,8 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
             log_dir: Directory for debug logs
         """
         self._max_turns = max_turns
-        self._log_dir = log_dir or str(Path(__file__).parent.parent / "logs")
-        self._log_path = Path(self._log_dir) / f"{name.lower()}_debug.log"
+        self._log_dir = Path(log_dir) if log_dir else Path(__file__).parent.parent / "logs"
+        self._log_path = self._log_dir / f"{name.lower()}_debug.log"
 
         # Load cases
         if cases is None and dataset_path:
@@ -130,10 +130,7 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
         user_content = self._build_user_message(case)
 
         messages = [{"role": "system", "content": system_prompt}]
-        if isinstance(user_content, str):
-            messages.append({"role": "user", "content": user_content})
-        else:
-            messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "user", "content": user_content})
 
         return messages
 
@@ -229,8 +226,8 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
 
     def _log_debug(self, line: str) -> None:
         """Write debug log entry."""
-        Path(self._log_dir).mkdir(parents=True, exist_ok=True)
-        with open(self._log_path, "a", encoding="utf-8") as f:
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        with self._log_path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
     def _last_assistant_text(self, messages: vf.Messages) -> str:

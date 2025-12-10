@@ -13,6 +13,8 @@ from typing import Any
 
 from beartype import beartype
 
+from radiant_harness.config import VerifiersConfig
+from radiant_harness.config import get_config
 from radiant_harness.tools import Tool
 from radiant_harness.tools import ToolRegistry
 from radiant_harness.tools import create_search_tools
@@ -33,29 +35,33 @@ class ToolBridge:
     @beartype
     def __init__(
         self,
-        enable_visual_tools: bool = True,
-        enable_search_tools: bool = False,
+        enable_visual_tools: bool | None = None,
+        enable_search_tools: bool | None = None,
         disabled_tools: set[str] | None = None,
-        max_tool_calls_per_turn: int = 5,
+        max_tool_calls_per_turn: int | None = None,
+        config: VerifiersConfig | None = None,
     ) -> None:
         """Initialize tool bridge.
 
         Args:
-            enable_visual_tools: Enable visual manipulation tools
-            enable_search_tools: Enable web/image search tools
+            enable_visual_tools: Enable visual manipulation tools (default from config)
+            enable_search_tools: Enable web/image search tools (default from config)
             disabled_tools: Specific tools to disable
-            max_tool_calls_per_turn: Maximum tool calls per turn
+            max_tool_calls_per_turn: Maximum tool calls per turn (default from config)
+            config: Verifiers configuration. If None, uses global config.
         """
-        self.enable_visual_tools = enable_visual_tools
-        self.enable_search_tools = enable_search_tools
+        cfg = config or get_config().verifiers
+
+        self.enable_visual_tools = enable_visual_tools if enable_visual_tools is not None else cfg.enable_visual_tools
+        self.enable_search_tools = enable_search_tools if enable_search_tools is not None else cfg.enable_search_tools
         self._disabled_tools = disabled_tools or set()
-        self.max_tool_calls_per_turn = max_tool_calls_per_turn
+        self.max_tool_calls_per_turn = max_tool_calls_per_turn or cfg.max_tool_calls_per_turn
 
         # Build tool list
         self._tools: list[Tool] = []
-        if enable_visual_tools:
+        if self.enable_visual_tools:
             self._tools.extend(create_visual_tools(self._disabled_tools))
-        if enable_search_tools:
+        if self.enable_search_tools:
             self._tools.extend(create_search_tools(self._disabled_tools))
 
         # Active registry (created per-episode)

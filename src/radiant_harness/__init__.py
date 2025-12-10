@@ -117,6 +117,7 @@ from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
+from radiant_harness.config import VerifiersConfig
 from radiant_harness.config import get_config
 from radiant_harness.config import set_config
 from radiant_harness.exceptions import AgenticProcessingError
@@ -173,6 +174,7 @@ __all__ = [
     "SearchConfig",
     "ImageProcessingConfig",
     "RankingWeights",
+    "VerifiersConfig",
     "get_config",
     "set_config",
     # Result types

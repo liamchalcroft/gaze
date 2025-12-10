@@ -7,8 +7,6 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 from typing import Literal
 
@@ -17,8 +15,10 @@ from beartype import beartype
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
+from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
+from radiant_harness.verifiers import extract_completion_text
 
 from .schemas import VQA_RAD_SCHEMA
 from .schemas import validate_vqa_rad_response
@@ -109,41 +109,13 @@ class VQARadVerifiersReward(BaseRewardFunction):
 
     def _extract_text(self, completion: Any) -> str:
         """Extract text from completion."""
-        if isinstance(completion, str):
-            return completion
-        if isinstance(completion, list):
-            for msg in reversed(completion):
-                if isinstance(msg, dict) and msg.get("role") == "assistant":
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        return content
-        return str(completion or "")
+        return extract_completion_text(completion)
 
     def _extract_json_response(self, text: str) -> dict[str, Any] | None:
         """Extract JSON response from text."""
-        # Try markdown JSON block
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # Try raw JSON
-        try:
-            start = text.find("{")
-            if start != -1:
-                depth = 0
-                for i, c in enumerate(text[start:], start):
-                    if c == "{":
-                        depth += 1
-                    elif c == "}":
-                        depth -= 1
-                        if depth == 0:
-                            return json.loads(text[start : i + 1])
-        except json.JSONDecodeError:
-            pass
-
+        result = extract_json_from_text(text)
+        if result is not None:
+            return result
         # Fallback: treat entire text as answer
         return {"answer": text.strip()}
 

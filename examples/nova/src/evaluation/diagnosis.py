@@ -268,9 +268,11 @@ async def evaluate_diagnosis_nova_official(
             top1_pred = p[0] if p else None
 
             # Top-1 evaluation - use fast exact match first, then LLM semantic matching
-            if top1_pred:
-                if exact_diagnosis_match(str(top1_pred), str(r)) or await llm_semantic_match_async(str(top1_pred), str(r), model_name):
-                    top1_count += 1
+            if top1_pred and (
+                exact_diagnosis_match(str(top1_pred), str(r))
+                or await llm_semantic_match_async(str(top1_pred), str(r), model_name)
+            ):
+                top1_count += 1
 
             # Top-5 evaluation - use fast exact match first, then LLM for remaining
             top5_match = False

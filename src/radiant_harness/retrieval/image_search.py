@@ -7,8 +7,11 @@ trusted sources like NIH Open-i and Radiopaedia.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import hashlib
 import json
+import shutil
+import tempfile
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -391,14 +394,14 @@ class MedicalImageSearchManager:
         # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[ImageSearchResult]] = TTLCache(self._cache_config)
 
+        # Track whether we created a temp directory (for cleanup)
+        self._created_temp_dir = False
+
         # Use secure temporary directory with proper permissions
         if download_dir:
             self.download_dir = download_dir
             self.download_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         else:
-            import atexit
-            import tempfile
-
             self.download_dir = Path(tempfile.mkdtemp(prefix="rh_images_"))
             # Ensure directory has restricted permissions
             self.download_dir.chmod(0o700)
@@ -437,13 +440,11 @@ class MedicalImageSearchManager:
             await engine.close()
 
         # Clean up temporary directory if we created it
-        if hasattr(self, "_created_temp_dir") and self._created_temp_dir:
+        if self._created_temp_dir:
             self._cleanup_temp_dir()
 
     def _cleanup_temp_dir(self) -> None:
         """Clean up temporary directory and its contents."""
-        import shutil
-
         try:
             if self.download_dir.exists():
                 shutil.rmtree(self.download_dir)

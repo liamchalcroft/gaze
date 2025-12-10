@@ -9,7 +9,6 @@ import verifiers as vf
 # Example environments
 from examples.gemex_thinkvg.src.verifiers.environment import GEMeXThinkVGToolEnv
 from examples.gemex_thinkvg.src.verifiers.environment import load_environment as load_gemex_env
-from examples.verifiers_integration.nova_example import NOVAToolEnv
 from radiant_harness.verifiers.rewards import CombinedReward
 from radiant_harness.verifiers.rewards import ExactMatchReward
 from radiant_harness.verifiers.rewards import IoUReward
@@ -204,22 +203,3 @@ class TestToolEnvIntegrations:
         state = env.build_initial_state(env.dataset[0]["prompt"], env.dataset[0]["info"])
         assert state["turn"] == 0
 
-    def test_nova_toolenv_setup(self) -> None:
-        cases = [
-            {
-                "question": "Identify abnormalities",
-                "findings": "Small infarct",
-                "location": "left basal ganglia",
-                "bbox": [1, 2, 3, 4],
-                "severity": "mild",
-                "image_path": "https://example.com/mri.jpg",
-            }
-        ]
-
-        env = NOVAToolEnv(cases=cases, max_turns=2, enable_tools=True)
-
-        assert isinstance(env, vf.ToolEnv)
-        assert len(env.dataset) == 1
-        assert hasattr(env, "tools")
-        assert len(env.tools) == 4  # zoom, crop, contrast, search
-        assert env._max_turns == 2

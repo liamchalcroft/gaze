@@ -183,13 +183,18 @@ class RadiantHarnessAdapter:
 
             base_class = BaseMultiTurnEnv
 
+        # Capture adapter config in closure
+        captured_processor = self.processor
+        captured_registry = self.registry
+        max_tool_calls = env_kwargs.get("max_tool_calls", 5)
+
         class AdapterEnv(base_class):
             def __init__(self, *args: Any, **kwargs: Any):
                 super().__init__(*args, **kwargs)
                 self._adapter = RadiantHarnessAdapter(
-                    processor=self.processor,
-                    registry=self.registry,
-                    max_tool_calls=env_kwargs.get("max_tool_calls", 5),
+                    processor=captured_processor,
+                    registry=captured_registry,
+                    max_tool_calls=max_tool_calls,
                 )
 
             async def env_response(
@@ -199,10 +204,8 @@ class RadiantHarnessAdapter:
                 info: dict[str, Any] | None = None,
             ) -> tuple[vf.Messages, vf.State]:
                 """Generate response using Radiant Harness."""
-                # Use the adapter to process messages
                 result = await self._adapter.process_verifiers_messages(messages, info or {})
 
-                # Update state
                 new_state = dict(state)
                 new_state["turn"] = state.get("turn", 0) + 1
                 new_state["tool_uses"] = state.get("tool_uses", 0) + len(result["tool_calls"])
@@ -217,16 +220,9 @@ class RadiantHarnessAdapter:
                 info: dict[str, Any] | None = None,
             ) -> bool:
                 """Check if complete using adapter result."""
-                # Check base conditions
                 if await super().is_completed(messages, state, info):
                     return True
-
-                # Check adapter result
                 return state.get("is_complete", False)
-
-        # Set processor and registry on the class
-        AdapterEnv.processor = self.processor
-        AdapterEnv.registry = self.registry
 
         return AdapterEnv
 
@@ -244,31 +240,4 @@ def create_verifiers_rubric(
     Returns:
         Configured rubric
     """
-    try:
-        return vf.Rubric(
-            funcs=reward_functions,
-            weights=weights,
-        )
-    except TypeError:
-        return vf.Rubric(
-            reward_fns=reward_functions,
-        )
-
-
-def wrap_processor_for_verifiers(
-    processor: AgenticProcessorBase,
-    registry: ToolRegistry | None = None,
-    **kwargs: Any,
-) -> type[vf.MultiTurnEnv]:
-    """Quick wrapper to produce a verifiers environment class.
-
-    Args:
-        processor: Radiant Harness processor
-        registry: Tool registry
-        **kwargs: Additional environment arguments
-
-    Returns:
-        MultiTurnEnv subclass bound to the provided processor/registry
-    """
-    adapter = RadiantHarnessAdapter(processor, registry)
-    return adapter.create_environment_class(**kwargs)
+    return vf.Rubric(funcs=reward_functions, weights=weights)

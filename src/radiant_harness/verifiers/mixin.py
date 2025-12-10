@@ -8,15 +8,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
 from typing import Any
 
+import verifiers as vf
 from beartype import beartype
 
-if TYPE_CHECKING:
-    import verifiers as vf
-
-    from radiant_harness.verifiers.rewards import BaseRewardFunction
+from radiant_harness.verifiers.rewards import BaseRewardFunction
 
 
 class VerifiableProcessorMixin:

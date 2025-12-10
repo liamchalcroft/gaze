@@ -10,7 +10,6 @@ Also provides combined reward for multi-task training.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -18,8 +17,10 @@ from typing import Literal
 
 from beartype import beartype
 
-from radiant_harness.utils.iou import compute_iou
+from radiant_harness.utils import compute_iou
+from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
+from radiant_harness.verifiers import extract_completion_text
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
@@ -317,45 +318,11 @@ class NOVAVerifiersReward(BaseRewardFunction):
 
     def _extract_text(self, completion: Any) -> str:
         """Extract text from completion."""
-        if isinstance(completion, str):
-            return completion
-        if isinstance(completion, list):
-            for msg in reversed(completion):
-                if isinstance(msg, dict) and msg.get("role") == "assistant":
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        return content
-        return str(completion or "")
+        return extract_completion_text(completion)
 
     def _extract_json_response(self, text: str) -> dict[str, Any] | None:
-        """Extract JSON response from text.
-
-        Expects valid JSON - either raw or in a markdown code block.
-        Returns None if text is empty or not valid JSON.
-        """
-        text = text.strip()
-        if not text:
-            return None
-
-        # Handle markdown code block
-        if text.startswith("```"):
-            # Find the end of the opening fence
-            first_newline = text.find("\n")
-            if first_newline == -1:
-                return None
-            # Find the closing fence
-            closing = text.rfind("```")
-            if closing <= first_newline:
-                return None
-            text = text[first_newline + 1 : closing].strip()
-
-        try:
-            result = json.loads(text)
-            if isinstance(result, dict):
-                return result
-            return None
-        except json.JSONDecodeError:
-            return None
+        """Extract JSON response from text."""
+        return extract_json_from_text(text)
 
 
 __all__ = [
