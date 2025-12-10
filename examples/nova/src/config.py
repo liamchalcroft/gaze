@@ -7,6 +7,8 @@ from dataclasses import field
 from enum import Enum
 from pathlib import Path
 
+from beartype import beartype
+
 
 class TaskType(Enum):
     """Available task types for NOVA evaluation."""
@@ -17,12 +19,16 @@ class TaskType(Enum):
     ALL = "all"  # Run all three tasks
 
 
+@beartype
 @dataclass
 class NOVAConfig:
     """Configuration for NOVA benchmark evaluation.
 
     This is the main configuration for running NOVA benchmark evaluations.
     It configures both the radiant_harness and NOVA-specific settings.
+
+    All parameters must be properly typed - no string coercion is performed.
+    Use Path objects and TaskType enum directly.
     """
 
     # Model settings (passed to radiant_harness)
@@ -41,14 +47,7 @@ class NOVAConfig:
     skip_existing: bool = True
 
     def __post_init__(self) -> None:
-        """Validate configuration."""
-        if isinstance(self.data_dir, str):
-            self.data_dir = Path(self.data_dir)
-        if isinstance(self.output_dir, str):
-            self.output_dir = Path(self.output_dir)
-        if isinstance(self.task, str):
-            self.task = TaskType(self.task)
-
+        """Validate configuration and create output directory."""
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -57,3 +56,16 @@ class NOVAConfig:
             raise ValueError("max_turns must be between 1 and 20")
         if not 1 <= self.batch_size <= 64:
             raise ValueError("batch_size must be between 1 and 64")
+
+
+@dataclass(frozen=True)
+class ConfidenceConfig:
+    """Configuration for confidence score calculations."""
+
+    base: float = 0.5
+    comprehensive_bonus: float = 0.1
+    per_evidence: float = 0.02
+    per_differential: float = 0.02
+    per_localization: float = 0.02
+    per_tool_turn: float = 0.05
+    max_bonus: float = 0.1

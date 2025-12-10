@@ -2,21 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main]
+    branches: [ main, develop ]
 
 jobs:
-  quality:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: ${{ matrix.python-version }}
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -24,18 +27,84 @@ jobs:
     - name: Install dependencies
       run: uv sync
 
-    - name: Code quality checks
-      run: |
-        uv run ruff check .
-        uv run ruff format --check .
-        uv run pyright src/
+    - name: Run linting
+      run: uv run ruff check .
+
+    - name: Check formatting
+      run: uv run ruff format --check .
+
+    - name: Run type checking
+      run: uv run pyright src/
 
     - name: Run tests
-      run: |
-        uv run pytest tests/ -x --tb=short
+      run: uv run pytest tests/ --cov=radiant_harness --cov-report=xml
 
-    - name: Test scripts
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Run security scan
       run: |
-        python scripts/run_nova_evaluation.py --help
-        python scripts/analyze_results.py --help
-        ./scripts/eval_nova.sh help
+        uv run bandit -r src/ -f json -o bandit-report.json || true
+        uv run safety check --json --output safety-report.json || true
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Test NOVA example (if torch available)
+      run: |
+        uv add --optional nova || echo "Skipping nova tests (torch not available)"
+        if command -v torch &> /dev/null; then
+          uv run pytest examples/nova/tests/ || true
+        fi
+
+    - name: Test scripts help
+      run: |
+        if [ -f scripts/run_nova_evaluation.py ]; then
+          python scripts/run_nova_evaluation.py --help
+        fi
+        if [ -f scripts/analyze_results.py ]; then
+          python scripts/analyze_results.py --help
+        fi

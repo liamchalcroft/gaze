@@ -1,35 +1,23 @@
-"""Image management for the radiology VLM agent harness.
-
-Provides image loading, transformation, and state management separate from tool execution.
-"""
+"""Image management for the radiology VLM agent harness."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import TracebackType
 
 from beartype import beartype
 from loguru import logger
 from PIL import Image
+from PIL import UnidentifiedImageError
 
 from radiant_harness.exceptions import ToolExecutionError
-
-if TYPE_CHECKING:
-    pass
 
 
 @beartype
 class ImageManager:
     """Manages image loading, transformation, and state.
-
-    Handles:
-    - Loading images from disk
-    - Managing current image state
-    - Applying transformations with proper cleanup
-    - Image history tracking
-    - Thread-safe operations via async locks
 
     Example:
         manager = ImageManager()
@@ -71,36 +59,56 @@ class ImageManager:
         Raises:
             ToolExecutionError: If image cannot be loaded
         """
-        try:
-            # Close existing images
-            self.close()
+        self.close()
 
-            # Load and store image
+        try:
             with Image.open(image_path) as img:
                 self._original_image = img.copy()
                 self._current_image = img.copy()
-            self._image_path = image_path
-            logger.debug(f"Loaded image: {image_path} ({self._current_image.size})")
-        except Exception as e:
-            raise ToolExecutionError(f"Failed to load image {image_path}: {e}") from e
+        except FileNotFoundError as e:
+            raise ToolExecutionError(f"Image file not found: {image_path}") from e
+        except UnidentifiedImageError as e:
+            raise ToolExecutionError(f"File is not a valid image: {image_path}") from e
+        except OSError as e:
+            raise ToolExecutionError(f"Failed to read image file {image_path}: {e}") from e
+
+        self._image_path = image_path
+        logger.debug(f"Loaded image: {image_path} ({self._current_image.size})")
 
     @beartype
     async def ensure_loaded(self) -> None:
         """Ensure image is loaded, loading from path if necessary.
 
         This is thread-safe and can be called multiple times.
+
+        Raises:
+            ToolExecutionError: If no image path is set or image cannot be loaded.
         """
-        if self._current_image is None and self._image_path is not None:
-            async with self._image_lock:
-                if self._current_image is None and self._image_path is not None:
-                    try:
-                        with Image.open(self._image_path) as img:
-                            self._original_image = img.copy()
-                            self._current_image = img.copy()
-                    except Exception as e:
-                        raise ToolExecutionError(
-                            f"Failed to load image {self._image_path}: {e}"
-                        ) from e
+        # Fast path - if already loaded, return immediately
+        if self._current_image is not None:
+            return
+
+        # Acquire lock before checking again to prevent race conditions
+        async with self._image_lock:
+            # Double-checked locking pattern - check again after acquiring lock
+            if self._current_image is not None:
+                return
+
+            if self._image_path is None:
+                raise ToolExecutionError("No image path set - call set_image() first")
+
+            try:
+                with Image.open(self._image_path) as img:
+                    self._original_image = img.copy()
+                    self._current_image = img.copy()
+            except FileNotFoundError as e:
+                raise ToolExecutionError(f"Image file not found: {self._image_path}") from e
+            except UnidentifiedImageError as e:
+                raise ToolExecutionError(f"File is not a valid image: {self._image_path}") from e
+            except OSError as e:
+                raise ToolExecutionError(
+                    f"Failed to read image file {self._image_path}: {e}"
+                ) from e
 
     @beartype
     def transform_image(self, operation: Callable[[Image.Image], Image.Image]) -> None:
@@ -119,14 +127,8 @@ class ImageManager:
             raise ToolExecutionError("No image loaded to transform")
 
         old_image = self._current_image
-        try:
-            self._current_image = operation(old_image)
-        except Exception as e:
-            # Restore original image on failure
-            self._current_image = old_image
-            raise ToolExecutionError(f"Image transformation failed: {e}") from e
-        finally:
-            old_image.close()
+        self._current_image = operation(old_image)
+        old_image.close()
 
     @beartype
     def reset_to_original(self) -> None:
@@ -185,7 +187,7 @@ class ImageManager:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: type[BaseException] | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Async context manager exit with cleanup."""
         self.close()

@@ -242,59 +242,27 @@ async def _execute_reset(registry: ToolRegistry) -> ToolResult:
 
 
 # Prompt documentation for visual tools
-ZOOM_PROMPT_DOC = """
-**zoom** - Magnify the image for detailed examination
-  - Parameter `factor` (number, 0.5-4.0): Magnification level (2.0 = 2x zoom)
-  - Use for: Examining small lesions, tissue boundaries, subtle findings
-  - Recommended factors: 1.5x for overview, 2.0-2.5x for detail, 3.0+ for micro-features
-""".strip()
+ZOOM_PROMPT_DOC = """**zoom** - Magnify the image (factor: 0.5-4.0)""".strip()
 
-CROP_PROMPT_DOC = """
-**crop** - Extract a specific region for focused analysis
-  - Parameter `box` (array of 4 numbers, 0-1): Normalized coordinates [x1, y1, x2, y2]
-  - Coordinates are normalized: 0.0 = left/top edge, 1.0 = right/bottom edge
-  - Use for: Isolating anatomical regions, focusing on specific findings
-  - Keep context: recommend 0.1-0.2 margin around region of interest
-""".strip()
+CROP_PROMPT_DOC = (
+    """**crop** - Extract region [x1, y1, x2, y2] with normalized coordinates (0-1)""".strip()
+)
 
-CONTRAST_PROMPT_DOC = """
-**adjust_contrast** - Enhance image contrast for better visualization
-  - Parameter `factor` (number, 0.5-3.0): Contrast multiplier (1.0 = no change)
-  - Use for: Distinguishing tissue boundaries, detecting low-contrast lesions
-  - Recommended: 1.3-1.5 for subtle enhancement, 1.8-2.0 for significant enhancement
-""".strip()
+CONTRAST_PROMPT_DOC = """**adjust_contrast** - Enhance contrast (factor: 0.5-3.0)""".strip()
 
-THRESHOLD_PROMPT_DOC = """
-**threshold** - Apply intensity windowing to isolate specific intensity ranges
-  - Parameter `lower` (integer, 0-254): Lower intensity bound
-  - Parameter `upper` (integer, 1-255): Upper intensity bound (must be > lower)
-  - Pixels below lower become black, above upper become white, between are rescaled
-  - Use for: Highlighting specific tissue types, isolating signal abnormalities
-""".strip()
+THRESHOLD_PROMPT_DOC = (
+    """**threshold** - Apply intensity windowing (lower: 0-254, upper: 1-255)""".strip()
+)
 
-FLIP_HORIZONTAL_PROMPT_DOC = """
-**flip_horizontal** - Mirror image left-right (no parameters)
-  - Use for: Assessing bilateral symmetry, comparing hemispheres
-  - Helpful for: Detecting asymmetric pathology, midline structure analysis
-""".strip()
+FLIP_HORIZONTAL_PROMPT_DOC = """**flip_horizontal** - Mirror image left-right""".strip()
 
-FLIP_VERTICAL_PROMPT_DOC = """
-**flip_vertical** - Mirror image top-bottom (no parameters)
-  - Use for: Evaluating vertical relationships, orientation analysis
-  - Helpful for: Superior-inferior comparisons, anatomical orientation
-""".strip()
+FLIP_VERTICAL_PROMPT_DOC = """**flip_vertical** - Mirror image top-bottom""".strip()
 
-ROTATE_PROMPT_DOC = """
-**rotate** - Rotate image by 90 degrees
-  - Parameter `clockwise` (boolean, default true): Direction of rotation
-  - Use for: Standardizing orientation, examining from different angles
-""".strip()
+ROTATE_PROMPT_DOC = (
+    """**rotate** - Rotate image by 90 degrees (clockwise: boolean, default true)""".strip()
+)
 
-RESET_PROMPT_DOC = """
-**reset** - Return to original unmodified image (no parameters)
-  - Use for: Starting fresh after modifications, final verification
-  - Discards all zoom, crop, contrast, threshold, flip, and rotate changes
-""".strip()
+RESET_PROMPT_DOC = """**reset** - Return to original image""".strip()
 
 
 @beartype
@@ -324,6 +292,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     }
                 },
                 execute=_execute_zoom,
+                requires_image=True,
                 prompt_documentation=ZOOM_PROMPT_DOC,
                 category="visual",
             )
@@ -344,6 +313,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     }
                 },
                 execute=_execute_crop,
+                requires_image=True,
                 prompt_documentation=CROP_PROMPT_DOC,
                 category="visual",
             )
@@ -366,6 +336,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     }
                 },
                 execute=_execute_contrast,
+                requires_image=True,
                 prompt_documentation=CONTRAST_PROMPT_DOC,
                 category="visual",
             )
@@ -393,6 +364,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     },
                 },
                 execute=_execute_threshold,
+                requires_image=True,
                 prompt_documentation=THRESHOLD_PROMPT_DOC,
                 category="visual",
             )
@@ -405,6 +377,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                 description="Mirror the image left-right for bilateral symmetry assessment.",
                 parameters={},
                 execute=_execute_flip_horizontal,
+                requires_image=True,
                 prompt_documentation=FLIP_HORIZONTAL_PROMPT_DOC,
                 category="visual",
             )
@@ -417,6 +390,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                 description="Mirror the image top-bottom for orientation standardization.",
                 parameters={},
                 execute=_execute_flip_vertical,
+                requires_image=True,
                 prompt_documentation=FLIP_VERTICAL_PROMPT_DOC,
                 category="visual",
             )
@@ -435,6 +409,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     }
                 },
                 execute=_execute_rotate,
+                requires_image=True,
                 prompt_documentation=ROTATE_PROMPT_DOC,
                 category="visual",
             )
@@ -447,6 +422,7 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                 description="Return to the original full image, discarding all modifications.",
                 parameters={},
                 execute=_execute_reset,
+                requires_image=True,
                 prompt_documentation=RESET_PROMPT_DOC,
                 category="visual",
             )

@@ -5,8 +5,6 @@ Provides core image operations: zoom, crop, contrast, threshold, flip, rotate.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 from beartype import beartype
 from PIL import Image
@@ -14,9 +12,6 @@ from PIL import ImageEnhance
 
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import get_config
-
-if TYPE_CHECKING:
-    pass
 
 
 @beartype
@@ -102,41 +97,35 @@ def crop_image(
     width, height = image.size
     x1_norm, y1_norm, x2_norm, y2_norm = box
 
-    # Validate normalized coordinates are in valid range
     if not all(0 <= coord <= 1 for coord in box):
         raise ValueError(f"All coordinates must be in range [0, 1], got box={box}")
 
-    # Validate ordering
     if x2_norm <= x1_norm or y2_norm <= y1_norm:
         raise ValueError(f"Invalid crop box: x2 must be > x1 and y2 must be > y1, got box={box}")
 
-    # Guard against images too small to crop meaningfully
     if width < min_size or height < min_size:
         raise ValueError(
             f"Image too small to crop: {width}x{height}. "
             f"Minimum size is {min_size}x{min_size} pixels."
         )
 
-    # Convert normalized coordinates to pixel coordinates
     x1 = int(x1_norm * width)
     y1 = int(y1_norm * height)
     x2 = int(x2_norm * width)
     y2 = int(y2_norm * height)
 
-    # Clamp to image bounds (handles floating point edge cases)
+    # Ensure coordinates are within image bounds
     x1 = max(0, min(x1, width - 1))
     y1 = max(0, min(y1, height - 1))
     x2 = max(x1 + 1, min(x2, width))
     y2 = max(y1 + 1, min(y2, height))
 
-    # Validate resulting crop size
     crop_width = x2 - x1
     crop_height = y2 - y1
     if crop_width < min_size or crop_height < min_size:
         raise ValueError(
             f"Resulting crop region too small: {crop_width}x{crop_height} pixels. "
-            f"Minimum size is {min_size}x{min_size} pixels. "
-            f"Consider using a larger crop region."
+            f"Minimum size is {min_size}x{min_size} pixels."
         )
 
     return image.crop((x1, y1, x2, y2))
@@ -218,13 +207,13 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
 @beartype
 def flip_horizontal(image: Image.Image) -> Image.Image:
     """Flip image horizontally (left-right mirror)."""
-    return image.transpose(Image.FLIP_LEFT_RIGHT)
+    return image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
 
 @beartype
 def flip_vertical(image: Image.Image) -> Image.Image:
     """Flip image vertically (top-bottom mirror)."""
-    return image.transpose(Image.FLIP_TOP_BOTTOM)
+    return image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
 
 @beartype
@@ -239,5 +228,5 @@ def rotate_90(image: Image.Image, clockwise: bool = True) -> Image.Image:
         Rotated image
     """
     if clockwise:
-        return image.transpose(Image.ROTATE_270)
-    return image.transpose(Image.ROTATE_90)
+        return image.transpose(Image.Transpose.ROTATE_270)
+    return image.transpose(Image.Transpose.ROTATE_90)

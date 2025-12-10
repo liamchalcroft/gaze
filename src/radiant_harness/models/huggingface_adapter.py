@@ -1,0 +1,632 @@
+# pyright: basic
+"""HuggingFace model adapters for the VLM harness.
+
+Provides adapters for local HuggingFace models (text and vision-language).
+These are equal-priority alternatives to the OpenAI adapter for local inference.
+
+Note: Requires torch and transformers packages to be installed.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import re
+from io import BytesIO
+from typing import TYPE_CHECKING
+from typing import Any
+
+from beartype import beartype
+from loguru import logger
+
+from radiant_harness.exceptions import ModelError
+from radiant_harness.models._types import GenerationLog
+from radiant_harness.models.adapter_protocol import AdapterProtocol
+
+# Check for torch availability
+_torch_available = False
+try:
+    import torch  # pyright: ignore[reportMissingImports]
+
+    _torch_available = True
+except ImportError:
+    torch = None
+
+# Check for transformers availability
+_transformers_available = False
+try:
+    from transformers import GenerationError  # pyright: ignore[reportMissingImports]
+
+    _transformers_available = True
+except ImportError:
+    GenerationError = None
+
+if TYPE_CHECKING:
+    from PIL import Image
+    from transformers import PreTrainedModel  # pyright: ignore[reportMissingImports]
+    from transformers import PreTrainedTokenizer  # pyright: ignore[reportMissingImports]
+
+
+def _lazy_import_torch():
+    """Lazy import torch to avoid import errors when not installed."""
+    try:
+        import torch  # pyright: ignore[reportMissingImports]
+
+        return torch
+    except ImportError as e:
+        msg = "torch is required for HuggingFace adapters. Install with: pip install torch"
+        raise ImportError(msg) from e
+
+
+def _lazy_import_transformers():
+    """Lazy import transformers to avoid import errors when not installed."""
+    try:
+        import transformers  # pyright: ignore[reportMissingImports]
+
+        return transformers
+    except ImportError as e:
+        msg = "transformers is required for HuggingFace adapters. Install with: pip install transformers"
+        raise ImportError(msg) from e
+
+
+class HuggingFaceAdapter(AdapterProtocol):
+    """Adapter for HuggingFace text generation models.
+
+    Supports both text-only and vision-language models through AutoModel.
+    Provides the same interface as OpenAIAdapter for seamless switching.
+
+    Example:
+        adapter = HuggingFaceAdapter(
+            model_name="meta-llama/Llama-2-7b-chat-hf",
+            device="cuda",
+            torch_dtype="float16",
+        )
+
+        # Use with processor
+        processor = MyProcessor(
+            model_name="meta-llama/Llama-2-7b-chat-hf",
+            adapter_factory=lambda: adapter,
+        )
+    """
+
+    @beartype
+    def __init__(
+        self,
+        model_name: str,
+        device: str = "auto",
+        torch_dtype: str = "auto",
+        trust_remote_code: bool = False,
+        load_in_8bit: bool = False,
+        load_in_4bit: bool = False,
+        use_flash_attention: bool = False,
+    ) -> None:
+        """Initialize HuggingFace adapter.
+
+        Args:
+            model_name: HuggingFace model identifier or local path
+            device: Device to run on ("cuda", "cpu", "mps", or "auto")
+            torch_dtype: Data type ("auto", "float16", "bfloat16", "float32")
+            trust_remote_code: Whether to trust remote code in model repo
+            load_in_8bit: Enable 8-bit quantization (requires bitsandbytes)
+            load_in_4bit: Enable 4-bit quantization (requires bitsandbytes)
+            use_flash_attention: Enable Flash Attention 2 (requires flash-attn)
+        """
+        self.model_name = model_name
+        self._device_str = device
+        self._dtype_str = torch_dtype
+        self._trust_remote_code = trust_remote_code
+        self._load_in_8bit = load_in_8bit
+        self._load_in_4bit = load_in_4bit
+        self._use_flash_attention = use_flash_attention
+
+        # Lazy-loaded components
+        self._model: PreTrainedModel | None = None
+        self._tokenizer: PreTrainedTokenizer | None = None
+        self._torch: Any = None
+
+    @property
+    def torch(self) -> Any:
+        """Lazy load torch."""
+        if self._torch is None:
+            self._torch = _lazy_import_torch()
+        return self._torch
+
+    @property
+    def device(self) -> Any:
+        """Get the device to run on (torch.device)."""
+        torch = self.torch
+        if self._device_str == "auto":
+            if torch.cuda.is_available():
+                return torch.device("cuda")
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return torch.device("mps")
+            return torch.device("cpu")
+        return torch.device(self._device_str)
+
+    @property
+    def dtype(self) -> Any:
+        """Get the torch dtype."""
+        torch = self.torch
+        if self._dtype_str == "auto":
+            if torch.cuda.is_available():
+                return torch.float16
+            return torch.float32
+        dtype_map = {
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(self._dtype_str, torch.float32)
+
+    @property
+    def tokenizer(self) -> PreTrainedTokenizer:
+        """Get or create the tokenizer."""
+        if self._tokenizer is None:
+            transformers = _lazy_import_transformers()
+            self._tokenizer = transformers.AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=self._trust_remote_code,
+            )
+            # Ensure pad token exists
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+        return self._tokenizer
+
+    @property
+    def model(self) -> PreTrainedModel:
+        """Get or create the model."""
+        if self._model is None:
+            transformers = _lazy_import_transformers()
+
+            # Build model kwargs
+            model_kwargs: dict[str, Any] = {
+                "trust_remote_code": self._trust_remote_code,
+            }
+
+            # Quantization options
+            if self._load_in_8bit:
+                model_kwargs["load_in_8bit"] = True
+            elif self._load_in_4bit:
+                model_kwargs["load_in_4bit"] = True
+            else:
+                model_kwargs["torch_dtype"] = self.dtype
+
+            # Flash attention
+            if self._use_flash_attention:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+
+            # Device mapping
+            if self._load_in_8bit or self._load_in_4bit or self._device_str == "auto":
+                model_kwargs["device_map"] = "auto"
+
+            logger.info(f"Loading HuggingFace model: {self.model_name}")
+
+            self._model = transformers.AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                **model_kwargs,
+            )
+
+            # Move to device if not using device_map
+            if "device_map" not in model_kwargs:
+                self._model = self._model.to(self.device)
+
+            self._model.eval()
+            logger.info(f"Model loaded on {self.device}")
+
+        return self._model
+
+    @beartype
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        """Generate a chat completion using the HuggingFace model.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            tools: Tool definitions (handled via prompt engineering)
+            response_format: Response format spec (handled via prompt engineering)
+
+        Returns:
+            Tuple of (content, tool_calls, generation_log)
+        """
+        torch = self.torch
+
+        # Convert messages to prompt
+        prompt = self._format_messages(messages, _tools=tools, _response_format=response_format)
+
+        # Tokenize with memory optimization
+        max_input_length = min(self.tokenizer.model_max_length, 2048)  # Reasonable limit
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_input_length,
+        )
+        inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
+        input_length = inputs["input_ids"].shape[1]
+
+        # Generate with memory optimizations
+        try:
+            with torch.inference_mode():
+                # Use autocast if available and enabled
+                if hasattr(torch.cuda, "amp") and torch.cuda.is_available():
+                    with torch.cuda.amp.autocast(enabled=True):
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=max_tokens,
+                            temperature=max(temperature, 0.01),  # Avoid division by zero
+                            do_sample=temperature > 0,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
+                            use_cache=True,  # Improve memory efficiency
+                        )
+                else:
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        temperature=max(temperature, 0.01),  # Avoid division by zero
+                        do_sample=temperature > 0,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        use_cache=True,  # Improve memory efficiency
+                    )
+        except torch.cuda.OutOfMemoryError as e:
+            raise ModelError(f"CUDA out of memory: {e}", model_name=self.model_name) from e
+        except RuntimeError as e:
+            # HuggingFace generation errors are typically RuntimeError
+            raise ModelError(
+                f"HuggingFace generation failed: {e}", model_name=self.model_name
+            ) from e
+
+        # Decode response (only new tokens)
+        response_ids = outputs[0][input_length:]
+        content = self.tokenizer.decode(response_ids, skip_special_tokens=True)
+
+        # Parse tool calls if tools were provided
+        tool_calls = None
+        if tools:
+            tool_calls, content = self._parse_tool_calls(content)
+
+        # Build generation log
+        gen_log = GenerationLog(
+            prompt_tokens=input_length,
+            completion_tokens=len(response_ids),
+            finish_reason="stop",
+        )
+
+        logger.debug(f"HuggingFace completion finished, tokens={gen_log.tokens}")
+
+        return content, tool_calls, gen_log
+
+    def _format_messages(
+        self,
+        messages: list[dict[str, Any]],
+        _tools: list[dict[str, Any]] | None = None,
+        _response_format: dict[str, Any] | None = None,
+    ) -> str:
+        """Format messages into a prompt string.
+
+        Uses the tokenizer's chat template if available, otherwise falls back
+        to a simple format.
+
+        Note: tools and response_format are handled by the chat template automatically.
+        """
+        # Use chat template - all modern HF tokenizers support this
+        # Convert any multimodal content to text-only for text-only models
+        text_messages = self._extract_text_messages(messages)
+        return self.tokenizer.apply_chat_template(
+            text_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+    def _extract_text_messages(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Extract text-only versions of messages for chat template."""
+        text_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = [
+                    item.get("text", "") for item in content if item.get("type") == "text"
+                ]
+                content = "\n".join(text_parts)
+            text_messages.append(
+                {
+                    "role": msg.get("role", "user"),
+                    "content": content,
+                }
+            )
+        return text_messages
+
+    def _format_tools(self, tools: list[dict[str, Any]]) -> str:
+        """Format tool definitions for the prompt."""
+        tool_docs = ["Available tools:"]
+        for tool in tools:
+            func = tool.get("function", {})
+            name = func.get("name", "unknown")
+            desc = func.get("description", "")
+            params = func.get("parameters", {})
+            tool_docs.append(f"\n- {name}: {desc}")
+            if params.get("properties"):
+                tool_docs.append(f"  Parameters: {json.dumps(params['properties'], indent=2)}")
+
+        tool_docs.append(
+            "\nTo use a tool, respond with:\n"
+            '```tool\n{"name": "tool_name", "arguments": {...}}\n```'
+        )
+        return "\n".join(tool_docs)
+
+    def _format_response_instructions(
+        self,
+        response_format: dict[str, Any],
+    ) -> str:
+        """Format response format instructions."""
+        if response_format.get("type") == "json_schema":
+            schema = response_format.get("json_schema", {}).get("schema", {})
+            return f"Respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+        if response_format.get("type") == "json_object":
+            return "Respond with valid JSON."
+        return ""
+
+    def _parse_tool_calls(
+        self,
+        content: str,
+    ) -> tuple[list[dict[str, Any]] | None, str]:
+        """Parse tool calls from model output.
+
+        Returns:
+            Tuple of (tool_calls, remaining_content)
+        """
+        tool_calls = []
+
+        # Look for tool call blocks
+        pattern = r"```tool\s*(\{.*?\})\s*```"
+        matches = re.findall(pattern, content, re.DOTALL)
+
+        for i, match in enumerate(matches):
+            try:
+                call_data = json.loads(match)
+                tool_calls.append(
+                    {
+                        "id": f"call_{i}",
+                        "name": call_data.get("name", ""),
+                        "arguments": json.dumps(call_data.get("arguments", {})),
+                    }
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Skipping malformed tool call block {i}: {e}")
+
+        # Remove tool blocks from content
+        clean_content = re.sub(pattern, "", content, flags=re.DOTALL).strip()
+
+        return tool_calls if tool_calls else None, clean_content
+
+
+class HuggingFaceVLMAdapter(HuggingFaceAdapter):
+    """Adapter for HuggingFace Vision-Language Models.
+
+    Extends HuggingFaceAdapter with image processing capabilities for
+    models like LLaVA, InstructBLIP, Qwen-VL, etc.
+
+    Example:
+        adapter = HuggingFaceVLMAdapter(
+            model_name="llava-hf/llava-1.5-7b-hf",
+            device="cuda",
+        )
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        device: str = "auto",
+        torch_dtype: str = "auto",
+        trust_remote_code: bool = False,
+        load_in_8bit: bool = False,
+        load_in_4bit: bool = False,
+        use_flash_attention: bool = False,
+    ) -> None:
+        """Initialize HuggingFace VLM adapter."""
+        super().__init__(
+            model_name=model_name,
+            device=device,
+            torch_dtype=torch_dtype,
+            trust_remote_code=trust_remote_code,
+            load_in_8bit=load_in_8bit,
+            load_in_4bit=load_in_4bit,
+            use_flash_attention=use_flash_attention,
+        )
+        self._processor: Any = None
+
+    @property
+    def processor(self):
+        """Get or create the processor (tokenizer + image processor)."""
+        if self._processor is None:
+            transformers = _lazy_import_transformers()
+            self._processor = transformers.AutoProcessor.from_pretrained(
+                self.model_name,
+                trust_remote_code=self._trust_remote_code,
+            )
+        return self._processor
+
+    @property
+    def tokenizer(self) -> PreTrainedTokenizer:
+        """Get tokenizer from processor."""
+        return self.processor.tokenizer
+
+    @property
+    def model(self) -> PreTrainedModel:
+        """Get or create the VLM model."""
+        if self._model is None:
+            transformers = _lazy_import_transformers()
+
+            model_kwargs: dict[str, Any] = {
+                "trust_remote_code": self._trust_remote_code,
+            }
+
+            if self._load_in_8bit:
+                model_kwargs["load_in_8bit"] = True
+            elif self._load_in_4bit:
+                model_kwargs["load_in_4bit"] = True
+            else:
+                model_kwargs["torch_dtype"] = self.dtype
+
+            if self._use_flash_attention:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+
+            if self._load_in_8bit or self._load_in_4bit or self._device_str == "auto":
+                model_kwargs["device_map"] = "auto"
+
+            logger.info(f"Loading HuggingFace VLM: {self.model_name}")
+
+            # Try Vision2Seq first, then fall back to CausalLM
+            try:
+                self._model = transformers.AutoModelForVision2Seq.from_pretrained(
+                    self.model_name,
+                    **model_kwargs,
+                )
+                logger.debug(f"Loaded {self.model_name} as Vision2Seq model")
+            except (ValueError, OSError, RuntimeError) as e:
+                logger.info(
+                    f"Vision2Seq not supported for {self.model_name} ({type(e).__name__}), "
+                    f"loading as CausalLM"
+                )
+                self._model = transformers.AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    **model_kwargs,
+                )
+
+            if "device_map" not in model_kwargs:
+                self._model = self._model.to(self.device)
+
+            self._model.eval()
+            logger.info(f"VLM loaded on {self.device}")
+
+        return self._model
+
+    @beartype
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        """Generate a chat completion with image support."""
+        torch = self.torch
+
+        # Extract images from messages
+        images = self._extract_images(messages)
+
+        # Format prompt
+        prompt = self._format_messages(messages, _tools=tools, _response_format=response_format)
+
+        # Process inputs
+        if images:
+            inputs = self.processor(
+                text=prompt,
+                images=images,
+                return_tensors="pt",
+                padding=True,
+            )
+        else:
+            inputs = self.processor(
+                text=prompt,
+                return_tensors="pt",
+                padding=True,
+            )
+
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        input_length = inputs.get("input_ids", inputs.get("inputs_embeds")).shape[1]
+
+        # Generate
+        try:
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_tokens,
+                    temperature=max(temperature, 0.01),
+                    do_sample=temperature > 0,
+                    pad_token_id=self.processor.tokenizer.pad_token_id,
+                    eos_token_id=self.processor.tokenizer.eos_token_id,
+                )
+        except torch.cuda.OutOfMemoryError as e:
+            raise ModelError(f"CUDA out of memory in VLM: {e}", model_name=self.model_name) from e
+        except RuntimeError as e:
+            # HuggingFace generation errors are typically RuntimeError
+            raise ModelError(
+                f"HuggingFace VLM generation failed: {e}", model_name=self.model_name
+            ) from e
+
+        # Decode response
+        response_ids = outputs[0][input_length:]
+        content = self.processor.tokenizer.decode(response_ids, skip_special_tokens=True)
+
+        # Parse tool calls
+        tool_calls = None
+        if tools:
+            tool_calls, content = self._parse_tool_calls(content)
+
+        gen_log = GenerationLog(
+            prompt_tokens=input_length,
+            completion_tokens=len(response_ids),
+            finish_reason="stop",
+        )
+
+        logger.debug(
+            f"HuggingFace VLM completion finished, tokens={gen_log.tokens}, images={len(images)}"
+        )
+
+        return content, tool_calls, gen_log
+
+    def _extract_images(self, messages: list[dict[str, Any]]) -> list[Image.Image]:
+        """Extract PIL images from message content."""
+        from PIL import Image as PILImage
+
+        images = []
+
+        for msg in messages:
+            content = msg.get("content", [])
+            if not isinstance(content, list):
+                continue
+
+            for item in content:
+                if item.get("type") != "image_url":
+                    continue
+
+                image_url = item.get("image_url", {})
+                url = image_url.get("url", "")
+
+                try:
+                    if url.startswith("data:"):
+                        # Base64 encoded image
+                        # Format: data:image/png;base64,<data>
+                        _, data = url.split(",", 1)
+                        image_data = base64.b64decode(data)
+                        image = PILImage.open(BytesIO(image_data))
+                    elif url.startswith(("http://", "https://")):
+                        # URL - would need httpx to fetch
+                        # For now, skip remote URLs
+                        logger.warning(f"Remote image URLs not supported: {url[:50]}...")
+                        continue
+                    else:
+                        # Local file path
+                        image = PILImage.open(url)
+
+                    images.append(image.convert("RGB"))
+                except (OSError, ValueError, binascii.Error) as e:
+                    logger.warning(f"Failed to load image: {e}")
+                    continue
+
+        return images

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+
+# Default model for semantic matching - cost-efficient SOTA model via OpenRouter
+import os
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -10,8 +13,10 @@ from typing import Any
 from beartype import beartype
 from loguru import logger
 
-# Default model for semantic matching - cost-efficient SOTA model via OpenRouter
-DEFAULT_SEMANTIC_MATCH_MODEL = "x-ai/grok-4.1-fast:free"
+DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
+    "NOVA_SEMANTIC_MATCH_MODEL",
+    "x-ai/grok-4.1-fast:free"
+)
 
 # Pre-compiled regex patterns for better performance
 _DASH_PATTERN = re.compile(r"\s*–\s*")
@@ -218,13 +223,13 @@ def llm_semantic_match(pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_M
 
 
 @beartype
-def evaluate_diagnosis_nova_official(
+async def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
     model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
 ) -> dict[str, float]:
     """
-    Official NOVA diagnosis evaluation using LLM semantic matching.
+    Official NOVA diagnosis evaluation using LLM semantic matching (async).
 
     This implements the NOVA evaluation protocol which uses LLM-based semantic
     matching between predictions and ground truth labels. The default model
@@ -252,7 +257,7 @@ def evaluate_diagnosis_nova_official(
     # Track semantic and exact matches
     top1_count = 0
     top5_count = 0
-    all_preds = []
+    all_preds: list[Any] = []
 
     for i, (p, r) in enumerate(zip(preds, refs, strict=True)):
         if i % 10 == 0 and i > 0:
@@ -263,11 +268,9 @@ def evaluate_diagnosis_nova_official(
             top1_pred = p[0] if p else None
 
             # Top-1 evaluation - use fast exact match first, then LLM semantic matching
-            if top1_pred and (
-                exact_diagnosis_match(str(top1_pred), str(r))
-                or llm_semantic_match(str(top1_pred), str(r), model_name)
-            ):
-                top1_count += 1
+            if top1_pred:
+                if exact_diagnosis_match(str(top1_pred), str(r)) or await llm_semantic_match_async(str(top1_pred), str(r), model_name):
+                    top1_count += 1
 
             # Top-5 evaluation - use fast exact match first, then LLM for remaining
             top5_match = False
@@ -275,7 +278,7 @@ def evaluate_diagnosis_nova_official(
                 if exact_diagnosis_match(str(pred), str(r)):
                     top5_match = True
                     break
-                if llm_semantic_match(str(pred), str(r), model_name):
+                if await llm_semantic_match_async(str(pred), str(r), model_name):
                     top5_match = True
                     break
 
@@ -285,9 +288,7 @@ def evaluate_diagnosis_nova_official(
             all_preds.extend(p)
         else:
             # Handle single predictions - use fast exact match first, then LLM
-            if exact_diagnosis_match(str(p), str(r)) or llm_semantic_match(
-                str(p), str(r), model_name
-            ):
+            if exact_diagnosis_match(str(p), str(r)) or await llm_semantic_match_async(str(p), str(r), model_name):
                 top1_count += 1
                 top5_count += 1
 

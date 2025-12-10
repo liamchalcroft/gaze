@@ -1,48 +1,41 @@
-"""NOVA VLM - Radiology Vision Language Model Evaluation Framework.
+"""Radiant Harness - Agentic VLM Framework for Medical Image Analysis.
 
-This is a research framework for benchmarking vision-language models
-on the NOVA brain-MRI dataset using agentic multi-turn reasoning.
+This is a library for building multi-turn agentic vision-language model systems.
+It provides core infrastructure for tool-augmented reasoning over medical images.
+
+To run the NOVA benchmark example:
+    cd examples/nova
+    python -m src.cli task=localization model.name=openai/gpt-4o
+
+For library usage, import from radiant_harness:
+    from radiant_harness import AgenticProcessorBase, ToolRegistry
 """
 
 from __future__ import annotations
 
-import argparse
 import sys
-from pathlib import Path
-
-# Add examples to path for NOVA CLI
-sys.path.insert(0, str(Path(__file__).parent / "examples"))
 
 
-def main() -> None:
-    """Main entry point for the NOVA VLM framework."""
-    parser = argparse.ArgumentParser(
-        description="NOVA VLM - Radiology Vision Language Model Evaluation Framework",
-        epilog="Example: python -m nova_retrieval_vlm task=localization model=openai/gpt-4o",
-    )
-    parser.add_argument(
-        "hydra_args",
-        nargs="*",
-        help="Hydra configuration arguments (e.g., task=localization model=openai/gpt-4o)",
-    )
+def main() -> int:
+    """Display library information and usage instructions."""
+    from radiant_harness import __version__
 
-    args = parser.parse_args()
-
-    # Import and run NOVA CLI
-    from nova.src.cli import main as nova_main
-
-    # Convert hydra args to sys.argv format
-    sys.argv = ["nova"] + args.hydra_args
-
-    try:
-        nova_main()
-    except KeyboardInterrupt:
-        sys.stderr.write("\nInterrupted by user\n")
-        sys.exit(1)
-    except Exception as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
+    print(f"Radiant Harness v{__version__}")
+    print()
+    print("A framework for building agentic VLM systems for medical image analysis.")
+    print()
+    print("This package is a library - import it in your code:")
+    print()
+    print("    from radiant_harness import AgenticProcessorBase, ToolRegistry")
+    print()
+    print("To run the NOVA benchmark example:")
+    print()
+    print("    cd examples/nova")
+    print("    python -m src.cli task=localization model.name=openai/gpt-4o")
+    print()
+    print("For more information, see the README.md or CLAUDE.md files.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

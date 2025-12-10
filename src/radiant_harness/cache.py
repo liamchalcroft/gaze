@@ -6,15 +6,24 @@ Provides a generic TTL cache implementation used by search managers.
 from __future__ import annotations
 
 import time
+from typing import Any
 from typing import Generic
+from typing import Protocol
 from typing import TypeVar
+from typing import runtime_checkable
 
 from beartype import beartype
+from loguru import logger
 
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import get_config
 
 T = TypeVar("T")
+
+
+@runtime_checkable
+class _SupportsClose(Protocol):
+    def close(self) -> Any: ...
 
 
 class TTLCache(Generic[T]):
@@ -121,9 +130,19 @@ class TTLCache(Generic[T]):
             return True
         return False
 
+    def _close_value(self, key: str, value: object, reason: str) -> None:
+        """Close a cached value if it exposes a close method."""
+        if isinstance(value, _SupportsClose):
+            try:
+                value.close()
+            except OSError as e:
+                logger.warning(f"Error closing {reason} cached value for key {key}: {e}")
+
     @beartype
     def clear(self) -> None:
-        """Remove all entries from the cache."""
+        """Remove all entries from the cache with cleanup."""
+        for key, (_, value) in self._cache.items():
+            self._close_value(key, value, "cached")
         self._cache.clear()
 
     @beartype
@@ -134,13 +153,15 @@ class TTLCache(Generic[T]):
         """
         current_time = time.time()
 
-        # First, remove expired entries
+        # First, remove expired entries with cleanup
         expired_keys = [
             key
             for key, (timestamp, _) in self._cache.items()
             if current_time - timestamp > self._config.cache_duration_seconds
         ]
         for key in expired_keys:
+            _, value = self._cache[key]
+            self._close_value(key, value, "expired")
             del self._cache[key]
 
         # If still over limit, evict oldest entries
@@ -153,6 +174,8 @@ class TTLCache(Generic[T]):
             keys_to_remove = sorted_keys[: len(self._cache) - target_size]
 
             for key in keys_to_remove:
+                _, value = self._cache[key]
+                self._close_value(key, value, "evicted")
                 del self._cache[key]
 
     @property

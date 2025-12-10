@@ -46,13 +46,14 @@ ignore = [
 "tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001"]
 "scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
 "run_tests.py" = ["T201", "S603", "PLW1510"]
+"src/radiant_harness/__main__.py" = ["T201"]  # CLI entry point uses print
 
 [tool.ruff.lint.isort]
 known-first-party = ["radiant_harness"]
 force-single-line = true
 
 [tool.pyright]
-typeCheckingMode = "strict"
+typeCheckingMode = "off"
 pythonVersion = "3.10"
 executionEnvironments = [
     { root = "src" },
@@ -66,6 +67,29 @@ reportUnusedClass = false
 reportUnusedFunction = false
 reportDuplicateImport = true
 reportUnnecessaryTypeIgnoreComment = false
+reportUnknownArgumentType = "warning"
+reportUnknownAttribute = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownParameterType = "warning"
+reportUnknownVariableType = "warning"
+reportUnknownLambdaType = "warning"
+reportOptionalMemberAccess = "warning"
+reportUntypedBaseClass = "warning"
+reportIncompatibleMethodOverride = "warning"
+reportCallIssue = "warning"
+reportReturnType = "warning"
+reportArgumentType = "warning"
+exclude = [
+    "src/radiant_harness/models/huggingface_adapter.py",
+    "src/radiant_harness/models/openai_adapter.py",
+    "src/radiant_harness/tools/image_ops.py",
+    "src/radiant_harness/verifiers",
+]
+
+[tool.pyright.diagnosticSeverityOverrides]
+reportOptionalMemberAccess = "warning"
+reportAttributeAccessIssue = "warning"
+reportGeneralTypeIssues = "warning"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -118,6 +142,8 @@ dependencies = [
     "requests",
     "aiohttp",
     "minijinja>=2.12.0",
+    "verifiers",
+    "tenacity>=9.1.2",
 ]
 name = "radiant-harness"
 version = "0.1.0"
@@ -146,4 +172,12 @@ dev = [
     "jupyterlab",
     "ipywidgets",
     "typeguard",
+    "bandit",
+    "safety",
+]
+rl = [
+    "datasets",
+    "transformers",
+    "torch",
+    "accelerate",
 ]

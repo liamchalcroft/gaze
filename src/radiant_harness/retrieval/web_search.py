@@ -8,6 +8,7 @@ with proper error handling, result formatting, source verification, and reliabil
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import re
 from dataclasses import dataclass
@@ -237,6 +238,18 @@ class SearchEngine:
         return 0.60
 
 
+@functools.lru_cache(maxsize=1)
+def _get_ncbi_email() -> str | None:
+    """Get NCBI_EMAIL from environment, logging once if missing.
+
+    Uses lru_cache for thread-safe one-time initialization.
+    """
+    email = os.getenv("NCBI_EMAIL")
+    if not email:
+        logger.debug("NCBI_EMAIL not set; PubMed requests will proceed without it")
+    return email
+
+
 class PubMedSearchEngine(SearchEngine):
     """Enhanced PubMed search with better error handling and metadata extraction."""
 
@@ -249,8 +262,6 @@ class PubMedSearchEngine(SearchEngine):
         r"\b(?:malignant|benign|metastatic|primary)\b",
     ]
 
-    _email_warning_logged: bool = False
-
     @beartype
     def __init__(self, config: SearchConfig | None = None) -> None:
         """Initialize PubMed search engine.
@@ -261,21 +272,12 @@ class PubMedSearchEngine(SearchEngine):
         super().__init__("PubMed", config=config)
         self.base_url = self._config.ncbi_base_url
         self.api_key = os.getenv("NCBI_API_KEY")
-        self.email = self._get_optional_email()
+        self.email = _get_ncbi_email()
 
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
 
         self._rate_limit_delay = 0.5
-
-    @classmethod
-    def _get_optional_email(cls) -> str | None:
-        """Return NCBI_EMAIL if provided; log debug message once if missing."""
-        email = os.getenv("NCBI_EMAIL")
-        if not email and not cls._email_warning_logged:
-            logger.debug("NCBI_EMAIL not set; PubMed requests will proceed without it")
-            cls._email_warning_logged = True
-        return email
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Search PubMed with enhanced metadata extraction."""
@@ -305,15 +307,12 @@ class PubMedSearchEngine(SearchEngine):
             search_data = await response.json()
 
         if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
-            # No results found - this is valid, not an error
             return []
 
         pmid_list = search_data["esearchresult"]["idlist"]
         if not pmid_list:
-            # No matching articles - valid empty result
             return []
 
-        # Step 2: Fetch detailed information
         return await self._fetch_article_details(pmid_list)
 
     async def _fetch_article_details(self, pmid_list: list[str]) -> list[SearchResult]:
@@ -341,7 +340,6 @@ class PubMedSearchEngine(SearchEngine):
             data = await response.json()
 
         if "result" not in data:
-            # No article details available - return empty (valid case)
             return []
 
         results = []
@@ -362,7 +360,7 @@ class PubMedSearchEngine(SearchEngine):
 
             # Check for open access
             open_access = any(
-                aid["idtype"] == "pmc" for aid in article_ids if isinstance(aid, dict)
+                aid.get("idtype") == "pmc" for aid in article_ids if isinstance(aid, dict)
             )
 
             # Determine content type
@@ -590,12 +588,12 @@ class WebSearchManager:
         search_query = self._enhance_query(query, search_type) if enhance_query else query
 
         # Cache key must capture all knobs that change result sets
+        # Use hash for long queries to keep cache keys compact
+        import hashlib
+
         engine_names = ",".join(engine.name for engine in self.engines)
-        cache_key = (
-            f"q={search_query}|orig={query}|type={search_type}|med={medical_focus}|"
-            f"enh={enhance_query}|per={self.max_results_per_engine}|"
-            f"total={self.max_total_results}|engines={engine_names}"
-        )
+        query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:8]
+        cache_key = f"{query_hash}:{search_type}:{medical_focus}:{self.max_results_per_engine}:{self.max_total_results}:{engine_names}"
 
         # Check cache using TTLCache (handles expiration automatically)
         cached_results = self._cache.get(cache_key)
@@ -644,12 +642,6 @@ class WebSearchManager:
         """Enhance query based on search type using configurable templates."""
         if search_type in self.QUERY_ENHANCEMENTS:
             return self.QUERY_ENHANCEMENTS[search_type].format(query=query)
-
-        # Check if query already contains enhancement terms
-        enhancement_terms = {"diagnosis", "guidelines", "research", "anatomy", "treatment"}
-        if any(term in query.lower() for term in enhancement_terms):
-            return query
-
         return self.DEFAULT_ENHANCEMENT.format(query=query)
 
     @beartype

@@ -5,6 +5,8 @@ Provides visual tools, search tools, and the tool registry.
 
 from __future__ import annotations
 
+from radiant_harness.tools.decorators import tool
+from radiant_harness.tools.decorators import visual_tool
 from radiant_harness.tools.registry import EncodedImage
 from radiant_harness.tools.registry import ToolRegistry
 from radiant_harness.tools.registry import encode_image
@@ -19,4 +21,6 @@ __all__ = [
     "create_search_tools",
     "create_visual_tools",
     "encode_image",
+    "tool",
+    "visual_tool",
 ]

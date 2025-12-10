@@ -86,8 +86,18 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         metadata.setdefault("image_id", metadata.get("image_id", f"sample_{i}"))
 
         # Save lossless copy temporarily for processing (avoid JPEG artifacts)
-        temp_image_path = config.output_dir / f"temp_{i}.png"
-        image.save(temp_image_path, format="PNG", optimize=True)
+        # Use NamedTemporaryFile for secure handling
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".png",
+            prefix="nova_temp_",
+            dir=config.output_dir,
+            delete=False,
+            mode=0o600  # Secure permissions
+        ) as tmp:
+            image.save(tmp.name, format="PNG", optimize=True)
+            temp_image_path = Path(tmp.name)
 
         try:
             # Run analysis using radiant_harness
@@ -121,12 +131,15 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             )
 
         finally:
-            # Clean up temp image
-            temp_image_path.unlink(missing_ok=True)
+            # Clean up temp image with better error handling
+            try:
+                temp_image_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {temp_image_path}: {e}")
 
     # Compute evaluation metrics
     logger.info("Computing evaluation metrics...")
-    metrics = compute_metrics(results, ground_truth, config.task)
+    metrics = await compute_metrics(results, ground_truth, config.task)
 
     # Save summary
     summary_file = config.output_dir / "summary.json"
@@ -150,7 +163,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     return metrics
 
 
-def compute_metrics(
+async def compute_metrics(
     results: list[AgenticResult],
     ground_truth: list[dict[str, Any]],
     task: TaskType,
@@ -186,7 +199,12 @@ def compute_metrics(
                 raise TypeError(
                     f"Prediction {i} 'caption' must be dict, got {type(caption).__name__}"
                 )
-            pred_captions.append(caption.get("description", ""))
+            description = caption.get("description")
+            if description is None:
+                raise KeyError(
+                    f"Prediction {i} 'caption' missing required 'description' field"
+                )
+            pred_captions.append(description)
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
         metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
 
@@ -196,15 +214,20 @@ def compute_metrics(
             diag = p.get("diagnosis")
             if diag is None:
                 raise KeyError(f"Prediction {i} missing 'diagnosis' field")
-            if isinstance(diag, dict):
-                pred_diagnoses.append(
-                    diag.get("primary_diagnosis") or diag.get("diagnosis") or diag.get("text") or ""
+            if not isinstance(diag, dict):
+                raise TypeError(
+                    f"Prediction {i} 'diagnosis' must be dict per NOVA schema, "
+                    f"got {type(diag).__name__}"
                 )
-            else:
-                pred_diagnoses.append(str(diag))
+            primary = diag.get("primary_diagnosis")
+            if primary is None:
+                raise KeyError(
+                    f"Prediction {i} 'diagnosis' missing required 'primary_diagnosis' field"
+                )
+            pred_diagnoses.append(primary)
 
         gt_diagnoses = [gt.get("final_diagnosis", "") for gt in ground_truth]
-        metrics["diagnosis"] = evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
+        metrics["diagnosis"] = await evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
 
     if task in (TaskType.ALL, TaskType.LOCALIZATION):
         pred_boxes = []
@@ -220,25 +243,26 @@ def compute_metrics(
             localizations = loc_data.get("localizations", [])
             boxes = []
             scores = []
-            for loc in localizations:
-                bbox = loc.get("bounding_box") or loc.get("bbox")
-                if bbox:
-                    boxes.append(bbox)
-                    scores.append(loc.get("confidence", 1.0))
+            for j, loc in enumerate(localizations):
+                # Schema requires 'bounding_box' - enforce strictly
+                bbox = loc.get("bounding_box")
+                if bbox is None:
+                    raise KeyError(
+                        f"Prediction {i} localization {j} missing required 'bounding_box' field"
+                    )
+                boxes.append(bbox)
+                scores.append(loc.get("confidence", 1.0))
             pred_boxes.append(
                 {
                     "boxes": boxes,
-                    "scores": scores or [1.0] * len(boxes),
+                    "scores": scores,
                     "labels": [0] * len(boxes),
                 }
             )
 
+            # Ground truth format: uses 'bbox' field
             gt_localizations = gt.get("localizations", [])
-            gt_box_list = []
-            for loc in gt_localizations:
-                bbox = loc.get("bbox") or loc.get("bounding_box") or loc.get("box")
-                if bbox:
-                    gt_box_list.append(bbox)
+            gt_box_list = [loc["bbox"] for loc in gt_localizations if "bbox" in loc]
             gt_boxes.append(
                 {
                     "boxes": gt_box_list,

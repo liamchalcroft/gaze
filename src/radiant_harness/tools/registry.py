@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING
 from typing import Any
 
 from beartype import beartype
+from PIL import Image
 
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
@@ -37,17 +37,13 @@ class EncodedImage:
 
 
 @beartype
-def encode_image(image) -> EncodedImage:
-    """Encode a PIL Image to base64 string."""
+def encode_image(image: Image.Image) -> EncodedImage:
+    """Encode a PIL Image to base64 PNG string."""
     buffer = BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     image_bytes = buffer.getvalue()
     image_base64 = base64.b64encode(image_bytes).decode("utf-8")
     return EncodedImage(data=image_base64, mime_type="image/png")
-
-
-if TYPE_CHECKING:
-    pass
 
 
 class ToolRegistry:
@@ -99,14 +95,9 @@ class ToolRegistry:
 
     @beartype
     async def aclose(self) -> None:
-        """Async close to properly clean up search engine sessions."""
+        """Async close to properly clean up resources."""
         self._image_manager.close()
         self._tool_history.clear()
-
-        # Close search managers if they were injected via tool execution
-        for tool in self._documenter.get_all_tools():
-            if hasattr(tool, "_search_manager") and tool._search_manager is not None:
-                await tool._search_manager.close()
 
     @beartype
     def close(self) -> None:
@@ -144,14 +135,7 @@ class ToolRegistry:
                     f"Tool '{tool_name}' requires an image, but no image path was provided"
                 )
 
-        try:
-            result = await tool.execute(self, **kwargs)
-        except ToolExecutionError:
-            raise
-        except ValueError as e:
-            raise ToolExecutionError(f"Tool '{tool_name}' received invalid arguments: {e}") from e
-        except TypeError as e:
-            raise ToolExecutionError(f"Tool '{tool_name}' call signature is invalid: {e}") from e
+        result = await tool.execute(self, **kwargs)
 
         self._tool_history.append(result)
         # Maintain history size limit to prevent memory leaks

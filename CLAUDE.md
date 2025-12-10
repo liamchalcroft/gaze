@@ -1,27 +1,57 @@
-# NOVA VLM Project Guide for Claude
+# Radiant Harness - Project Guide for Claude
 
 ## Project Overview
-This is a research framework for benchmarking vision-language models on the NOVA brain-MRI dataset. It evaluates models on medical imaging analysis tasks including localization, captioning, and diagnosis using agentic multi-turn reasoning with visual tools and web search.
+Radiant Harness is a modular framework for building multi-turn agentic vision-language model systems for medical image analysis. It provides core infrastructure for tool-augmented reasoning over radiological images.
+
+The repository also includes `examples/nova/` - a complete example implementation for benchmarking VLMs on the NOVA brain-MRI dataset.
 
 ## Quick Reference
 
 ### Project Structure
 ```
 nova_retrieval_vlm/
-├── src/nova_retrieval_vlm/     # Main Python package
-│   ├── cli.py                  # Main CLI interface
-│   ├── config.py               # Hydra configuration classes
-│   ├── agentic/                # Agentic processing (multi-turn, visual tools, web search)
-│   ├── data/                   # Dataset handling
-│   ├── evaluation/             # Task-specific evaluation metrics
-│   ├── models/                 # Model adapters (OpenAI, OpenRouter)
-│   ├── processors/             # Task processors (localization, diagnosis, caption)
-│   ├── prompts/                # Jinja2 prompt templates
-│   └── visualization/          # Streamlit GUI and plotting
-├── scripts/                    # Utility scripts for benchmarking
-├── tests/                      # Test suite (150+ tests)
-├── paper/                      # LaTeX paper files
-└── docs/                       # Documentation
+├── src/radiant_harness/        # Main Python package
+│   ├── __init__.py             # Public API exports
+│   ├── __main__.py             # CLI entry point
+│   ├── base.py                 # AgenticProcessorBase abstract class
+│   ├── config.py               # Configuration dataclasses
+│   ├── types.py                # Core types (ToolCall, ToolResult, Turn, AgenticResult)
+│   ├── protocols.py            # Protocol definitions
+│   ├── exceptions.py           # Exception hierarchy
+│   ├── cache.py                # TTLCache implementation
+│   ├── models/                 # Model adapters
+│   │   ├── __init__.py
+│   │   ├── _types.py           # GenerationLog
+│   │   ├── adapter_protocol.py # AdapterProtocol
+│   │   └── openai_adapter.py   # OpenAI API adapter
+│   ├── tools/                  # Tool system
+│   │   ├── __init__.py
+│   │   ├── tool.py             # Tool class definition
+│   │   ├── registry.py         # ToolRegistry, EncodedImage
+│   │   ├── visual.py           # Visual tools (zoom, crop, contrast, etc.)
+│   │   ├── search.py           # Search tools (web, image)
+│   │   ├── image_manager.py    # Image loading and transformation
+│   │   ├── image_ops.py        # Image operations
+│   │   └── tool_documenter.py  # Schema generation
+│   ├── retrieval/              # External search integrations
+│   │   ├── __init__.py
+│   │   ├── web_search.py       # PubMed search
+│   │   └── image_search.py     # Open-i image search
+│   └── prompts/                # Template loading utilities
+│       ├── __init__.py
+│       └── examples/           # Example task templates
+├── examples/nova/              # NOVA benchmark example
+│   ├── src/                    # NOVA-specific implementation
+│   │   ├── cli.py              # CLI interface
+│   │   ├── config.py           # Hydra configuration
+│   │   ├── processor.py        # NOVA processor
+│   │   ├── schemas.py          # Response schemas
+│   │   └── ...
+│   ├── config/                 # Hydra configs
+│   └── scripts/                # Benchmark scripts
+├── tests/                      # Test suite
+├── pyproject.toml              # Project configuration
+└── README.md
 ```
 
 ## Key Commands
@@ -30,216 +60,131 @@ nova_retrieval_vlm/
 ```bash
 # Environment management (REQUIRED - use uv exclusively)
 uv sync
-uv run python -m nova_retrieval_vlm.cli_new task=localization
+uv run python -m radiant_harness
 
-# Run tests with proper coverage
+# Run tests
 uv run pytest
-uv run pytest --cov=nova_retrieval_vlm --cov-report=html
+uv run pytest --cov=radiant_harness --cov-report=html
 
-# Modern code quality checks (REQUIRED tools)
-uv run ruff check .          # Linting with modern rules
-uv run ruff format .         # Formatting (replaces black/isort)
-uv run pyright              # Type checking (replaces mypy)
+# Code quality checks
+uv run ruff check .          # Linting
+uv run ruff format .         # Formatting
+uv run pyright               # Type checking
 
-# Quality assurance script
-bash scripts/check_quality.sh  # Comprehensive quality checks
-
-# Pre-commit hooks (configured for modern tools)
+# Pre-commit hooks
 pre-commit run --all-files
 ```
 
-### Running Experiments
+### Running NOVA Examples
 ```bash
-# Basic localization task
-python -m nova_retrieval_vlm.cli task=localization model.name=openai/gpt-4o
-
-# Agentic multi-turn analysis with visual tools
-python -m nova_retrieval_vlm.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
-
-# Multi-turn analysis
-python -m nova_retrieval_vlm.cli task=diagnosis approach=multiturn
-```
-
-### Benchmark Scripts
-```bash
-# Run complete benchmark suite
-bash scripts/run_full_benchmarks.sh
-
-# Individual benchmarks
-bash scripts/run_baseline_benchmark.sh
-bash scripts/run_multiturn_benchmark.sh
+# Run from examples/nova directory or use full paths
+cd examples/nova
+python -m src.cli task=localization model.name=openai/gpt-4o
 ```
 
 ## Technology Stack
-- **Core**: Python 3.10+, PyTorch, Hydra configuration
-- **Models**: OpenRouter API (100+ models), OpenAI API
-- **Web Search**: PubMed integration for real-time medical literature
-- **Evaluation**: TorchMetrics, BERTScore, RadGraph
-- **Visualization**: Streamlit, Plotly, Matplotlib
-- **Type Safety**: jaxtyping (tensor shapes), beartype (runtime validation)
-- **Development**: uv (env management), ruff (linting/format), pyright (type check)
-- **Modern Tools**: fd (file search), ast-grep (code analysis)
+- **Core**: Python 3.10+, asyncio
+- **Models**: OpenAI API compatible (OpenRouter, OpenAI)
+- **Web Search**: PubMed, Open-i integration
+- **Templating**: minijinja
+- **Type Safety**: beartype (runtime validation)
+- **Development**: uv, ruff, pyright
 
 ## Important Files
-- `src/nova_retrieval_vlm/cli.py` - Main CLI interface
-- `src/nova_retrieval_vlm/config.py` - Configuration dataclasses (includes AgenticConfig)
-- `src/nova_retrieval_vlm/types.py` - Type definitions with jaxtyping/beartype
-- `src/nova_retrieval_vlm/agentic/` - Agentic processing module:
-  - `processor.py` - Core AgenticProcessor with multi-turn reasoning
-  - `tools.py` - ToolRegistry with visual tools (zoom, crop, contrast, threshold, web search)
-  - `localization.py` - AgenticLocalizationProcessor
-  - `diagnosis.py` - AgenticDiagnosisProcessor
-- `src/nova_retrieval_vlm/processors/` - Task processors (localization, diagnosis, caption)
-- `src/nova_retrieval_vlm/models/openai_adapter.py` - Model API interface
-- `src/nova_retrieval_vlm/evaluation/` - Evaluation metrics (NOVA benchmark protocol)
+- `src/radiant_harness/__init__.py` - Public API
+- `src/radiant_harness/base.py` - AgenticProcessorBase abstract class
+- `src/radiant_harness/config.py` - Configuration dataclasses
+- `src/radiant_harness/types.py` - Core type definitions
+- `src/radiant_harness/tools/registry.py` - ToolRegistry
+- `src/radiant_harness/tools/visual.py` - Visual tool implementations
+- `src/radiant_harness/models/openai_adapter.py` - OpenAI API adapter
 
 ## Architecture & Design Principles
 
-### Modern Code Standards (ENFORCED)
-- **No AI slop**: No "robust" fallbacks, "best-effort" parsers, or overly defensive code
-- **Fail fast**: Use proper exception handling instead of silent fallbacks
-- **Type safety**: jaxtyping for tensor shapes, beartype for runtime validation
-- **Modern tooling**: uv for deps, ruff for lint/format, pyright for types
-- **Clean imports**: No try/except import patterns for optional dependencies
+### Core Pattern: AgenticProcessorBase
+The harness follows a dependency injection pattern where task-specific details (prompts, schemas, validation) are provided by subclasses while the core agentic loop, tool execution, and conversation management are handled by the base class.
 
-### Architecture Patterns
-- **Processor pattern**: Task-specific processors instead of monolithic CLI
-- **Dependency injection**: Clear interfaces and testable components
-- **Modern Python**: Use new union syntax (X | Y), type hints, dataclasses
-- **Structured data**: Pydantic models for validation, proper error types
+```python
+from radiant_harness import AgenticProcessorBase, ToolRegistry
 
-### Performance & Reliability
-- **Memory management**: Explicit cleanup for image processing
-- **Async/await**: Consistent async patterns throughout
-- **Batch processing**: Efficient vectorized operations where possible
+class MyProcessor(AgenticProcessorBase):
+    def get_system_prompt(self, images, metadata) -> str:
+        return "You are a medical imaging expert..."
+
+    def get_user_message(self, images, metadata) -> str:
+        return f"Analyze this scan. History: {metadata.get('history')}"
+
+    def get_response_schema(self) -> dict | None:
+        return {"type": "json_schema", ...}
+
+    def validate_response(self, response) -> bool:
+        return "findings" in response
+```
+
+### Tool System
+Tools are registered via ToolRegistry and can be:
+- **Visual tools**: zoom, crop, contrast, threshold, flip, rotate, reset
+- **Search tools**: search_web (PubMed), search_images (Open-i)
+
+### Response Format
+Models must return JSON with a `continue` field:
+- `continue: true` - Model needs another turn
+- `continue: false` - Model is done, response is final
+
+## Code Standards (ENFORCED)
+
+### Required Practices
+1. **uv**: All dependency management via `uv sync`, `uv add`, `uv run`
+2. **ruff**: Linting and formatting
+3. **pyright**: Type checking
+4. **beartype**: Runtime validation with `@beartype` decorator
+5. **Fail fast**: Use proper exceptions instead of silent fallbacks
+6. **No AI slop**: No "robust" parsers, no overly defensive code
+
+### Exception Handling
+- Use specific exception types from `radiant_harness.exceptions`
+- Never use bare `except:` or broad `except Exception:`
+- Let exceptions propagate - don't swallow errors
 
 ## Common Development Tasks
 
 ### Adding a New Task Processor
-1. Create processor in `src/nova_retrieval_vlm/processors/`
-2. Inherit from `BaseProcessor` with proper type annotations
-3. Implement `process_batch()` and `evaluate_responses()` methods
-4. Add `@beartype` decorators for runtime validation
-5. Register in `PROCESSORS` dict in `cli_new.py`
+1. Create processor subclassing `AgenticProcessorBase`
+2. Implement abstract methods: `get_system_prompt`, `get_user_message`, `get_response_schema`, `validate_response`
+3. Add `@beartype` decorators
+4. Create prompt templates if needed
+
+### Adding a New Tool
+1. Create async execute function: `async def _execute_my_tool(registry: ToolRegistry, **kwargs) -> ToolResult`
+2. Create Tool instance with parameters schema
+3. Register with ToolRegistry
 
 ### Adding a New Model Adapter
-1. Create adapter in `src/nova_retrieval_vlm/models/`
-2. Use proper type hints with `ModelResponse` return type
-3. Add `@beartype` validation for all methods
-4. No fallback mechanisms - fail fast on errors
+1. Implement `AdapterProtocol` from `radiant_harness.models`
+2. Implement `generate_chat()` method
+3. Return `(content, tool_calls, GenerationLog)` tuple
 
-### Adding Type-Safe Functions
-1. Use jaxtyping for tensor shapes: `Float[torch.Tensor, "batch height width"]`
-2. Add `@beartype` for runtime validation
-3. Use modern union syntax: `str | None` instead of `Optional[str]`
-4. Define custom types in `types.py` for reuse
+## Configuration
+Configuration uses frozen dataclasses in `config.py`:
+- `HarnessConfig` - Root configuration
+- `AgenticConfig` - Agentic processing settings
+- `SearchConfig` - Search operation settings
+- `CacheConfig` - Caching behavior
+- `ImageProcessingConfig` - Image operation limits
 
-### Code Quality Requirements
-- All functions must have type hints and `@beartype` decorators
-- No broad exception handling - use specific exception types
-- Use `fd` and `ast-grep` for code analysis instead of `find`/`grep`
-- Follow ruff rules - no ignored violations
+Access via `get_config()` or create custom instances.
 
-## Performance Considerations
-- **Batch processing**: Use `batch_size` parameter
-- **Rate limiting**: Configure `request_delay`
-- **Memory**: Enable image compression for large batches
-- **Caching**: Results cached in output directory
+## API Keys
+- `OPENROUTER_API_KEY` or `OPENAI_API_KEY` - For model API
+- `NCBI_API_KEY` (optional) - For PubMed search
+- `NCBI_EMAIL` (optional) - For PubMed API
 
-## Testing Strategy
+## Testing
 ```bash
-# Modern test execution with uv
-uv run pytest tests/test_models.py         # Unit tests
-uv run pytest tests/test_processors.py     # Processor tests
-uv run pytest tests/test_types.py          # Type validation tests
-
-# Integration tests with proper fixtures
-uv run pytest tests/integration/ -v
-
-# Performance and benchmark tests
-uv run pytest tests/benchmarks/ --benchmark-only
-
-# Type checking validation
-uv run pytest tests/ --mypy-only           # Deprecated, use pyright
-uv run pyright tests/                      # Modern type checking
-
-# Coverage reporting
-uv run pytest --cov=nova_retrieval_vlm --cov-report=html
+uv run pytest tests/                    # Run all tests
+uv run pytest tests/test_tool_registry.py  # Specific test file
+uv run pytest -v --tb=short             # Verbose with short traceback
 ```
-
-## Debugging & Analysis Tips
-```bash
-# Modern debugging with structured logging
-export LOGURU_LEVEL=DEBUG
-uv run python -m nova_retrieval_vlm.cli_new task=localization --verbose
-
-# Code analysis with modern tools
-fd -e py . src/ | head -10                  # Find Python files
-ast-grep --lang python -p 'def $func($$$)' src/  # Find function definitions
-uv run ruff check --select E,W,F .         # Focused linting
-
-# Type checking and validation
-uv run pyright src/nova_retrieval_vlm/     # Static type checking
-uv run python -c "from nova_retrieval_vlm.types import *"  # Runtime validation
-
-# Performance profiling
-uv run python -m cProfile -o profile.out -m nova_retrieval_vlm.cli_new
-
-# Memory debugging
-uv run python -m tracemalloc -c "import nova_retrieval_vlm"
-```
-
-## Configuration Management
-- Main config: `src/nova_retrieval_vlm/config.py`
-- Hydra configs: Override via CLI or YAML files
-- Environment: `.env` file for API keys
-- Logging: `LOGURU_LEVEL` environment variable
-
-## API Keys Required
-- `OPENROUTER_API_KEY` - For OpenRouter models
-- `OPENAI_API_KEY` - Optional, for OpenAI direct access
-
-## Data Paths
-- Input data: `./data/nova/` (configurable)
-- Output runs: `./runs/` (configurable)
-
-## Contact & Resources
-- GitHub Issues: Report bugs and feature requests
-- Documentation: `./docs/` directory
-- Paper: `./paper/main.tex`
-- Contributing: See CONTRIBUTING.md
-
-## Development Standards (ENFORCED)
-
-### Required Tools & Practices
-1. **uv**: All dependency management must use `uv sync`, `uv add`, `uv run`
-2. **ruff**: Code formatting and linting - replaces black, isort, flake8
-3. **pyright**: Type checking - replaces mypy for better performance
-4. **jaxtyping**: Tensor shape annotations for all ML functions
-5. **beartype**: Runtime type validation with `@beartype` decorator
-6. **fd/ast-grep**: Modern code analysis tools over find/grep
-
-### Code Quality Gates
-- All commits must pass `uv run ruff check .`
-- All functions require type hints and `@beartype`
-- No "robust" parsers or silent fallbacks
-- Use structured exceptions, never broad `except:`
-- Processor pattern for all new task implementations
-
-### Performance Requirements
-- Use async/await consistently
-- Explicit memory management for large tensors
-- Vectorized operations where possible
-- Proper resource cleanup (context managers)
-
-### Migration Status
-- ✅ Modern pyproject.toml with uv dependency groups
-- ✅ Ruff configuration with strict rules
-- ✅ Pyright configuration for type checking
-- ✅ Processor pattern architecture
-- ✅ Type-safe core modules with jaxtyping/beartype
-- ✅ Agentic processing module with visual tools and web search
-- ✅ Test suite (150+ tests)
 
 ---
-*This file was created to help Claude understand the project structure and common tasks. Update it when making significant architectural changes.*
+*This file documents the radiant_harness package structure for Claude Code assistance.*

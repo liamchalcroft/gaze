@@ -6,23 +6,31 @@ Tests the corrected bounding box coordinate conversion and evaluation metrics.
 from __future__ import annotations
 
 import pytest
-import torch
 
-from examples.nova.src.data.nova_ground_truth import GroundTruthLocalization
-from examples.nova.src.evaluation.detection import _compute_iou
-from examples.nova.src.evaluation.detection import _convert_to_tensors
-from examples.nova.src.evaluation.detection import evaluate_detection
+# Optional torch import
+try:
+    import torch
+
+    from examples.nova.src.data.nova_ground_truth import GroundTruthLocalization
+    from examples.nova.src.evaluation.detection import _compute_iou
+    from examples.nova.src.evaluation.detection import _convert_to_tensors
+    from examples.nova.src.evaluation.detection import evaluate_detection
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestBoundingBoxConversion:
     """Test bounding box coordinate system conversion."""
 
-    def test_convert_boxes_from_xywh(self):
-        """Test conversion from (x, y, width, height) to (x1, y1, x2, y2)."""
-        # Input in (x, y, width, height) format
+    def test_convert_boxes_xyxy_format(self):
+        """Test that boxes in (x1, y1, x2, y2) format are converted correctly."""
+        # Input in (x1, y1, x2, y2) format - the expected format per docstring
         boxes = [
-            [10, 20, 30, 40],  # x=10, y=20, w=30, h=40 -> should be [10, 20, 40, 60]
-            [0, 0, 100, 100],  # x=0, y=0, w=100, h=100 -> should be [0, 0, 100, 100]
+            [10, 20, 40, 60],  # x1=10, y1=20, x2=40, y2=60
+            [0, 0, 100, 100],  # x1=0, y1=0, x2=100, y2=100
         ]
 
         result = _convert_to_tensors(boxes)
@@ -70,6 +78,7 @@ class TestBoundingBoxConversion:
         assert result["labels"][0] == 1
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestIoUCalculation:
     """Test IoU calculation with corrected coordinate system."""
 
@@ -108,6 +117,7 @@ class TestIoUCalculation:
         assert iou == 0.0  # No overlap, just touching
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestDetectionEvaluation:
     """Test complete detection evaluation pipeline."""
 
@@ -157,6 +167,7 @@ class TestDetectionEvaluation:
             evaluate_detection([{"boxes": []}], [{"boxes": []}, {"boxes": []}])
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestGroundTruthData:
     """Test ground truth data structure."""
 

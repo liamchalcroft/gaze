@@ -107,6 +107,8 @@ Modules:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from radiant_harness.base import AgenticProcessorBase
 from radiant_harness.base import ImageInput
 from radiant_harness.config import AgenticConfig
@@ -128,6 +130,13 @@ from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
 from radiant_harness.models import OpenAIAdapter
+
+if TYPE_CHECKING:
+    from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
+    from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
+
+# HuggingFace adapters are lazily imported to avoid torch dependency
+# Use: from radiant_harness import HuggingFaceAdapter, HuggingFaceVLMAdapter
 from radiant_harness.prompts import AnalysisMode
 from radiant_harness.prompts import combine_prompts
 from radiant_harness.prompts import create_prompt
@@ -181,6 +190,8 @@ __all__ = [
     "encode_image",
     # Adapters
     "OpenAIAdapter",
+    "HuggingFaceAdapter",
+    "HuggingFaceVLMAdapter",
     "GenerationLog",
     "AdapterProtocol",
     # Prompts
@@ -206,3 +217,17 @@ __all__ = [
     "ModelError",
     "APIError",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy import for HuggingFace adapters to avoid torch dependency."""
+    if name == "HuggingFaceAdapter":
+        from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
+
+        return HuggingFaceAdapter
+    if name == "HuggingFaceVLMAdapter":
+        from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
+
+        return HuggingFaceVLMAdapter
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

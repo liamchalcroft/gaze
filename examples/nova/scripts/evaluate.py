@@ -513,7 +513,7 @@ def generate_comparison_report(
         # Caption metrics
         caption = metrics.get("caption_metrics", {})
         row["bleu"] = caption.get("bleu", 0.0)
-        row["bertscore_f1"] = caption.get("bertscore_f1", 0.0)
+        row["bert_f1"] = caption.get("bert_f1", 0.0)
 
         # Diagnosis metrics
         diagnosis = metrics.get("diagnosis_metrics", {})

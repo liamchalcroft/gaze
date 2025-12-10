@@ -1,13 +1,7 @@
 """Base agentic processor for radiology VLM analysis.
 
-Provides the core multi-turn agentic loop with tool calling support.
-Task-specific details (prompts, schemas) are provided via dependency injection.
-
-Supports flexible input modes:
-- Text-only: Analysis based solely on clinical history/metadata
-- Single image: Standard single-image analysis with visual tools
-- Multi-image: Analysis of multiple images (e.g., comparing scans, multi-view)
-- Image + text: Combined visual and contextual analysis
+Provides multi-turn agentic loop with tool calling support.
+Task-specific details are provided via dependency injection.
 """
 
 from __future__ import annotations
@@ -15,6 +9,7 @@ from __future__ import annotations
 import json
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import AsyncIterator
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,20 +68,8 @@ class ImageInput:
 class AgenticProcessorBase(ABC):
     """Abstract base class for multi-turn agentic analysis.
 
-    Provides the core agentic loop with tool calling support. Subclasses
+    Provides core agentic loop with tool calling support. Subclasses
     must implement methods to provide task-specific prompts and schemas.
-
-    Supports flexible input modes:
-    - Text-only: No images, analysis based on metadata/history
-    - Single image: Standard image analysis with visual tools
-    - Multi-image: Multiple images for comparison or multi-view analysis
-
-    Architecture:
-    - Model-controlled continuation via 'continue' field in responses
-    - Configurable visual tools (zoom, crop, contrast, threshold, etc.)
-    - Optional web/image search for evidence-based analysis
-    - Turn limit enforcement with clear errors
-    - Structured JSON output via subclass-provided schema
     """
 
     def __init__(
@@ -119,10 +102,8 @@ class AgenticProcessorBase(ABC):
         Raises:
             ValueError: If max_turns < 1
         """
-        # Get configuration
         self._config = config or get_config().agentic
 
-        # Handle max_turns with defaults
         if max_turns is None:
             max_turns = self._config.default_max_turns
         if max_turns < 1:
@@ -132,7 +113,6 @@ class AgenticProcessorBase(ABC):
         self.use_tools = use_tools
         self.use_web_search = use_web_search
 
-        # Clamp to absolute maximum
         if max_turns > self._config.max_turns_limit:
             logger.warning(
                 f"max_turns={max_turns} exceeds max_turns_limit={self._config.max_turns_limit}, clamping"
@@ -143,12 +123,10 @@ class AgenticProcessorBase(ABC):
         self.enable_caching = enable_caching
         self._adapter_factory = adapter_factory
 
-        # Build disabled tools set
         self._disabled_tools: set[str] = set(disabled_tools or [])
         if not use_web_search:
             self._disabled_tools.update(["search_web", "search_images"])
 
-        # Lazy-initialized model adapter
         self._model_adapter: AdapterProtocol | None = None
 
     @beartype
@@ -182,10 +160,8 @@ class AgenticProcessorBase(ABC):
 
         Subclasses can override to customize available tools.
         """
-        # No tool registry needed for text-only analysis
         if not images:
             if self.use_web_search:
-                # Web search works without images
                 tools = create_search_tools(self._disabled_tools)
                 return ToolRegistry(image_path=None, tools=tools)
             return None
@@ -201,7 +177,6 @@ class AgenticProcessorBase(ABC):
         if not tools:
             return None
 
-        # Use the first image (or specified active image) for visual tools
         active_image = images[active_image_index]
         return ToolRegistry(image_path=active_image.path, tools=tools)
 
@@ -214,9 +189,8 @@ class AgenticProcessorBase(ABC):
         """Build the system prompt for this task.
 
         Args:
-            images: List of image inputs (may be empty for text-only tasks).
-                    Each ImageInput has path, label, width, height, and encoded data.
-            metadata: Task and context metadata (e.g., clinical history)
+            images: List of image inputs (may be empty for text-only tasks)
+            metadata: Task and context metadata
 
         Returns:
             System prompt string
@@ -279,10 +253,8 @@ class AgenticProcessorBase(ABC):
         Returns:
             Confidence score in range [0.0, 1.0]
         """
-        # Base confidence
         confidence = 0.5
 
-        # Bonus for tool usage (indicates thorough analysis)
         tool_turns = sum(1 for t in turns if t.tool_calls)
         tool_bonus = min(tool_turns * 0.1, 0.2)
         confidence += tool_bonus
@@ -298,11 +270,6 @@ class AgenticProcessorBase(ABC):
     ) -> AgenticResult:
         """Run agentic analysis on images and/or text.
 
-        Supports flexible input modes:
-        - Text-only: images=None, provide context via metadata
-        - Single image: images=Path or images=[Path]
-        - Multi-image: images=[Path, Path, ...] with optional labels
-
         Args:
             images: Image path(s) - None for text-only, Path for single, list for multi
             metadata: Context metadata (clinical history, patient info, etc.)
@@ -315,10 +282,8 @@ class AgenticProcessorBase(ABC):
 
         metadata = metadata or {}
 
-        # Normalize images to list of ImageInput
         image_inputs = self._normalize_image_inputs(images, image_labels)
 
-        # Load images
         for img in image_inputs:
             img.load()
 
@@ -340,17 +305,36 @@ class AgenticProcessorBase(ABC):
         images: list[Path] | Path | None,
         labels: list[str] | None,
     ) -> list[ImageInput]:
-        """Normalize various image input formats to list of ImageInput."""
+        """Normalize image input formats to list of ImageInput."""
         if images is None:
             return []
 
+        # Validate inputs
+        if isinstance(images, list) and labels and len(images) != len(labels):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of images ({len(images)})"
+            )
+
         if isinstance(images, Path):
+            # Validate single image exists
+            if not images.exists():
+                raise FileNotFoundError(f"Image file not found: {images}")
+            # Validate file extension
+            if images.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
+                raise ValueError(f"Unsupported image format: {images.suffix}")
             label = labels[0] if labels else None
             return [ImageInput(path=images, label=label)]
 
         # List of paths
-        result = []
+        result: list[ImageInput] = []
         for i, path in enumerate(images):
+            # Validate each image exists
+            if not path.exists():
+                raise FileNotFoundError(f"Image file not found: {path}")
+            # Validate file extension
+            if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
+                raise ValueError(f"Unsupported image format: {path.suffix}")
+
             label = labels[i] if labels and i < len(labels) else None
             result.append(ImageInput(path=path, label=label))
         return result
@@ -363,7 +347,6 @@ class AgenticProcessorBase(ABC):
         tool_registry: ToolRegistry | None,
     ) -> AgenticResult:
         """Run the analysis loop."""
-        # Get task-specific prompts and prepend rollout policy guidance
         system_prompt = self.get_system_prompt(images=images, metadata=metadata)
         policy_lines = [
             f"Multi-turn session with a maximum of {self.max_turns} turns.",
@@ -373,19 +356,15 @@ class AgenticProcessorBase(ABC):
         ]
         system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
-        # Inject tool documentation when tools are available so the model knows how to call them
         if tool_registry:
             tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
             if tool_docs:
                 system_prompt = f"{system_prompt}\n\nAvailable tools:\n{tool_docs}"
         user_message = self.get_user_message(images=images, metadata=metadata)
 
-        # Initialize conversation
         turns: list[Turn] = []
-        total_tokens = 0
         final_response: dict[str, Any] = {}
 
-        # Build user message content with optional images
         user_content: list[dict[str, Any]] = [{"type": "text", "text": user_message}]
         user_content.extend(
             {
@@ -401,36 +380,36 @@ class AgenticProcessorBase(ABC):
             {"role": "user", "content": user_content},
         ]
 
-        # _ensure_initialized() guarantees adapter exists
-        if self._model_adapter is None:
-            raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
         model_adapter = self._model_adapter
+        if model_adapter is None:
+            raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
 
-        # Always expose available tool schemas when a registry exists (search-only runs
-        # must still surface tool definitions even if visual tools are disabled).
         tool_schemas = tool_registry.get_tool_schemas() if tool_registry else None
         response_schema = self.get_response_schema()
 
+        total_tokens: int = 0
         for turn_idx in range(self.max_turns):
-            # On last turn, disable tools to force final response
             is_last_turn = turn_idx == self.max_turns - 1
             current_tools = None if is_last_turn else tool_schemas
             current_schema = response_schema
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
 
-            # Generate response
-            response_text, tool_calls, gen_log = await model_adapter.generate_chat(
+            chat_result = await model_adapter.generate_chat(
                 messages=messages,
                 max_tokens=self._config.default_max_tokens,
                 temperature=self._config.default_temperature,
                 tools=current_tools,
                 response_format=current_schema,
             )
+            if isinstance(chat_result, AsyncIterator):
+                raise AgenticProcessingError(
+                    "Streaming responses are not supported in _run_analysis()",
+                    turns_completed=turn_idx,
+                )
+            response_text, tool_calls, gen_log = chat_result
 
-            # gen_log is guaranteed non-None by generate_chat return type
             total_tokens += gen_log.tokens
 
-            # Parse tool calls - all required fields must be present
             typed_tool_calls: list[ToolCall] = []
             if tool_calls:
                 for i, tc in enumerate(tool_calls):
@@ -458,7 +437,6 @@ class AgenticProcessorBase(ABC):
                     },
                 )
 
-            # Record turn
             turn = Turn(
                 role="assistant",
                 content=response_text,
@@ -466,7 +444,6 @@ class AgenticProcessorBase(ABC):
             )
             turns.append(turn)
 
-            # Add assistant message to conversation
             assistant_message: dict[str, Any] = {"role": "assistant"}
             if response_text:
                 assistant_message["content"] = response_text
@@ -481,7 +458,6 @@ class AgenticProcessorBase(ABC):
                 ]
             messages.append(assistant_message)
 
-            # Execute tools if requested (tools are disabled on last turn via current_tools)
             if typed_tool_calls and tool_registry is not None:
                 logger.info(f"Executing {len(typed_tool_calls)} tool calls")
                 tool_results = await self._execute_tools(
@@ -490,7 +466,6 @@ class AgenticProcessorBase(ABC):
                     turn_idx=turn_idx,
                 )
 
-                # Add tool results to conversation
                 for i, result in enumerate(tool_results):
                     tool_call_id = typed_tool_calls[i].id
                     image_data_url = result.get_image_data_url()
@@ -501,7 +476,7 @@ class AgenticProcessorBase(ABC):
                             {"type": "image_url", "image_url": {"url": image_data_url}},
                         ]
                     else:
-                        tool_content = result.description
+                        tool_content: str | list[dict[str, Any]] = result.description
                         if result.error:
                             tool_content = f"{tool_content}\nError: {result.error}"
                         if formatted := result.formatted_results:
@@ -515,7 +490,6 @@ class AgenticProcessorBase(ABC):
                         }
                     )
 
-                # Record tool result turn
                 tool_turn = Turn(
                     role="tool_result",
                     content=self._format_tool_results(tool_results),
@@ -523,22 +497,22 @@ class AgenticProcessorBase(ABC):
                 )
                 turns.append(tool_turn)
                 continue
-
-            # Parse and check for final response or continuation
             try:
-                parsed = json.loads(response_text)
+                parsed_obj: dict[str, Any] | list | str | int | float | bool | None = json.loads(response_text)
             except json.JSONDecodeError as e:
                 raise AgenticProcessingError(
                     f"Invalid JSON on turn {turn_idx + 1}: {e}. Response: {response_text[:200]}",
                     turns_completed=turn_idx + 1,
                 ) from e
 
-            if not isinstance(parsed, dict):
+            if not isinstance(parsed_obj, dict):
                 raise AgenticProcessingError(
                     "Model response must be a JSON object",
                     turns_completed=turn_idx + 1,
                     partial_response={"error": "invalid_response_type"},
                 )
+
+            parsed: dict[str, Any] = parsed_obj
 
             wants_continue = parsed.get("continue", False)
             if not isinstance(wants_continue, bool):
@@ -568,12 +542,6 @@ class AgenticProcessorBase(ABC):
                 )
                 messages.append({"role": "user", "content": turn_warning})
 
-        # Loop invariant: final_response is always set because:
-        # 1. On last turn (turn_idx == max_turns - 1), is_last_turn is True
-        # 2. Tools are disabled on last turn, so typed_tool_calls is empty
-        # 3. Response is parsed as JSON and either wants_continue is False (break)
-        #    or is_last_turn is True (break with forced completion)
-        # Therefore the loop always exits via break with final_response set.
         if not self.validate_response(final_response):
             raise AgenticProcessingError(
                 "Final response failed schema validation",
@@ -604,7 +572,7 @@ class AgenticProcessorBase(ABC):
             # Parse arguments: either already a dict or a JSON string
             if isinstance(tool_call.arguments, str):
                 try:
-                    parsed = json.loads(tool_call.arguments)
+                    parsed_args: dict[str, Any] | list | str | int | float | bool | None = json.loads(tool_call.arguments)
                 except json.JSONDecodeError as e:
                     raise AgenticProcessingError(
                         f"Malformed JSON in tool arguments for '{tool_call.name}': {e}",
@@ -612,13 +580,13 @@ class AgenticProcessorBase(ABC):
                         partial_response={"error": "malformed_tool_args", "tool": tool_call.name},
                     ) from e
 
-                if not isinstance(parsed, dict):
+                if not isinstance(parsed_args, dict):
                     raise AgenticProcessingError(
-                        f"Tool arguments for '{tool_call.name}' must be a JSON object, got {type(parsed).__name__}",
+                        f"Tool arguments for '{tool_call.name}' must be a JSON object, got {type(parsed_args).__name__}",
                         turns_completed=turn_idx + 1,
                         partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
                     )
-                tool_args = parsed
+                tool_args: dict[str, Any] = parsed_args
             else:
                 if not isinstance(tool_call.arguments, dict):
                     raise AgenticProcessingError(
@@ -626,7 +594,7 @@ class AgenticProcessorBase(ABC):
                         turns_completed=turn_idx + 1,
                         partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
                     )
-                tool_args = tool_call.arguments
+                tool_args = dict(tool_call.arguments)
 
             logger.debug(f"Executing: {tool_call.name}({tool_args})")
 
@@ -659,7 +627,7 @@ class AgenticProcessorBase(ABC):
         if not tool_results:
             return "No tools were executed."
 
-        result_strings = []
+        result_strings: list[str] = []
         for result in tool_results:
             if result.success:
                 result_str = f"[OK] {result.tool_name}: {result.description}"

@@ -1,0 +1,368 @@
+"""Verifiers-compatible reward functions for NOVA brain-MRI tasks.
+
+Provides task-specific rewards for:
+- Caption: BLEU + semantic similarity
+- Diagnosis: Top-1/Top-5 accuracy with medical term normalization
+- Localization: IoU-based detection reward
+
+Also provides combined reward for multi-task training.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from typing import Any
+from typing import Literal
+
+from beartype import beartype
+
+from radiant_harness.utils.iou import compute_iou
+from radiant_harness.verifiers import BaseRewardFunction
+
+NOVATask = Literal["caption", "diagnosis", "localization", "all"]
+
+
+@dataclass(frozen=True)
+class NOVARewardWeights:
+    """Weights for combining NOVA task rewards."""
+
+    caption: float = 0.33
+    diagnosis: float = 0.34
+    localization: float = 0.33
+
+    def __post_init__(self) -> None:
+        """Validate weights sum to 1.0."""
+        total = self.caption + self.diagnosis + self.localization
+        if abs(total - 1.0) > 1e-6:
+            msg = f"Reward weights must sum to 1.0, got {total}"
+            raise ValueError(msg)
+
+
+DEFAULT_WEIGHTS = NOVARewardWeights()
+
+
+@beartype
+def compute_caption_reward(prediction: str, reference: str) -> float:
+    """Compute caption reward using token overlap.
+
+    Simple token F1 score without heavy dependencies.
+    For full evaluation, use evaluation/caption.py with BLEU, BERT, etc.
+
+    Args:
+        prediction: Predicted caption text
+        reference: Ground truth caption
+
+    Returns:
+        Token F1 score in [0.0, 1.0]
+    """
+    if not prediction or not reference:
+        return 0.0
+
+    pred_tokens = set(prediction.lower().split())
+    ref_tokens = set(reference.lower().split())
+
+    if not ref_tokens:
+        return 0.0
+
+    intersection = pred_tokens & ref_tokens
+    precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
+    recall = len(intersection) / len(ref_tokens)
+
+    if precision + recall == 0:
+        return 0.0
+
+    return 2 * precision * recall / (precision + recall)
+
+
+@beartype
+def compute_diagnosis_reward(
+    prediction: str | list[str],
+    reference: str | list[str],
+) -> float:
+    """Compute diagnosis reward using top-k matching.
+
+    Supports both single diagnosis and differential diagnosis lists.
+
+    Args:
+        prediction: Predicted diagnosis (single or list)
+        reference: Ground truth diagnosis (single or list)
+
+    Returns:
+        Accuracy score in [0.0, 1.0]
+    """
+    # Normalize to lists
+    pred_list = [prediction] if isinstance(prediction, str) else list(prediction)
+    ref_list = [reference] if isinstance(reference, str) else list(reference)
+
+    if not pred_list or not ref_list:
+        return 0.0
+
+    # Normalize diagnoses
+    pred_normalized = {_normalize_diagnosis(d) for d in pred_list}
+    ref_normalized = {_normalize_diagnosis(d) for d in ref_list}
+
+    # Top-1: does first prediction match any reference?
+    top1_match = _normalize_diagnosis(pred_list[0]) in ref_normalized
+
+    # Coverage: what fraction of references are matched?
+    matches = pred_normalized & ref_normalized
+    coverage = len(matches) / len(ref_normalized)
+
+    # Combined score: top-1 is weighted more
+    return 0.6 * float(top1_match) + 0.4 * coverage
+
+
+def _normalize_diagnosis(diagnosis: str) -> str:
+    """Normalize diagnosis text for comparison."""
+    # Lowercase and remove punctuation
+    normalized = diagnosis.lower()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    # Remove common modifiers
+    for modifier in ["possible", "probable", "likely", "suspected", "mild", "moderate", "severe"]:
+        normalized = normalized.replace(modifier, "")
+    # Collapse whitespace
+    return " ".join(normalized.split())
+
+
+@beartype
+def compute_localization_reward(
+    prediction: list[list[float]],
+    reference: list[list[float]],
+    iou_threshold: float = 0.3,
+) -> float:
+    """Compute localization reward using IoU matching.
+
+    Args:
+        prediction: List of predicted bounding boxes [x1, y1, x2, y2]
+        reference: List of ground truth bounding boxes
+        iou_threshold: IoU threshold for positive match
+
+    Returns:
+        Detection score in [0.0, 1.0]
+    """
+    if not prediction or not reference:
+        return 0.0 if reference else 1.0  # No predictions is fine if no ground truth
+
+    matched_refs = set()
+    true_positives = 0
+
+    for pred_box in prediction:
+        best_iou = 0.0
+        best_ref_idx = -1
+
+        for ref_idx, ref_box in enumerate(reference):
+            if ref_idx in matched_refs:
+                continue
+            iou = compute_iou(pred_box, ref_box)
+            if iou > best_iou:
+                best_iou = iou
+                best_ref_idx = ref_idx
+
+        if best_iou >= iou_threshold and best_ref_idx >= 0:
+            matched_refs.add(best_ref_idx)
+            true_positives += 1
+
+    # F1-like score
+    precision = true_positives / len(prediction) if prediction else 0.0
+    recall = true_positives / len(reference) if reference else 0.0
+
+    if precision + recall == 0:
+        return 0.0
+
+    return 2 * precision * recall / (precision + recall)
+
+
+# IoU calculation now imported from radiant_harness.utils.iou
+
+
+class NOVAVerifiersReward(BaseRewardFunction):
+    """Verifiers-compatible reward function for NOVA tasks.
+
+    Adapts NOVA evaluation metrics to the radiant_harness BaseRewardFunction
+    interface for use with verifiers training and evaluation.
+
+    Example:
+        reward_fn = NOVAVerifiersReward(task="diagnosis")
+        reward = reward_fn(prompt, completion, info)
+
+        # Or via processor:
+        processor = NOVAAgenticProcessor(task="localization")
+        env_cls = processor.as_verifiers_env(dataset_path="train.jsonl")
+    """
+
+    def __init__(
+        self,
+        task: NOVATask = "all",
+        weights: NOVARewardWeights | None = None,
+    ) -> None:
+        """Initialize NOVA reward function.
+
+        Args:
+            task: Which NOVA task(s) to compute reward for
+            weights: Component weights for combined reward
+        """
+        self.task = task
+        self.weights = weights or DEFAULT_WEIGHTS
+
+    def __call__(
+        self,
+        prompt: str,  # noqa: ARG002 - Required by interface
+        completion: Any,
+        info: dict[str, Any],
+    ) -> float:
+        """Compute NOVA reward for a completion.
+
+        Args:
+            prompt: The input prompt (unused, required by interface)
+            completion: Model completion (string or message list)
+            info: Case information with ground truth
+
+        Returns:
+            Task-specific reward value in [0.0, 1.0]
+        """
+        # Extract completion text and parse response
+        comp_text = self._extract_text(completion)
+        response = self._extract_json_response(comp_text)
+
+        if response is None:
+            return 0.0
+
+        # Compute task-specific rewards
+        if self.task == "caption":
+            return self._compute_caption_task(response, info)
+        if self.task == "diagnosis":
+            return self._compute_diagnosis_task(response, info)
+        if self.task == "localization":
+            return self._compute_localization_task(response, info)
+
+        # Combined reward for all tasks
+        caption_reward = self._compute_caption_task(response, info)
+        diagnosis_reward = self._compute_diagnosis_task(response, info)
+        localization_reward = self._compute_localization_task(response, info)
+
+        return (
+            self.weights.caption * caption_reward
+            + self.weights.diagnosis * diagnosis_reward
+            + self.weights.localization * localization_reward
+        )
+
+    def _compute_caption_task(
+        self,
+        response: dict[str, Any],
+        info: dict[str, Any],
+    ) -> float:
+        """Compute caption reward."""
+        pred_caption = response.get("caption", "")
+        if isinstance(pred_caption, dict):
+            pred_caption = pred_caption.get("text", "")
+
+        ref_caption = info.get("caption", info.get("gold_caption", ""))
+        if isinstance(ref_caption, dict):
+            ref_caption = ref_caption.get("text", "")
+
+        return compute_caption_reward(str(pred_caption), str(ref_caption))
+
+    def _compute_diagnosis_task(
+        self,
+        response: dict[str, Any],
+        info: dict[str, Any],
+    ) -> float:
+        """Compute diagnosis reward."""
+        diagnosis = response.get("diagnosis", {})
+        if isinstance(diagnosis, str):
+            pred_diag = diagnosis
+        else:
+            pred_diag = diagnosis.get("primary", diagnosis.get("diagnosis", ""))
+
+        ref_diagnosis = info.get("diagnosis", info.get("gold_diagnosis", ""))
+        if isinstance(ref_diagnosis, dict):
+            ref_diagnosis = ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", ""))
+
+        return compute_diagnosis_reward(pred_diag, ref_diagnosis)
+
+    def _compute_localization_task(
+        self,
+        response: dict[str, Any],
+        info: dict[str, Any],
+    ) -> float:
+        """Compute localization reward."""
+        localization = response.get("localization", {})
+        pred_boxes = []
+
+        # Handle various localization formats
+        if isinstance(localization, list):
+            for loc in localization:
+                if isinstance(loc, dict) and "bbox" in loc:
+                    pred_boxes.append(loc["bbox"])
+                elif isinstance(loc, list) and len(loc) == 4:
+                    pred_boxes.append(loc)
+        elif isinstance(localization, dict):
+            if "localizations" in localization:
+                pred_boxes.extend(
+                    loc["bbox"]
+                    for loc in localization["localizations"]
+                    if isinstance(loc, dict) and "bbox" in loc
+                )
+            elif "bbox" in localization:
+                pred_boxes.append(localization["bbox"])
+
+        # Get reference boxes
+        ref_boxes = info.get("boxes", info.get("gold_boxes", []))
+        if isinstance(ref_boxes, dict):
+            ref_boxes = ref_boxes.get("boxes", [])
+
+        return compute_localization_reward(pred_boxes, ref_boxes)
+
+    def _extract_text(self, completion: Any) -> str:
+        """Extract text from completion."""
+        if isinstance(completion, str):
+            return completion
+        if isinstance(completion, list):
+            for msg in reversed(completion):
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        return content
+        return str(completion or "")
+
+    def _extract_json_response(self, text: str) -> dict[str, Any] | None:
+        """Extract JSON response from text.
+
+        Expects valid JSON - either raw or in a markdown code block.
+        Returns None if text is empty or not valid JSON.
+        """
+        text = text.strip()
+        if not text:
+            return None
+
+        # Handle markdown code block
+        if text.startswith("```"):
+            # Find the end of the opening fence
+            first_newline = text.find("\n")
+            if first_newline == -1:
+                return None
+            # Find the closing fence
+            closing = text.rfind("```")
+            if closing <= first_newline:
+                return None
+            text = text[first_newline + 1 : closing].strip()
+
+        try:
+            result = json.loads(text)
+            if isinstance(result, dict):
+                return result
+            return None
+        except json.JSONDecodeError:
+            return None
+
+
+__all__ = [
+    "NOVARewardWeights",
+    "NOVAVerifiersReward",
+    "NOVATask",
+    "compute_caption_reward",
+    "compute_diagnosis_reward",
+    "compute_localization_reward",
+]

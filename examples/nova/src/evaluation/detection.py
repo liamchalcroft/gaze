@@ -7,6 +7,9 @@ import torch
 from beartype import beartype
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
+# Import shared IoU utility
+from radiant_harness.utils.iou import compute_iou
+
 # NOVA benchmark IoU thresholds
 IOU_THRESHOLD_LOOSE = 0.3  # Permissive threshold for partial matches
 IOU_THRESHOLD_STANDARD = 0.5  # Standard COCO-style threshold
@@ -16,7 +19,9 @@ IOU_THRESHOLD_RANGE_STEP = 5  # Step size for mAP@[50:95] range
 
 
 @beartype
-def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, torch.Tensor]:
+def _convert_to_tensors(
+    data: dict[str, Any] | list[list[int | float]],
+) -> dict[str, torch.Tensor]:
     """Convert detection data to proper tensor format for torchmetrics.
 
     Handles both dict format ({"boxes": [...], "scores": [...], "labels": [...]})
@@ -32,7 +37,6 @@ def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, t
     scores = data.get("scores", [])
     labels = data.get("labels", [])
 
-    # Handle empty detections - check length to avoid tensor ambiguity
     if isinstance(boxes, torch.Tensor):
         boxes_len = boxes.shape[0] if boxes.ndim > 0 else 0
     else:
@@ -44,17 +48,14 @@ def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, t
             "labels": torch.zeros((0,), dtype=torch.int64),
         }
 
-    # Convert boxes
     if isinstance(boxes, torch.Tensor):
         boxes_tensor = boxes.float()
     else:
         boxes_tensor = torch.tensor(boxes, dtype=torch.float32)
 
-    # Ensure 2D shape for boxes
     if boxes_tensor.ndim == 1:
         boxes_tensor = boxes_tensor.unsqueeze(0)
 
-    # Convert scores
     if isinstance(scores, torch.Tensor):
         scores_tensor = scores.float()
     else:
@@ -62,7 +63,6 @@ def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, t
             torch.tensor(scores, dtype=torch.float32) if scores else torch.ones(len(boxes_tensor))
         )
 
-    # Convert labels
     if isinstance(labels, torch.Tensor):
         labels_tensor = labels.long()
     else:
@@ -82,17 +82,10 @@ def _convert_to_tensors(data: dict[str, Any] | list[list[float]]) -> dict[str, t
 @beartype
 def _compute_iou(box1: torch.Tensor, box2: torch.Tensor) -> float:
     """Compute IoU between two boxes in [x1, y1, x2, y2] format."""
-    x1 = max(box1[0].item(), box2[0].item())
-    y1 = max(box1[1].item(), box2[1].item())
-    x2 = min(box1[2].item(), box2[2].item())
-    y2 = min(box1[3].item(), box2[3].item())
-
-    intersection = max(0, x2 - x1) * max(0, y2 - y1)
-    area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-    area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-    union = area1.item() + area2.item() - intersection
-
-    return intersection / union if union > 0 else 0.0
+    # Convert tensors to lists for the shared IoU function
+    box1_list = [float(box1[i].item()) for i in range(4)]
+    box2_list = [float(box2[i].item()) for i in range(4)]
+    return compute_iou(box1_list, box2_list)
 
 
 @beartype
@@ -160,8 +153,8 @@ def _compute_acc_and_counts(
 
 @beartype
 def evaluate_detection(
-    preds: Sequence[dict[str, Any] | list[list[float]]],
-    refs: Sequence[dict[str, Any] | list[list[float]]],
+    preds: Sequence[dict[str, Any] | list[list[int | float]]],
+    refs: Sequence[dict[str, Any] | list[list[int | float]]],
 ) -> dict[str, float | int]:
     """
     Compute detection metrics following NOVA benchmark protocol.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import tempfile
+import json
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -210,11 +210,11 @@ class OpenISearchEngine(ImageSearchEngine):
 
             try:
                 data = await response.json()
-            except aiohttp.ContentTypeError as e:
+            except (aiohttp.ContentTypeError, json.JSONDecodeError) as e:
                 text = await response.text()
                 raise ImageSearchError(
                     self.name,
-                    f"Open-i returned non-JSON response: {text[:200]}",
+                    f"Open-i returned invalid JSON response: {text[:200]}",
                 ) from e
 
         return self._parse_results(data)
@@ -229,62 +229,62 @@ class OpenISearchEngine(ImageSearchEngine):
         Returns:
             List of parsed image search results
         """
-        results = []
+        results: list[ImageSearchResult] = []
         items = data.get("list", [])
-        skipped_count = 0
+        skipped_no_image = 0
 
         for item in items:
-            try:
-                image_url = item.get("imgLarge", "") or item.get("imgThumb", "")
-                thumbnail_url = item.get("imgThumb", "")
-                if not image_url:
-                    skipped_count += 1
-                    continue
+            # Get image URL - require at least one
+            image_url = item.get("imgLarge") or item.get("imgThumb")
+            if not image_url:
+                skipped_no_image += 1
+                continue
 
-                if image_url and not image_url.startswith("http"):
-                    image_url = urljoin(self.openi_base_url, image_url)
-                if thumbnail_url and not thumbnail_url.startswith("http"):
-                    thumbnail_url = urljoin(self.openi_base_url, thumbnail_url)
+            thumbnail_url = item.get("imgThumb", "")
 
-                title = item.get("title", "Medical Image")
-                caption = item.get("caption", "")
-                article_title = item.get("articleTitle", "")
-                modality = self._extract_modality(caption + " " + title)
-                body_part = self._extract_body_part(caption + " " + title)
+            # Ensure absolute URLs
+            if not image_url.startswith("http"):
+                image_url = urljoin(self.openi_base_url, image_url)
+            if thumbnail_url and not thumbnail_url.startswith("http"):
+                thumbnail_url = urljoin(self.openi_base_url, thumbnail_url)
 
-                pmcid = item.get("pmcid", "")
-                if pmcid:
-                    source_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
-                else:
-                    source_url = item.get("detailedURL", "")
+            title = item.get("title") or "Medical Image"
+            caption = item.get("caption", "")
+            article_title = item.get("articleTitle", "")
+            modality = self._extract_modality(caption + " " + title)
+            body_part = self._extract_body_part(caption + " " + title)
 
-                result = ImageSearchResult(
-                    title=title[:200] if title else "Medical Image",
-                    image_url=image_url,
-                    thumbnail_url=thumbnail_url,
-                    source_url=source_url,
-                    source="openi",
-                    modality=modality,
-                    body_part=body_part,
-                    caption=caption,
-                    article_title=article_title,
-                    authors=item.get("authors", ""),
-                    publication_date=item.get("pubDate", ""),
-                    license=item.get("license", "Open Access"),
-                    reliability_score=0.90,
-                    metadata={
-                        "pmcid": pmcid,
-                        "mesh_terms": item.get("meshMajor", []),
-                        "image_type": item.get("imgType", ""),
-                    },
-                )
-                results.append(result)
-            except KeyError as e:
-                skipped_count += 1
-                logger.warning(f"Skipping Open-i result with missing field: {e}")
+            pmcid = item.get("pmcid", "")
+            source_url = (
+                f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
+                if pmcid
+                else item.get("detailedURL", "")
+            )
 
-        if skipped_count > 0:
-            logger.info(f"Skipped {skipped_count} malformed Open-i results")
+            result = ImageSearchResult(
+                title=title[:200],
+                image_url=image_url,
+                thumbnail_url=thumbnail_url,
+                source_url=source_url,
+                source="openi",
+                modality=modality,
+                body_part=body_part,
+                caption=caption,
+                article_title=article_title,
+                authors=item.get("authors", ""),
+                publication_date=item.get("pubDate", ""),
+                license=item.get("license", "Open Access"),
+                reliability_score=0.90,
+                metadata={
+                    "pmcid": pmcid,
+                    "mesh_terms": item.get("meshMajor", []),
+                    "image_type": item.get("imgType", ""),
+                },
+            )
+            results.append(result)
+
+        if skipped_no_image > 0:
+            logger.debug(f"Skipped {skipped_no_image} Open-i results without image URLs")
         return results
 
     @beartype
@@ -391,8 +391,20 @@ class MedicalImageSearchManager:
         # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[ImageSearchResult]] = TTLCache(self._cache_config)
 
-        self.download_dir = download_dir or Path(tempfile.gettempdir()) / "radiant_harness_images"
-        self.download_dir.mkdir(parents=True, exist_ok=True)
+        # Use secure temporary directory with proper permissions
+        if download_dir:
+            self.download_dir = download_dir
+            self.download_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        else:
+            import atexit
+            import tempfile
+
+            self.download_dir = Path(tempfile.mkdtemp(prefix="rh_images_"))
+            # Ensure directory has restricted permissions
+            self.download_dir.chmod(0o700)
+            self._created_temp_dir = True
+            # Register cleanup on exit
+            atexit.register(self._cleanup_temp_dir)
 
         self.engines: list[ImageSearchEngine] = []
         engines = engines or ["openi"]
@@ -423,6 +435,21 @@ class MedicalImageSearchManager:
     async def close(self) -> None:
         for engine in self.engines:
             await engine.close()
+
+        # Clean up temporary directory if we created it
+        if hasattr(self, "_created_temp_dir") and self._created_temp_dir:
+            self._cleanup_temp_dir()
+
+    def _cleanup_temp_dir(self) -> None:
+        """Clean up temporary directory and its contents."""
+        import shutil
+
+        try:
+            if self.download_dir.exists():
+                shutil.rmtree(self.download_dir)
+                logger.debug(f"Cleaned up temporary directory: {self.download_dir}")
+        except OSError as e:
+            logger.warning(f"Failed to clean up temporary directory {self.download_dir}: {e}")
 
     @beartype
     async def search(
@@ -520,7 +547,7 @@ class MedicalImageSearchManager:
             ImageDownloadError: If download fails
         """
         extension = self._get_extension_from_url(result.image_url)
-        url_hash = hashlib.md5(result.image_url.encode(), usedforsecurity=False).hexdigest()[:20]
+        url_hash = hashlib.sha256(result.image_url.encode()).hexdigest()[:20]
 
         if extension:
             filepath = self.download_dir / f"{url_hash}{extension}"
@@ -529,13 +556,10 @@ class MedicalImageSearchManager:
                 return filepath
 
         try:
-            # Reuse the existing session for connection pooling
-            session = await self.engines[0]._get_session() if self.engines else None
-            if session is None:
-                # Fallback to new session if no engines configured
-                async with aiohttp.ClientSession() as new_session:
-                    return await self._do_download(new_session, result, url_hash, extension)
-            return await self._do_download(session, result, url_hash, extension)
+            # Always create a dedicated session for downloads to avoid
+            # session reuse issues and ensure proper resource cleanup
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                return await self._do_download(session, result, url_hash, extension)
 
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             raise ImageDownloadError(result.image_url, str(e), e) from e

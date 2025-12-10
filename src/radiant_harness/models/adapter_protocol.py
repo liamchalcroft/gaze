@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Protocol
@@ -20,4 +21,5 @@ class AdapterProtocol(Protocol):
         temperature: float,
         tools: list[dict[str, Any]] | None,
         response_format: dict[str, Any] | None,
-    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]: ...
+        stream: bool = False,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]: ...

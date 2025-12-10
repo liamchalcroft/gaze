@@ -1,0 +1,311 @@
+"""VQA-RAD agentic processor for visual question answering.
+
+Extends AgenticProcessorBase for radiology VQA with visual tools and web search.
+
+Supports verifiers integration for RL training via VerifiableProcessorMixin.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+from typing import Literal
+
+from beartype import beartype
+
+from radiant_harness import AgenticProcessorBase
+from radiant_harness import ImageInput
+from radiant_harness import Turn
+from radiant_harness.verifiers import BaseRewardFunction
+from radiant_harness.verifiers import VerifiableProcessorMixin
+
+from .schemas import VQA_RAD_SCHEMA
+from .schemas import validate_vqa_rad_response
+
+VQARadQuestionType = Literal["closed", "open"]
+
+
+class VQARadVerifiersReward(BaseRewardFunction):
+    """Verifiers-compatible reward function for VQA-RAD.
+
+    Uses different reward strategies based on question type:
+    - Closed (yes/no): Exact match reward
+    - Open: Token F1 reward
+    """
+
+    def __call__(
+        self,
+        prompt: str,  # noqa: ARG002 - Required by interface
+        completion: Any,
+        info: dict[str, Any],
+    ) -> float:
+        """Compute reward for VQA-RAD answer.
+
+        Args:
+            prompt: The input prompt (unused)
+            completion: Model completion (string or message list)
+            info: Case information with ground truth
+
+        Returns:
+            Reward in [0.0, 1.0] based on question type
+        """
+        # Extract completion text
+        comp_text = self._extract_text(completion)
+
+        # Parse response
+        response = self._extract_json_response(comp_text)
+        if response is None:
+            return 0.0
+
+        # Get predicted and gold answers
+        pred_answer = str(response.get("answer", ""))
+        gold_answer = str(info.get("answer", info.get("gold_answer", "")))
+
+        # Determine question type
+        question_type = info.get("question_type", "open")
+
+        if question_type == "closed":
+            return self._compute_closed_reward(pred_answer, gold_answer)
+        return self._compute_open_reward(pred_answer, gold_answer)
+
+    def _compute_closed_reward(self, prediction: str, reference: str) -> float:
+        """Compute exact match reward for closed questions."""
+        pred_norm = prediction.lower().strip()
+        ref_norm = reference.lower().strip()
+
+        # Normalize yes/no variations
+        if pred_norm in {"yes", "y", "true"}:
+            pred_norm = "yes"
+        elif pred_norm in {"no", "n", "false"}:
+            pred_norm = "no"
+
+        if ref_norm in {"yes", "y", "true"}:
+            ref_norm = "yes"
+        elif ref_norm in {"no", "n", "false"}:
+            ref_norm = "no"
+
+        return 1.0 if pred_norm == ref_norm else 0.0
+
+    def _compute_open_reward(self, prediction: str, reference: str) -> float:
+        """Compute token F1 reward for open questions."""
+        if not prediction or not reference:
+            return 0.0
+
+        pred_tokens = set(prediction.lower().split())
+        ref_tokens = set(reference.lower().split())
+
+        if not ref_tokens:
+            return 0.0
+
+        intersection = pred_tokens & ref_tokens
+        precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
+        recall = len(intersection) / len(ref_tokens)
+
+        if precision + recall == 0:
+            return 0.0
+
+        return 2 * precision * recall / (precision + recall)
+
+    def _extract_text(self, completion: Any) -> str:
+        """Extract text from completion."""
+        if isinstance(completion, str):
+            return completion
+        if isinstance(completion, list):
+            for msg in reversed(completion):
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        return content
+        return str(completion or "")
+
+    def _extract_json_response(self, text: str) -> dict[str, Any] | None:
+        """Extract JSON response from text."""
+        # Try markdown JSON block
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Try raw JSON
+        try:
+            start = text.find("{")
+            if start != -1:
+                depth = 0
+                for i, c in enumerate(text[start:], start):
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            return json.loads(text[start : i + 1])
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: treat entire text as answer
+        return {"answer": text.strip()}
+
+
+class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
+    """Agentic processor for VQA-RAD visual question answering.
+
+    Handles radiology image analysis with visual tools (zoom, crop, contrast)
+    and optional web search for medical reference.
+
+    Example:
+        processor = VQARadProcessor(
+            model_name="openai/gpt-4o",
+            use_tools=True,
+            use_web_search=True,
+            max_turns=5,
+        )
+        result = await processor.analyze(
+            images=Path("xray.jpg"),
+            metadata={"question": "Is there a fracture?"},
+        )
+        print(result.final_response["answer"])  # "yes" or detailed answer
+    """
+
+    DOMAIN = "Radiology VQA"
+    MODALITY = "Multi-modality"  # X-ray, CT, MRI, etc.
+
+    def __init__(
+        self,
+        model_name: str = "openai/gpt-4o",
+        use_tools: bool = True,
+        use_web_search: bool = False,
+        max_turns: int = 5,
+        reasoning_enabled: bool = False,
+        reasoning_effort: str = "high",
+    ) -> None:
+        """Initialize VQA-RAD processor.
+
+        Args:
+            model_name: Model to use for analysis
+            use_tools: Enable visual manipulation tools
+            use_web_search: Enable medical literature search
+            max_turns: Maximum conversation turns
+            reasoning_enabled: Enable model reasoning mode
+            reasoning_effort: Reasoning effort level
+        """
+        super().__init__(
+            model_name=model_name,
+            use_tools=use_tools,
+            use_web_search=use_web_search,
+            max_turns=max_turns,
+            reasoning_enabled=reasoning_enabled,
+            reasoning_effort=reasoning_effort,
+        )
+
+    def get_reward_function(self) -> BaseRewardFunction:
+        """Return VQA-RAD reward function for verifiers integration.
+
+        Returns:
+            VQARadVerifiersReward for closed/open question handling
+        """
+        return VQARadVerifiersReward()
+
+    def get_system_prompt(
+        self,
+        images: list[ImageInput],
+        metadata: dict[str, Any],  # noqa: ARG002
+    ) -> str:
+        """Build VQA-RAD system prompt."""
+        prompt_parts = [
+            "You are an expert radiologist answering questions about medical images.",
+            "Analyze the provided radiology image and answer the question accurately.",
+            "",
+            "Guidelines:",
+            "- For yes/no questions, answer clearly with 'yes' or 'no'",
+            "- For open-ended questions, provide concise, specific answers",
+            "- Base your answer ONLY on what you observe in the image",
+            "- Describe the visual evidence supporting your answer",
+            "- Identify the anatomical region relevant to the question",
+            "",
+        ]
+
+        if self.use_tools:
+            prompt_parts.extend([
+                "You have access to visual tools to examine the image more closely:",
+                "- Use 'zoom' to magnify regions of interest",
+                "- Use 'crop' to focus on specific areas",
+                "- Use 'adjust_contrast' to enhance visibility of structures",
+                "- Use 'threshold' to highlight intensity ranges",
+                "",
+            ])
+
+        if self.use_web_search:
+            prompt_parts.extend([
+                "You can also search medical literature for reference:",
+                "- Use 'search_web' to find relevant diagnostic criteria",
+                "- Use 'search_images' to find similar reference cases",
+                "",
+            ])
+
+        # Add image dimensions if available
+        if images:
+            img = images[0]
+            prompt_parts.append(f"Image dimensions: {img.width} x {img.height} pixels")
+            prompt_parts.append("")
+
+        return "\n".join(prompt_parts)
+
+    def get_user_message(
+        self,
+        images: list[ImageInput],
+        metadata: dict[str, Any],
+    ) -> str:
+        """Build VQA-RAD user message with question."""
+        question = metadata.get("question", "")
+
+        message_parts = []
+
+        if images:
+            message_parts.append("Here is the radiology image for analysis.")
+            message_parts.append("")
+
+        message_parts.append(f"**Question:** {question}")
+        message_parts.append("")
+        message_parts.append(
+            "Analyze the image carefully and provide your answer. "
+            "Include your visual reasoning and identify the relevant region."
+        )
+
+        return "\n".join(message_parts)
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        """Return VQA-RAD schema for structured outputs."""
+        return VQA_RAD_SCHEMA
+
+    @beartype
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        """Validate response has required VQA-RAD fields."""
+        return validate_vqa_rad_response(response)
+
+    def calculate_confidence(
+        self,
+        response: dict[str, Any],
+        turns: list[Turn],
+    ) -> float:
+        """Calculate confidence based on response and tool usage."""
+        # Use the model's self-reported confidence as base
+        base_confidence = response.get("confidence", 0.5)
+
+        # Bonus for using visual tools (shows thorough examination)
+        visual_tools = {"zoom", "crop", "adjust_contrast", "threshold"}
+        tool_turns = sum(
+            1 for t in turns
+            if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
+        )
+        tool_bonus = min(tool_turns * 0.05, 0.15)
+
+        # Bonus for providing image observations
+        observations = response.get("image_observations", [])
+        obs_bonus = min(len(observations) * 0.02, 0.1)
+
+        # Bonus for identifying region of interest
+        roi_bonus = 0.05 if response.get("region_of_interest") else 0.0
+
+        return min(1.0, base_confidence + tool_bonus + obs_bonus + roi_bonus)

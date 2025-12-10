@@ -2,12 +2,15 @@
 
 Extends AgenticProcessorBase with NOVA task prompts, schemas, and tool configuration.
 Uses Jinja templates from nova/prompts/ for prompt generation.
+
+Supports verifiers integration for RL training via VerifiableProcessorMixin.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 from beartype import beartype
 
@@ -15,24 +18,25 @@ from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
 from radiant_harness import create_prompt
+from radiant_harness.verifiers import BaseRewardFunction
+from radiant_harness.verifiers import VerifiableProcessorMixin
 
+from .config import ConfidenceConfig
+from .rewards import NOVAVerifiersReward
 from .schemas import NOVA_SCHEMA
 from .schemas import validate_nova_response
 
 # Path to NOVA prompts directory
 NOVA_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Confidence calculation constants
-CONFIDENCE_BASE = 0.5
-CONFIDENCE_COMPREHENSIVE_BONUS = 0.1
-CONFIDENCE_PER_EVIDENCE = 0.02
-CONFIDENCE_PER_DIFFERENTIAL = 0.02
-CONFIDENCE_PER_LOCALIZATION = 0.02
-CONFIDENCE_PER_TOOL_TURN = 0.05
-CONFIDENCE_MAX_BONUS = 0.1
+# Default confidence configuration
+DEFAULT_CONFIDENCE_CONFIG = ConfidenceConfig()
 
 
-class NOVAAgenticProcessor(AgenticProcessorBase):
+NOVATask = Literal["caption", "diagnosis", "localization", "all"]
+
+
+class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
     """Agentic processor for NOVA brain-MRI benchmark tasks.
 
     Uses Jinja templates from nova/prompts/ for system and task prompts.
@@ -55,13 +59,61 @@ class NOVAAgenticProcessor(AgenticProcessorBase):
     # Inherits _create_tool_registry from base class - uses standard tool
     # creation logic with self.use_tools and self.use_web_search flags
 
+    def __init__(
+        self,
+        model_name: str = "openai/gpt-4o",
+        use_tools: bool = True,
+        use_web_search: bool = True,
+        max_turns: int = 10,
+        reasoning_enabled: bool = False,
+        reasoning_effort: str = "high",
+        task: NOVATask = "all",
+        confidence_config: ConfidenceConfig = DEFAULT_CONFIDENCE_CONFIG,
+    ) -> None:
+        """Initialize NOVA processor.
+
+        Args:
+            model_name: Model to use for analysis
+            use_tools: Enable visual manipulation tools
+            use_web_search: Enable medical literature search
+            max_turns: Maximum conversation turns
+            reasoning_enabled: Enable model reasoning mode
+            reasoning_effort: Reasoning effort level
+            task: NOVA task type for reward computation
+            confidence_config: Configuration for confidence calculations
+        """
+        super().__init__(
+            model_name=model_name,
+            use_tools=use_tools,
+            use_web_search=use_web_search,
+            max_turns=max_turns,
+            reasoning_enabled=reasoning_enabled,
+            reasoning_effort=reasoning_effort,
+        )
+        self._task = task
+        self._confidence_config = confidence_config
+
+    def get_reward_function(self) -> BaseRewardFunction:
+        """Return NOVA reward function for verifiers integration.
+
+        Returns task-specific reward based on configured task type:
+        - caption: BLEU + BERTScore reward
+        - diagnosis: Top-1/Top-5 accuracy reward
+        - localization: IoU-based mAP reward
+        - all: Combined weighted reward
+
+        Returns:
+            NOVAVerifiersReward configured for the task
+        """
+        return NOVAVerifiersReward(task=self._task)
+
     def get_system_prompt(
         self,
         images: list[ImageInput],
         metadata: dict[str, Any],
     ) -> str:
         """Build NOVA-specific system prompt using Jinja templates."""
-        history = metadata.get("history") or metadata.get("clinical_history") or ""
+        history = metadata.get("clinical_history", "")
         # Get dimensions from first image if available
         width = images[0].width if images else 0
         height = images[0].height if images else 0
@@ -99,7 +151,7 @@ class NOVAAgenticProcessor(AgenticProcessorBase):
         metadata: dict[str, Any],
     ) -> str:
         """Build NOVA-specific user message."""
-        history = metadata.get("history") or metadata.get("clinical_history") or ""
+        history = metadata.get("clinical_history", "")
         # Adapt message based on input mode
         if images:
             if len(images) == 1:
@@ -143,32 +195,40 @@ class NOVAAgenticProcessor(AgenticProcessorBase):
         turns: list[Turn],
     ) -> float:
         """Calculate confidence with NOVA-specific factors."""
-        confidence = CONFIDENCE_BASE
+        confidence = self._confidence_config.base
 
         # Bonus for comprehensive response
         if all(field in response for field in ["caption", "diagnosis", "localization"]):
-            confidence += CONFIDENCE_COMPREHENSIVE_BONUS
+            confidence += self._confidence_config.comprehensive_bonus
 
         # Bonus for evidence in diagnosis
         diagnosis = response.get("diagnosis", {})
         if evidence := diagnosis.get("evidence"):
-            confidence += min(len(evidence) * CONFIDENCE_PER_EVIDENCE, CONFIDENCE_MAX_BONUS)
+            confidence += min(
+                len(evidence) * self._confidence_config.per_evidence,
+                self._confidence_config.max_bonus
+            )
 
         # Bonus for differential diagnoses
         if differentials := diagnosis.get("differential_diagnoses"):
             confidence += min(
-                len(differentials) * CONFIDENCE_PER_DIFFERENTIAL, CONFIDENCE_MAX_BONUS
+                len(differentials) * self._confidence_config.per_differential,
+                self._confidence_config.max_bonus
             )
 
         # Bonus for localizations
         localization = response.get("localization", {})
         if localizations := localization.get("localizations"):
             confidence += min(
-                len(localizations) * CONFIDENCE_PER_LOCALIZATION, CONFIDENCE_MAX_BONUS
+                len(localizations) * self._confidence_config.per_localization,
+                self._confidence_config.max_bonus
             )
 
         # Bonus for tool usage
         tool_turns = sum(1 for t in turns if t.tool_calls)
-        confidence += min(tool_turns * CONFIDENCE_PER_TOOL_TURN, CONFIDENCE_MAX_BONUS)
+        confidence += min(
+            tool_turns * self._confidence_config.per_tool_turn,
+            self._confidence_config.max_bonus
+        )
 
         return min(1.0, confidence)

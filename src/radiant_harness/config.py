@@ -6,6 +6,7 @@ All previously hardcoded values are now configurable via these dataclasses.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from dataclasses import field
 
@@ -156,22 +157,44 @@ class HarnessConfig:
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
 
 
-# Global default configuration instance
-# Can be replaced at module load time for global customization
-DEFAULT_CONFIG = HarnessConfig()
+class _ConfigHolder:
+    """Thread-safe container for global configuration.
+
+    Uses a class to avoid module-level global statement while maintaining
+    singleton pattern for configuration management.
+    """
+
+    _lock = threading.Lock()
+    _config: HarnessConfig = HarnessConfig()
+
+    @classmethod
+    def get(cls) -> HarnessConfig:
+        """Get the current configuration."""
+        with cls._lock:
+            return cls._config
+
+    @classmethod
+    def set(cls, config: HarnessConfig) -> None:
+        """Set the configuration."""
+        with cls._lock:
+            cls._config = config
 
 
 def get_config() -> HarnessConfig:
     """Get the current default configuration.
 
+    Thread-safe access to the global configuration instance.
+
     Returns:
         The global default HarnessConfig instance
     """
-    return DEFAULT_CONFIG
+    return _ConfigHolder.get()
 
 
 def set_config(config: HarnessConfig) -> None:
     """Set the global default configuration.
+
+    Thread-safe replacement of the global configuration.
 
     Args:
         config: New configuration to use as default
@@ -179,11 +202,9 @@ def set_config(config: HarnessConfig) -> None:
     Example:
         from radiant_harness.config import set_config, HarnessConfig, CacheConfig
 
-        # Customize and set global config
         custom_config = HarnessConfig(
             cache=CacheConfig(max_cache_size=1000)
         )
         set_config(custom_config)
     """
-    global DEFAULT_CONFIG  # noqa: PLW0603 - Global variable pattern for configuration
-    DEFAULT_CONFIG = config
+    _ConfigHolder.set(config)
