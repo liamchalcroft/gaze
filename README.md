@@ -1,8 +1,7 @@
 # Radiant Harness
 
-[![Tests](https://github.com/your-org/radiant-harness/workflows/tests/badge.svg)](https://github.com/your-org/radiant-harness/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/your-org/radiant-harness)](https://codecov.io/gh/your-org/radiant-harness)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A production-ready, modular framework for building multi-turn agentic vision-language model systems. Built for medical image analysis but versatile enough for any visual reasoning task.
 
@@ -69,19 +68,21 @@ print(f"Confidence: {result.confidence:.2f}")
 ## 📁 Project Structure
 
 ```
-nova_retrieval_vlm/
+radiant-harness/
 ├── src/radiant_harness/         # Core framework
-│   ├── tools/                  # Tool system
-│   ├── models/                 # Model adapters
-│   ├── retrieval/              # Search integration
-│   └── prompts/                # Template loading
-├── examples/                   # Example implementations
-│   ├── nova/                   # NOVA brain-MRI benchmark
-│   ├── agentclinic_nejm/       # Diagnostic reasoning
-│   ├── pubmedqa/              # Medical Q&A
-│   └── vqa_rad/               # Radiology VQA
-├── tests/                      # Test suite
-└── docs/                       # Documentation
+│   ├── tools/                   # Tool system (visual, search)
+│   ├── models/                  # Model adapters (OpenAI, HuggingFace)
+│   ├── retrieval/               # Search integration (PubMed, Open-i)
+│   ├── prompts/                 # Template loading (Jinja)
+│   └── verifiers/               # RL training integration
+├── examples/                    # Example implementations
+│   ├── nova/                    # NOVA brain-MRI benchmark
+│   ├── gemex_thinkvg/           # Visual grounding with RL
+│   ├── agentclinic_nejm/        # Diagnostic reasoning
+│   ├── pubmedqa/                # Medical Q&A
+│   └── vqa_rad/                 # Radiology VQA
+├── tests/                       # Test suite
+└── docs/                        # Documentation
 ```
 
 ## 🧪 Running Tests
@@ -100,11 +101,10 @@ uv run pytest tests/test_base_processor.py
 
 ## 📚 Documentation
 
-- [API Reference](docs/api.md)
-- [Tool Development Guide](docs/tools.md)
-- [Model Adapter Guide](docs/adapters.md)
+- [Verifiers Integration Guide](docs/verifiers_integration.md)
 - [Example: NOVA Benchmark](examples/nova/README.md)
 - [Contributing Guide](CONTRIBUTING.md)
+- [CLAUDE.md](CLAUDE.md) - Project guide for AI assistants
 
 ## 🔧 Development
 

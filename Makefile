@@ -1,11 +1,11 @@
-# NOVA Retrieval VLM - Makefile
+# Radiant Harness - Makefile
 # Convenient shortcuts for development and evaluation
 
 .PHONY: help install test check clean format lint eval analyze
 
 # Default target
 help: ## Show this help message
-	@echo "NOVA Retrieval VLM - Available Commands:"
+	@echo "Radiant Harness - Available Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
@@ -31,7 +31,7 @@ test: ## Run test suite
 
 test-cov: ## Run tests with coverage
 	@echo "🧪 Running tests with coverage..."
-	uv run pytest tests/ --cov=nova_retrieval_vlm --cov-report=html
+	uv run pytest tests/ --cov=radiant_harness --cov-report=html
 
 # Code quality
 format: ## Format code with ruff
@@ -81,8 +81,8 @@ dev-setup: ## Setup development environment with pre-commit hooks
 	pre-commit install
 
 status: ## Show project status
-	@echo "📊 NOVA Retrieval VLM Status"
-	@echo "============================"
+	@echo "📊 Radiant Harness Status"
+	@echo "========================="
 	@echo "📁 Project Directory: $(PWD)"
 	@echo "🐍 Python Version: $(shell python --version 2>/dev/null || echo 'Not found')"
 	@echo "📦 uv: $(shell command -v uv >/dev/null 2>&1 && echo 'Available' || echo 'Not found')"

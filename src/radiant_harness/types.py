@@ -115,7 +115,7 @@ class AgenticResult:
 
     def get_tools_used(self) -> set[str]:
         """Get set of unique tool names used in the analysis."""
-        tools = set()
+        tools: set[str] = set()
         for turn in self.turns:
             for tc in turn.tool_calls:
                 tools.add(tc.name)
