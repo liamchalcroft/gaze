@@ -1,18 +1,18 @@
-# NOVA Retrieval VLM - Makefile
+# Radiant Harness - Makefile
 # Convenient shortcuts for development and evaluation
 
-.PHONY: help install test check clean format lint eval analyze
+.PHONY: help install test check clean format lint quality dev-setup status
 
 # Default target
 help: ## Show this help message
-	@echo "NOVA Retrieval VLM - Available Commands:"
+	@echo "Radiant Harness - Available Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Quick Start:"
 	@echo "  1. make install    # Install dependencies"
-	@echo "  2. make eval      # Run baseline evaluation"
-	@echo "  3. make analyze   # Analyze results"
+	@echo "  2. make check      # Run quality checks"
+	@echo "  3. make test       # Run test suite"
 
 # Environment setup
 install: ## Install dependencies
@@ -20,9 +20,12 @@ install: ## Install dependencies
 	uv sync
 
 # Configuration and verification
-check: ## Run quality checks
+check: ## Run all quality checks (lint, typecheck, test)
 	@echo "🔍 Running quality checks..."
-	@./scripts/check_quality.sh
+	uv run ruff check src/
+	uv run ruff format --check src/
+	uv run pyright src/
+	uv run pytest tests/ -x --tb=short
 
 # Testing and development
 test: ## Run test suite
@@ -31,7 +34,7 @@ test: ## Run test suite
 
 test-cov: ## Run tests with coverage
 	@echo "🧪 Running tests with coverage..."
-	uv run pytest tests/ --cov=nova_retrieval_vlm --cov-report=html
+	uv run pytest tests/ --cov=radiant_harness --cov-report=html
 
 # Code quality
 format: ## Format code with ruff
@@ -44,21 +47,6 @@ lint: ## Check code quality
 	uv run pyright src/
 
 quality: format lint ## Format and lint code
-
-# Evaluation workflow
-eval: ## Run baseline evaluation
-	@echo "🔬 Running baseline evaluation..."
-	@./scripts/eval_nova.sh config/baseline.yaml
-
-eval-agentic: ## Run agentic evaluation
-	@echo "🤖 Running agentic evaluation..."
-	@./scripts/eval_nova.sh config/agentic.yaml
-
-analyze: ## Analyze evaluation results
-	@echo "📊 Analyzing evaluation results..."
-	@./scripts/eval_nova.sh analyze
-
-full-paper-workflow: eval eval-agentic analyze ## Run complete paper evaluation workflow
 
 # Cleanup
 clean: ## Clean temporary files and caches
@@ -81,8 +69,8 @@ dev-setup: ## Setup development environment with pre-commit hooks
 	pre-commit install
 
 status: ## Show project status
-	@echo "📊 NOVA Retrieval VLM Status"
-	@echo "============================"
+	@echo "📊 Radiant Harness Status"
+	@echo "========================="
 	@echo "📁 Project Directory: $(PWD)"
 	@echo "🐍 Python Version: $(shell python --version 2>/dev/null || echo 'Not found')"
 	@echo "📦 uv: $(shell command -v uv >/dev/null 2>&1 && echo 'Available' || echo 'Not found')"

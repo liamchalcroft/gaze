@@ -9,7 +9,7 @@ The repository also includes `examples/nova/` - a complete example implementatio
 
 ### Project Structure
 ```
-nova_retrieval_vlm/
+radiant-harness/
 ├── src/radiant_harness/        # Main Python package
 │   ├── __init__.py             # Public API exports
 │   ├── __main__.py             # CLI entry point
@@ -20,37 +20,42 @@ nova_retrieval_vlm/
 │   ├── exceptions.py           # Exception hierarchy
 │   ├── cache.py                # TTLCache implementation
 │   ├── models/                 # Model adapters
-│   │   ├── __init__.py
-│   │   ├── _types.py           # GenerationLog
 │   │   ├── adapter_protocol.py # AdapterProtocol
-│   │   └── openai_adapter.py   # OpenAI API adapter
+│   │   ├── openai_adapter.py   # OpenAI API adapter
+│   │   └── huggingface_adapter.py # HuggingFace adapter (optional)
 │   ├── tools/                  # Tool system
-│   │   ├── __init__.py
 │   │   ├── tool.py             # Tool class definition
 │   │   ├── registry.py         # ToolRegistry, EncodedImage
 │   │   ├── visual.py           # Visual tools (zoom, crop, contrast, etc.)
 │   │   ├── search.py           # Search tools (web, image)
 │   │   ├── image_manager.py    # Image loading and transformation
 │   │   ├── image_ops.py        # Image operations
+│   │   ├── decorators.py       # Tool decorator helpers
 │   │   └── tool_documenter.py  # Schema generation
 │   ├── retrieval/              # External search integrations
-│   │   ├── __init__.py
 │   │   ├── web_search.py       # PubMed search
 │   │   └── image_search.py     # Open-i image search
-│   └── prompts/                # Template loading utilities
-│       ├── __init__.py
-│       └── examples/           # Example task templates
-├── examples/nova/              # NOVA benchmark example
-│   ├── src/                    # NOVA-specific implementation
-│   │   ├── cli.py              # CLI interface
-│   │   ├── config.py           # Hydra configuration
-│   │   ├── processor.py        # NOVA processor
-│   │   ├── schemas.py          # Response schemas
-│   │   └── ...
-│   ├── config/                 # Hydra configs
-│   └── scripts/                # Benchmark scripts
+│   ├── prompts/                # Template loading utilities
+│   │   └── __init__.py         # Jinja template loading
+│   ├── verifiers/              # RL training integration
+│   │   ├── adapter.py          # RadiantHarnessAdapter
+│   │   ├── base.py             # BaseMultiTurnEnv
+│   │   ├── mixin.py            # VerifiableProcessorMixin
+│   │   ├── rewards.py          # Reward functions
+│   │   └── tool_bridge.py      # Tool execution bridge
+│   └── utils/
+│       ├── iou.py              # IoU calculation
+│       └── json_extract.py     # JSON extraction
+├── examples/                   # Example implementations
+│   ├── nova/                   # NOVA brain-MRI benchmark
+│   ├── gemex_thinkvg/          # Visual grounding with RL
+│   ├── agentclinic_nejm/       # Diagnostic reasoning
+│   ├── pubmedqa/               # Medical Q&A
+│   └── vqa_rad/                # Radiology VQA
 ├── tests/                      # Test suite
+├── docs/                       # Documentation
 ├── pyproject.toml              # Project configuration
+├── AUDIT_LOG.md                # Audit tracking
 └── README.md
 ```
 
@@ -62,11 +67,14 @@ nova_retrieval_vlm/
 uv sync
 uv run python -m radiant_harness
 
+# Run all quality checks (recommended)
+make check
+
 # Run tests
 uv run pytest
 uv run pytest --cov=radiant_harness --cov-report=html
 
-# Code quality checks
+# Code quality checks (individual)
 uv run ruff check .          # Linting
 uv run ruff format .         # Formatting
 uv run pyright               # Type checking
@@ -98,6 +106,7 @@ python -m src.cli task=localization model.name=openai/gpt-4o
 - `src/radiant_harness/tools/registry.py` - ToolRegistry
 - `src/radiant_harness/tools/visual.py` - Visual tool implementations
 - `src/radiant_harness/models/openai_adapter.py` - OpenAI API adapter
+- `src/radiant_harness/verifiers/` - RL training integration (verifiers package)
 
 ## Architecture & Design Principles
 
