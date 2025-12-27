@@ -1,0 +1,346 @@
+"""CLI entry point for NOVA Brain MRI environment.
+
+Provides medarc-eval compatible CLI for evaluating models on NOVA benchmark.
+
+Usage:
+    medarc-eval nova-brain-mri -m gpt-4o -n 100
+
+    # Or directly:
+    python -m nova_brain_mri.cli --model gpt-4o --num-examples 100
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+from . import NOVABrainMRIEnv, load
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Evaluate VLMs on NOVA Brain MRI benchmark",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    # Model arguments
+    parser.add_argument(
+        "-m",
+        "--model",
+        type=str,
+        required=True,
+        help="Model name (e.g., gpt-4o, claude-3-opus)",
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="OpenAI-compatible API base URL",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key (or set OPENAI_API_KEY/OPENROUTER_API_KEY env var)",
+    )
+
+    # Dataset arguments
+    parser.add_argument(
+        "-n",
+        "--num-examples",
+        type=int,
+        default=None,
+        help="Number of examples to evaluate (default: all)",
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        choices=["train", "validation", "test"],
+        default="test",
+        help="Dataset split",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Path to NOVA dataset directory",
+    )
+
+    # Task arguments
+    parser.add_argument(
+        "--task",
+        type=str,
+        choices=["caption", "diagnosis", "localization", "all"],
+        default="all",
+        help="NOVA task to evaluate",
+    )
+
+    # Environment arguments
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=10,
+        help="Maximum conversation turns",
+    )
+    parser.add_argument(
+        "--use-tools",
+        action="store_true",
+        default=True,
+        help="Enable visual tools",
+    )
+    parser.add_argument(
+        "--no-tools",
+        dest="use_tools",
+        action="store_false",
+        help="Disable visual tools",
+    )
+    parser.add_argument(
+        "--use-web-search",
+        action="store_true",
+        default=False,
+        help="Enable PubMed search",
+    )
+    parser.add_argument(
+        "--iou-threshold",
+        type=float,
+        default=0.3,
+        help="IoU threshold for localization matching",
+    )
+
+    # Output arguments
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output file for results (JSON)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Verbose output",
+    )
+    parser.add_argument(
+        "-s",
+        "--stream",
+        action="store_true",
+        help="Stream results as they complete",
+    )
+
+    return parser.parse_args()
+
+
+def get_api_client(args: argparse.Namespace) -> Any:
+    """Create OpenAI-compatible API client."""
+    if OpenAI is None:
+        print("Error: openai package not installed. Run: pip install openai", file=sys.stderr)
+        sys.exit(1)
+
+    api_key = args.api_key
+    base_url = args.base_url
+
+    # Try environment variables
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+
+    if not api_key:
+        print("Error: No API key provided. Set OPENAI_API_KEY or use --api-key", file=sys.stderr)
+        sys.exit(1)
+
+    # Use OpenRouter if model has provider prefix
+    if "/" in args.model and not base_url:
+        base_url = "https://openrouter.ai/api/v1"
+        if not os.environ.get("OPENROUTER_API_KEY") and os.environ.get("OPENAI_API_KEY"):
+            api_key = os.environ.get("OPENROUTER_API_KEY", api_key)
+
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+
+def print_env_schema() -> None:
+    """Print environment configuration schema."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "split": {
+                "type": "string",
+                "enum": ["train", "validation", "test"],
+                "default": "test",
+            },
+            "task": {
+                "type": "string",
+                "enum": ["caption", "diagnosis", "localization", "all"],
+                "default": "all",
+            },
+            "max_turns": {"type": "integer", "default": 10},
+            "use_tools": {"type": "boolean", "default": True},
+            "use_web_search": {"type": "boolean", "default": False},
+            "iou_threshold": {"type": "number", "default": 0.3},
+            "data_dir": {"type": "string", "default": None},
+        },
+    }
+    print(json.dumps(schema, indent=2))
+
+
+async def run_evaluation(
+    client: Any,
+    model: str,
+    env: NOVABrainMRIEnv,
+    num_examples: int | None = None,
+    verbose: bool = False,
+    stream: bool = False,
+) -> dict[str, Any]:
+    """Run evaluation on NOVA environment.
+
+    Args:
+        client: OpenAI-compatible client
+        model: Model name
+        env: NOVA environment instance
+        num_examples: Number of examples (None for all)
+        verbose: Print verbose output
+        stream: Stream results
+
+    Returns:
+        Evaluation results dictionary
+    """
+    results = []
+    rubric = env.get_rubric()
+
+    # Get dataset
+    dataset = env.dataset
+    if num_examples:
+        dataset = dataset.select(range(min(num_examples, len(dataset))))
+
+    total = len(dataset)
+    rewards = []
+
+    for idx, example in enumerate(dataset):
+        if verbose:
+            print(f"Evaluating example {idx + 1}/{total}...")
+
+        prompt = example["prompt"]
+        info = example["info"]
+
+        # Build initial state
+        state = env.build_initial_state(prompt, info)
+        messages = list(prompt)
+
+        # Run multi-turn conversation
+        while not await env.is_completed(messages, state, info):
+            # Get model response
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                )
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": response.choices[0].message.content,
+                }
+                messages.append(assistant_msg)
+
+                # Get environment response
+                env_msgs, state = await env.env_response(messages, state, info)
+                messages.extend(env_msgs)
+
+            except Exception as e:
+                if verbose:
+                    print(f"  Error: {e}")
+                break
+
+        # Compute reward
+        reward = rubric.evaluate("", messages, info)
+        rewards.append(reward)
+
+        result = {
+            "case_index": idx,
+            "reward": reward,
+            "turns": state.get("turn", 0),
+            "tool_uses": state.get("tool_uses", 0),
+        }
+        results.append(result)
+
+        if stream:
+            print(json.dumps(result))
+
+    # Compute aggregate metrics
+    mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
+
+    return {
+        "model": model,
+        "task": env.config.task,
+        "split": env.split,
+        "num_examples": len(results),
+        "mean_reward": mean_reward,
+        "results": results,
+    }
+
+
+def main() -> int:
+    """Main entry point."""
+    args = parse_args()
+
+    # Handle schema printing
+    if hasattr(args, "print_env_schema") and args.print_env_schema:
+        print_env_schema()
+        return 0
+
+    # Create client
+    client = get_api_client(args)
+
+    # Load environment
+    env = load(
+        split=args.split,
+        task=args.task,
+        max_turns=args.max_turns,
+        use_tools=args.use_tools,
+        use_web_search=args.use_web_search,
+        iou_threshold=args.iou_threshold,
+        data_dir=args.data_dir,
+    )
+
+    if args.verbose:
+        print(f"Loaded NOVA environment: {len(env.dataset)} examples")
+        print(f"Task: {args.task}, Max turns: {args.max_turns}")
+        print(f"Tools: {args.use_tools}, Web search: {args.use_web_search}")
+
+    # Run evaluation
+    results = asyncio.run(
+        run_evaluation(
+            client=client,
+            model=args.model,
+            env=env,
+            num_examples=args.num_examples,
+            verbose=args.verbose,
+            stream=args.stream,
+        )
+    )
+
+    # Output results
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2)
+        if args.verbose:
+            print(f"Results saved to {args.output}")
+    else:
+        print(json.dumps(results, indent=2))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

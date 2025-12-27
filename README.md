@@ -102,6 +102,7 @@ uv run pytest tests/test_base_processor.py
 ## 📚 Documentation
 
 - [Verifiers Integration Guide](docs/verifiers_integration.md)
+- [MedMarks Integration Guide](docs/MEDMARKS_INTEGRATION.md)
 - [Example: NOVA Benchmark](examples/nova/README.md)
 - [Contributing Guide](CONTRIBUTING.md)
 - [CLAUDE.md](CLAUDE.md) - Project guide for AI assistants

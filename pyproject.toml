@@ -167,6 +167,11 @@ nova = [
     "torchvision",
     "datasets",
 ]
+medmarks = [
+    "verifiers>=0.1.6",
+    "prime>=0.3.35",
+    "datasets>=2.0.0",
+]
 
 [dependency-groups]
 dev = [
