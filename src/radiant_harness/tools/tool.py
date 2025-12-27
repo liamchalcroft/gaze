@@ -1,8 +1,4 @@
-"""Tool definition for agentic processing.
-
-This module contains the core Tool class definition which is used
-throughout the tools package.
-"""
+"""Tool class definition for agentic processing."""
 
 from __future__ import annotations
 

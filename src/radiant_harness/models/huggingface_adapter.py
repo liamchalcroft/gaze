@@ -24,50 +24,35 @@ from radiant_harness.exceptions import ModelError
 from radiant_harness.models._types import GenerationLog
 from radiant_harness.models.adapter_protocol import AdapterProtocol
 
-# Check for torch availability
-_torch_available = False
-try:
-    import torch  # pyright: ignore[reportMissingImports]
-
-    _torch_available = True
-except ImportError:
-    torch = None
-
-# Check for transformers availability
-_transformers_available = False
-try:
-    from transformers import GenerationError  # pyright: ignore[reportMissingImports]
-
-    _transformers_available = True
-except ImportError:
-    GenerationError = None
-
 if TYPE_CHECKING:
     from PIL import Image
     from transformers import PreTrainedModel  # pyright: ignore[reportMissingImports]
     from transformers import PreTrainedTokenizer  # pyright: ignore[reportMissingImports]
 
 
-def _lazy_import_torch():
-    """Lazy import torch to avoid import errors when not installed."""
+def _require_torch():
+    """Import torch, raising ImportError with helpful message if unavailable."""
     try:
         import torch  # pyright: ignore[reportMissingImports]
 
         return torch
     except ImportError as e:
-        msg = "torch is required for HuggingFace adapters. Install with: pip install torch"
-        raise ImportError(msg) from e
+        raise ImportError(
+            "torch is required for HuggingFace adapters. Install with: pip install torch"
+        ) from e
 
 
-def _lazy_import_transformers():
-    """Lazy import transformers to avoid import errors when not installed."""
+def _require_transformers():
+    """Import transformers, raising ImportError with helpful message if unavailable."""
     try:
         import transformers  # pyright: ignore[reportMissingImports]
 
         return transformers
     except ImportError as e:
-        msg = "transformers is required for HuggingFace adapters. Install with: pip install transformers"
-        raise ImportError(msg) from e
+        raise ImportError(
+            "transformers is required for HuggingFace adapters. "
+            "Install with: pip install transformers"
+        ) from e
 
 
 class HuggingFaceAdapter(AdapterProtocol):
@@ -127,9 +112,9 @@ class HuggingFaceAdapter(AdapterProtocol):
 
     @property
     def torch(self) -> Any:
-        """Lazy load torch."""
+        """Get torch module (imports on first access)."""
         if self._torch is None:
-            self._torch = _lazy_import_torch()
+            self._torch = _require_torch()
         return self._torch
 
     @property
@@ -163,7 +148,7 @@ class HuggingFaceAdapter(AdapterProtocol):
     def tokenizer(self) -> PreTrainedTokenizer:
         """Get or create the tokenizer."""
         if self._tokenizer is None:
-            transformers = _lazy_import_transformers()
+            transformers = _require_transformers()
             self._tokenizer = transformers.AutoTokenizer.from_pretrained(
                 self.model_name,
                 trust_remote_code=self._trust_remote_code,
@@ -177,7 +162,7 @@ class HuggingFaceAdapter(AdapterProtocol):
     def model(self) -> PreTrainedModel:
         """Get or create the model."""
         if self._model is None:
-            transformers = _lazy_import_transformers()
+            transformers = _require_transformers()
 
             # Build model kwargs
             model_kwargs: dict[str, Any] = {
@@ -452,7 +437,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
     def processor(self):
         """Get or create the processor (tokenizer + image processor)."""
         if self._processor is None:
-            transformers = _lazy_import_transformers()
+            transformers = _require_transformers()
             self._processor = transformers.AutoProcessor.from_pretrained(
                 self.model_name,
                 trust_remote_code=self._trust_remote_code,
@@ -468,7 +453,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
     def model(self) -> PreTrainedModel:
         """Get or create the VLM model."""
         if self._model is None:
-            transformers = _lazy_import_transformers()
+            transformers = _require_transformers()
 
             model_kwargs: dict[str, Any] = {
                 "trust_remote_code": self._trust_remote_code,

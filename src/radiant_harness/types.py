@@ -48,7 +48,7 @@ class ToolResult:
     error: str | None = None
     image_base64: str | None = None
     image_mime_type: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
     @property
     def success(self) -> bool:
@@ -82,8 +82,8 @@ class Turn:
 
     role: TurnRole
     content: str
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    tool_results: list[ToolResult] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=lambda: [])
+    tool_results: list[ToolResult] = field(default_factory=lambda: [])
     image_base64: str | None = None
 
 

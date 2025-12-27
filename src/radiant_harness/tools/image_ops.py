@@ -183,7 +183,7 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
         Thresholded grayscale image with intensities rescaled to 0-255
 
     Raises:
-        ValueError: If lower < 0 or upper <= lower
+        ValueError: If bounds are invalid (lower < 0, upper > 255, or upper <= lower)
 
     Example:
         from PIL import Image
@@ -193,8 +193,12 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
         # Window to intensities 50-200
         windowed = apply_intensity_threshold(img, 50, 200)
     """
-    if lower < 0 or upper <= lower:
-        raise ValueError("invalid intensity range: lower must be >= 0 and upper must be > lower")
+    if lower < 0:
+        raise ValueError(f"lower must be >= 0, got {lower}")
+    if upper > 255:
+        raise ValueError(f"upper must be <= 255, got {upper}")
+    if upper <= lower:
+        raise ValueError(f"upper must be > lower, got lower={lower}, upper={upper}")
 
     gray = image.convert("L")
     arr = np.array(gray)

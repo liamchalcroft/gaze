@@ -1,15 +1,4 @@
-"""Radiant Harness - Agentic VLM Framework for Medical Image Analysis.
-
-This is a library for building multi-turn agentic vision-language model systems.
-It provides core infrastructure for tool-augmented reasoning over medical images.
-
-To run the NOVA benchmark example:
-    cd examples/nova
-    python -m src.cli task=localization model.name=openai/gpt-4o
-
-For library usage, import from radiant_harness:
-    from radiant_harness import AgenticProcessorBase, ToolRegistry
-"""
+"""CLI entry point displaying library info and usage."""
 
 from __future__ import annotations
 

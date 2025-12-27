@@ -102,3 +102,107 @@ class TestTTLCache:
 
         # Error should be logged but not raised
         mock_obj.close.assert_called_once()
+
+    def test_cache_closes_values_on_size_limit_eviction(self):
+        """Test that closeable values are properly closed on size limit eviction."""
+        # max_cache_size=2, evict_ratio=0.5 means:
+        # - eviction triggers when cache size > 2 (i.e., at 3 items)
+        # - target after eviction = 2 * (1 - 0.5) = 1 item
+        config = CacheConfig(max_cache_size=2, evict_ratio=0.5, cache_duration_seconds=3600)
+        cache: TTLCache[MagicMock] = TTLCache(config)
+
+        mock1 = MagicMock()
+        mock2 = MagicMock()
+        mock3 = MagicMock()
+
+        cache.set("key1", mock1)  # size=1
+        time.sleep(0.01)  # Ensure ordering
+        cache.set("key2", mock2)  # size=2
+        time.sleep(0.01)
+        cache.set("key3", mock3)  # size=3, but eviction checks BEFORE add (size=2, not > 2)
+        time.sleep(0.01)
+
+        # Adding key4 triggers eviction (size=3 > max_cache_size=2 when evict_stale is called)
+        mock4 = MagicMock()
+        cache.set("key4", mock4)
+
+        # mock1 should have been closed during eviction (it's the oldest)
+        mock1.close.assert_called_once()
+        # mock2 should also have been closed (target_size=1, need to remove 2 items)
+        mock2.close.assert_called_once()
+
+    def test_cache_get_returns_none_for_missing_key(self):
+        """Test that get returns None for non-existent keys."""
+        config = CacheConfig(cache_duration_seconds=60)
+        cache: TTLCache[str] = TTLCache(config)
+
+        assert cache.get("nonexistent") is None
+
+    def test_cache_delete_returns_correct_status(self):
+        """Test that delete returns True for existing keys, False for missing."""
+        config = CacheConfig(cache_duration_seconds=60)
+        cache: TTLCache[str] = TTLCache(config)
+
+        cache.set("key", "value")
+
+        assert cache.delete("key") is True
+        assert cache.delete("key") is False
+        assert cache.delete("nonexistent") is False
+
+    def test_cache_has_respects_expiration(self):
+        """Test that has() returns False for expired entries."""
+        config = CacheConfig(cache_duration_seconds=0.1)
+        cache: TTLCache[str] = TTLCache(config)
+
+        cache.set("key", "value")
+        assert cache.has("key") is True
+
+        time.sleep(0.2)
+        assert cache.has("key") is False
+
+    def test_cache_stats(self):
+        """Test that stats returns correct values including hit/miss rates."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=10)
+        cache: TTLCache[str] = TTLCache(config)
+
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+
+        # Generate some hits and misses
+        cache.get("key1")  # hit
+        cache.get("key2")  # hit
+        cache.get("key3")  # miss (doesn't exist)
+        cache.get("key1")  # hit
+
+        stats = cache.stats()
+        assert stats["size"] == 2
+        assert stats["max_size"] == 10
+        assert stats["duration_seconds"] == 60
+        assert stats["hits"] == 3
+        assert stats["misses"] == 1
+        assert stats["hit_rate"] == 0.75  # 3 / 4 = 0.75
+
+    def test_cache_stats_reset(self):
+        """Test that stats can be reset."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=10)
+        cache: TTLCache[str] = TTLCache(config)
+
+        cache.set("key1", "value1")
+        cache.get("key1")  # hit
+        cache.get("key2")  # miss
+
+        stats = cache.stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+
+        # Reset stats
+        cache.reset_stats()
+        stats = cache.stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+        assert stats["hit_rate"] == 0.0
+
+        # Cache entry should still exist
+        assert cache.get("key1") == "value1"
+        stats = cache.stats()
+        assert stats["hits"] == 1

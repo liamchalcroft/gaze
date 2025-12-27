@@ -202,4 +202,3 @@ class TestToolEnvIntegrations:
         assert isinstance(env.rubric, vf.Rubric)
         state = env.build_initial_state(env.dataset[0]["prompt"], env.dataset[0]["info"])
         assert state["turn"] == 0
-

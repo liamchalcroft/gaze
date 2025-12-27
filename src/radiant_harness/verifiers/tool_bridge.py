@@ -52,8 +52,12 @@ class ToolBridge:
         """
         cfg = config or get_config().verifiers
 
-        self.enable_visual_tools = enable_visual_tools if enable_visual_tools is not None else cfg.enable_visual_tools
-        self.enable_search_tools = enable_search_tools if enable_search_tools is not None else cfg.enable_search_tools
+        self.enable_visual_tools = (
+            enable_visual_tools if enable_visual_tools is not None else cfg.enable_visual_tools
+        )
+        self.enable_search_tools = (
+            enable_search_tools if enable_search_tools is not None else cfg.enable_search_tools
+        )
         self._disabled_tools = disabled_tools or set()
         self.max_tool_calls_per_turn = max_tool_calls_per_turn or cfg.max_tool_calls_per_turn
 

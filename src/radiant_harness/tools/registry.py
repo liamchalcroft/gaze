@@ -1,8 +1,4 @@
-"""Refactored tool registry with separated responsibilities.
-
-This module provides a cleaner ToolRegistry that delegates to specialized
-managers for different aspects of tool management.
-"""
+"""Tool registry with image management and execution tracking."""
 
 from __future__ import annotations
 
@@ -79,6 +75,19 @@ class ToolRegistry:
         # Set initial image if provided
         if image_path:
             self._image_manager.set_image(image_path)
+
+    def __enter__(self) -> ToolRegistry:
+        """Sync context manager entry."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Sync context manager exit with cleanup."""
+        self.close()
 
     async def __aenter__(self) -> ToolRegistry:
         """Async context manager entry."""

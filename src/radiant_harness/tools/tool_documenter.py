@@ -1,8 +1,4 @@
-"""Tool documentation and schema generation for the radiology VLM agent harness.
-
-Provides centralized functionality for generating tool schemas, documentation,
-and managing tool metadata separate from execution logic.
-"""
+"""Tool schema generation and documentation for prompts."""
 
 from __future__ import annotations
 
@@ -92,10 +88,10 @@ class ToolDocumenter:
         Raises:
             ValueError: If tool has invalid schema configuration
         """
-        schemas = []
+        schemas: list[dict[str, Any]] = []
         for tool in self._tools.values():
-            properties = {}
-            required_params = []
+            properties: dict[str, Any] = {}
+            required_params: list[str] = []
 
             for param_name, param_def in tool.parameters.items():
                 # Validate parameter type
@@ -137,7 +133,7 @@ class ToolDocumenter:
 
                 properties[param_name] = prop
 
-            schema = {
+            schema: dict[str, Any] = {
                 "type": "function",
                 "function": {
                     "name": tool.name,

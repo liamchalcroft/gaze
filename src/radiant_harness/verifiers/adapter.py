@@ -63,7 +63,7 @@ class RadiantHarnessAdapter:
             Processed result with response and metadata
         """
         user_prompt = self._extract_user_prompt(messages)
-        metadata = dict(info or {})
+        metadata = dict(info)
         if user_prompt:
             metadata.setdefault("user_prompt", user_prompt)
 
@@ -204,7 +204,9 @@ class RadiantHarnessAdapter:
                 info: dict[str, Any] | None = None,
             ) -> tuple[vf.Messages, vf.State]:
                 """Generate response using Radiant Harness."""
-                result = await self._adapter.process_verifiers_messages(messages, info or {})
+                result = await self._adapter.process_verifiers_messages(
+                    messages, info if info is not None else {}
+                )
 
                 new_state = dict(state)
                 new_state["turn"] = state.get("turn", 0) + 1

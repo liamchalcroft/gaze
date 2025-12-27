@@ -1,14 +1,10 @@
-"""
-Enhanced Web Search Tool for LLM Agents
-
-This module provides a production-ready web search tool designed specifically for LLM agents,
-with proper error handling, result formatting, source verification, and reliability scoring.
-"""
+"""PubMed search with result formatting and reliability scoring."""
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -277,13 +273,13 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
 
-        self._rate_limit_delay = 0.5
+        self._rate_limit_delay = self._config.rate_limit_delay_seconds
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Search PubMed with enhanced metadata extraction."""
         # Step 1: Search for articles
         search_url = f"{self.base_url}esearch.fcgi"
-        search_params = {
+        search_params: dict[str, str | int] = {
             "db": "pubmed",
             "term": query,
             "retmax": max_results,
@@ -342,7 +338,7 @@ class PubMedSearchEngine(SearchEngine):
         if "result" not in data:
             return []
 
-        results = []
+        results: list[SearchResult] = []
         for pmid in pmid_list:
             if pmid not in data["result"]:
                 continue
@@ -553,6 +549,7 @@ class WebSearchManager:
         """Close all engine sessions and release resources."""
         for engine in self.engines:
             await engine.close()
+        self._cache.clear()
 
     @beartype
     async def search(
@@ -588,9 +585,6 @@ class WebSearchManager:
         search_query = self._enhance_query(query, search_type) if enhance_query else query
 
         # Cache key must capture all knobs that change result sets
-        # Use hash for long queries to keep cache keys compact
-        import hashlib
-
         engine_names = ",".join(engine.name for engine in self.engines)
         query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:8]
         cache_key = f"{query_hash}:{search_type}:{medical_focus}:{self.max_results_per_engine}:{self.max_total_results}:{engine_names}"
@@ -604,7 +598,7 @@ class WebSearchManager:
         logger.info(f"Searching for: '{search_query}' (enhanced from: '{query}')")
 
         # Search across all engines
-        all_results = []
+        all_results: list[SearchResult] = []
         errors: list[SearchError] = []
         for i, engine in enumerate(self.engines):
             try:

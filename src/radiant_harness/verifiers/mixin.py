@@ -175,7 +175,7 @@ class VerifiableProcessorMixin:
                 info: dict[str, Any] | None = None,
             ) -> tuple[vf.Messages, vf.State]:
                 """Generate environment response using processor."""
-                info = info or {}
+                info = info if info is not None else {}
 
                 # Get image path from state if available
                 image_path = state.get("image_path")

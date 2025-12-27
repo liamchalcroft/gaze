@@ -50,6 +50,9 @@ class TTLCache(Generic[T]):
         # Check if key exists and is valid
         if cache.has("my_key"):
             print("Cache hit!")
+
+        # Check hit/miss stats
+        print(cache.stats())  # {'hits': 5, 'misses': 2, 'hit_rate': 0.71, ...}
     """
 
     @beartype
@@ -61,6 +64,8 @@ class TTLCache(Generic[T]):
         """
         self._config = config or get_config().cache
         self._cache: dict[str, tuple[float, T]] = {}
+        self._hits: int = 0
+        self._misses: int = 0
 
     @property
     def config(self) -> CacheConfig:
@@ -78,14 +83,17 @@ class TTLCache(Generic[T]):
             Cached value if found and not expired, None otherwise
         """
         if key not in self._cache:
+            self._misses += 1
             return None
 
         timestamp, value = self._cache[key]
         if time.time() - timestamp > self._config.cache_duration_seconds:
             # Expired - remove and return None
             del self._cache[key]
+            self._misses += 1
             return None
 
+        self._hits += 1
         return value
 
     @beartype
@@ -139,11 +147,23 @@ class TTLCache(Generic[T]):
                 logger.warning(f"Error closing {reason} cached value for key {key}: {e}")
 
     @beartype
-    def clear(self) -> None:
-        """Remove all entries from the cache with cleanup."""
+    def clear(self, reset_stats: bool = False) -> None:
+        """Remove all entries from the cache with cleanup.
+
+        Args:
+            reset_stats: If True, also reset hit/miss counters
+        """
         for key, (_, value) in self._cache.items():
             self._close_value(key, value, "cached")
         self._cache.clear()
+        if reset_stats:
+            self._hits = 0
+            self._misses = 0
+
+    def reset_stats(self) -> None:
+        """Reset hit/miss counters without clearing cache entries."""
+        self._hits = 0
+        self._misses = 0
 
     @beartype
     def _evict_stale(self) -> None:
@@ -185,13 +205,18 @@ class TTLCache(Generic[T]):
 
     @beartype
     def stats(self) -> dict[str, int | float]:
-        """Get cache statistics.
+        """Get cache statistics including hit/miss rates.
 
         Returns:
-            Dictionary with size, max_size, and duration settings
+            Dictionary with size, max_size, duration, hits, misses, and hit_rate
         """
+        total = self._hits + self._misses
+        hit_rate = self._hits / total if total > 0 else 0.0
         return {
             "size": len(self._cache),
             "max_size": self._config.max_cache_size,
             "duration_seconds": self._config.cache_duration_seconds,
+            "hits": self._hits,
+            "misses": self._misses,
+            "hit_rate": round(hit_rate, 3),
         }

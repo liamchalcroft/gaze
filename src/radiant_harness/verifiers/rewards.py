@@ -6,12 +6,16 @@ combined and customized for different tasks.
 
 from __future__ import annotations
 
+import json
 import re
 from abc import ABC
 from abc import abstractmethod
 from typing import Any
 
 import verifiers as vf
+from loguru import logger
+
+from radiant_harness.utils.iou import compute_iou
 
 
 def extract_completion_text(completion: Any) -> str:
@@ -251,13 +255,14 @@ class IoUReward(BaseRewardFunction):
         if not pred_box or not ref_box or len(pred_box) < 4 or len(ref_box) < 4:
             return 0.0
 
-        iou = self._compute_iou(pred_box[:4], ref_box[:4])
+        # Convert to float for compute_iou (handles int coords from JSON)
+        pred_floats = [float(x) for x in pred_box[:4]]
+        ref_floats = [float(x) for x in ref_box[:4]]
+        iou = compute_iou(pred_floats, ref_floats)
         return 1.0 if iou >= self.iou_threshold else iou
 
     def _extract_bbox(self, completion: Any) -> list[float]:
         """Extract bounding box from completion."""
-        import json
-
         text = extract_completion_text(completion)
 
         # Try to find JSON with bbox
@@ -270,14 +275,18 @@ class IoUReward(BaseRewardFunction):
                 elif c == "}":
                     depth -= 1
                     if depth == 0:
+                        json_candidate = text[start : i + 1]
                         try:
-                            data = json.loads(text[start : i + 1])
+                            data = json.loads(json_candidate)
                             if "bbox" in data:
                                 return data["bbox"]
                             if "location" in data and "bbox" in data["location"]:
                                 return data["location"]["bbox"]
-                        except json.JSONDecodeError:
-                            pass
+                        except json.JSONDecodeError as e:
+                            logger.debug(
+                                f"IoUReward: JSON parse failed for bbox extraction: {e}. "
+                                f"Snippet: {json_candidate[:100]}..."
+                            )
                         break
 
         # Fallback: regex for [x1, y1, x2, y2] pattern
@@ -286,32 +295,8 @@ class IoUReward(BaseRewardFunction):
         if match:
             return [float(x) for x in match.groups()]
 
+        logger.debug(f"IoUReward: No bbox found in completion. Text length: {len(text)}")
         return []
-
-    def _compute_iou(self, box1: list[float], box2: list[float]) -> float:
-        """Compute IoU between two boxes."""
-        # Unpack coordinates
-        x1_min, y1_min, x1_max, y1_max = box1
-        x2_min, y2_min, x2_max, y2_max = box2
-
-        # Compute intersection
-        ix_min = max(x1_min, x2_min)
-        iy_min = max(y1_min, y2_min)
-        ix_max = min(x1_max, x2_max)
-        iy_max = min(y1_max, y2_max)
-
-        if ix_max <= ix_min or iy_max <= iy_min:
-            return 0.0
-
-        intersection = (ix_max - ix_min) * (iy_max - iy_min)
-
-        # Compute union
-        area1 = max(0, (x1_max - x1_min)) * max(0, (y1_max - y1_min))
-        area2 = max(0, (x2_max - x2_min)) * max(0, (y2_max - y2_min))
-
-        union = area1 + area2 - intersection
-
-        return intersection / union if union > 0 else 0.0
 
 
 class CombinedReward(BaseRewardFunction):
@@ -351,16 +336,20 @@ class CombinedReward(BaseRewardFunction):
         completion: Any,
         info: dict[str, Any],
     ) -> float:
-        """Compute combined reward."""
+        """Compute combined reward.
+
+        Note: Stores reward details in info["_reward_details"] for logging.
+        This mutation is intentional to allow callers to inspect per-reward scores.
+        """
         total_reward = 0.0
-        details = {}
+        details: dict[str, float] = {}
 
         for reward, weight, name in zip(self.rewards, self.weights, self.names, strict=True):
             r = reward(prompt, completion, info)
             total_reward += weight * r
             details[name] = r
 
-        # Store details in info for logging
+        # Store details in info for logging (intentional mutation for debugging/logging)
         info["_reward_details"] = details
 
         return total_reward

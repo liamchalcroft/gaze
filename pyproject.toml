@@ -53,7 +53,7 @@ known-first-party = ["radiant_harness"]
 force-single-line = true
 
 [tool.pyright]
-typeCheckingMode = "off"
+typeCheckingMode = "basic"
 pythonVersion = "3.10"
 executionEnvironments = [
     { root = "src" },

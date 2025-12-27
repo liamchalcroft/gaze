@@ -56,10 +56,10 @@ async def _execute_search_web(
             metadata={"query": query, "search_type": search_type, "results_count": 0},
         )
 
-    formatted_results = []
-    sources = []
+    formatted_results: list[str] = []
+    sources: list[str] = []
     total_reliability = 0.0
-    content_types = []
+    content_types: list[str] = []
 
     for i, result in enumerate(search_results, 1):
         sources.append(result.source)
@@ -142,9 +142,9 @@ async def _execute_search_images(
             },
         )
 
-    formatted_results = []
-    modalities_found = []
-    body_parts_found = []
+    formatted_results: list[str] = []
+    modalities_found: list[str] = []
+    body_parts_found: list[str] = []
 
     for i, result in enumerate(search_results, 1):
         if result.modality:

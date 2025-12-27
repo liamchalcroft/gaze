@@ -197,3 +197,40 @@ make install    # Install dependencies
 make check      # Run all quality checks
 make test       # Run test suite
 ```
+
+---
+
+## Additional Audit (Continuation)
+
+### Phase 6: Correctness Deep-Dive
+
+Additional issues found and fixed beyond the initial audit.
+
+| # | Severity | Location | Problem | Fix |
+|---|----------|----------|---------|-----|
+| 10 | High | `utils/json_extract.py` | Brace-matching fragile for strings containing `{` or `}` | Use `JSONDecoder.raw_decode()` |
+| 11 | High | `verifiers/rewards.py` | Silent failures in bbox extraction | Added `logger.debug()` calls |
+| 12 | Medium | `tools/image_ops.py` | No validation that `upper <= 255` | Added upper bound check |
+| 13 | Medium | `retrieval/web_search.py` | Cache not cleared on `close()` | Added `self._cache.clear()` |
+| 14 | Medium | `cache.py` | No hit/miss observability | Added `hits`, `misses`, `hit_rate` to `stats()` |
+
+### Additional Tests
+
+| Test | Purpose |
+|------|---------|
+| `test_json_with_braces_in_string` | JSON strings containing `{}` |
+| `test_json_with_escaped_quotes_and_braces` | Complex JSON edge case |
+| `test_json_embedded_after_prose` | Model output with text before JSON |
+| `test_cache_stats` | Extended to test hit/miss rates |
+| `test_cache_stats_reset` | New stats reset functionality |
+
+### Updated Metrics
+
+| Metric | Before | After |
+|--------|--------|-------|
+| pytest passed | 54 | 72 |
+| pytest skipped | 12 | 12 |
+
+---
+
+*Audit continuation completed*

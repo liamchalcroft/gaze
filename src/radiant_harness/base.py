@@ -498,7 +498,9 @@ class AgenticProcessorBase(ABC):
                 turns.append(tool_turn)
                 continue
             try:
-                parsed_obj: dict[str, Any] | list | str | int | float | bool | None = json.loads(response_text)
+                parsed_obj: dict[str, Any] | list | str | int | float | bool | None = json.loads(
+                    response_text
+                )
             except json.JSONDecodeError as e:
                 raise AgenticProcessingError(
                     f"Invalid JSON on turn {turn_idx + 1}: {e}. Response: {response_text[:200]}",
@@ -572,7 +574,9 @@ class AgenticProcessorBase(ABC):
             # Parse arguments: either already a dict or a JSON string
             if isinstance(tool_call.arguments, str):
                 try:
-                    parsed_args: dict[str, Any] | list | str | int | float | bool | None = json.loads(tool_call.arguments)
+                    parsed_args: dict[str, Any] | list | str | int | float | bool | None = (
+                        json.loads(tool_call.arguments)
+                    )
                 except json.JSONDecodeError as e:
                     raise AgenticProcessingError(
                         f"Malformed JSON in tool arguments for '{tool_call.name}': {e}",

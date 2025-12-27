@@ -131,3 +131,26 @@ def test_backward_compatibility_removed() -> None:
     # But manager accessors should exist
     assert hasattr(registry, "get_image_manager")
     assert hasattr(registry, "get_documenter")
+
+
+def test_sync_context_manager_cleanup(tmp_path: Path) -> None:
+    """Test that sync context manager properly cleans up resources."""
+    image_path = _create_temp_image(tmp_path)
+
+    with ToolRegistry(image_path=image_path, tools=[]) as registry:
+        # Image should be loaded
+        assert registry.get_image_manager().has_image
+        assert registry.get_image_manager().current_image is not None
+
+    # After exiting context, resources should be cleaned up
+    assert registry.get_image_manager().current_image is None
+    assert not registry.get_image_manager().has_image
+
+
+def test_sync_context_manager_without_image() -> None:
+    """Test sync context manager works without image."""
+    with ToolRegistry(tools=[]) as registry:
+        assert not registry.get_image_manager().has_image
+
+    # Should not raise even without image
+    assert registry.get_image_manager().current_image is None

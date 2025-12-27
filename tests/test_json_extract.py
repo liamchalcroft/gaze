@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from radiant_harness.utils import extract_json_from_text
 
 
@@ -74,3 +72,31 @@ That's my analysis."""
         text = '{"message": "Hello 世界", "emoji": "🎉"}'
         result = extract_json_from_text(text)
         assert result == {"message": "Hello 世界", "emoji": "🎉"}
+
+    def test_json_with_braces_in_string(self) -> None:
+        # Test that braces inside string values are handled correctly
+        text = '{"code": "function() { return {}; }", "valid": true}'
+        result = extract_json_from_text(text)
+        assert result == {"code": "function() { return {}; }", "valid": True}
+
+    def test_json_with_escaped_quotes_and_braces(self) -> None:
+        # Complex case with escaped quotes and nested braces in strings
+        text = 'Some prefix: {"description": "Use {name} in template", "example": "{\\"key\\": \\"value\\"}"}'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["description"] == "Use {name} in template"
+
+    def test_json_embedded_after_prose(self) -> None:
+        # Model output often has explanation before JSON
+        text = """Based on my analysis of the image, I found the following:
+
+The lesion appears to be located in the frontal lobe.
+
+{"finding": "lesion", "location": "frontal lobe", "confidence": 0.92, "continue": false}"""
+        result = extract_json_from_text(text)
+        assert result == {
+            "finding": "lesion",
+            "location": "frontal lobe",
+            "confidence": 0.92,
+            "continue": False,
+        }

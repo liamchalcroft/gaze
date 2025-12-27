@@ -15,7 +15,10 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
     Handles common formats:
     - Markdown code blocks (```json ... ```)
     - Raw JSON objects
-    - Nested JSON objects
+    - JSON embedded in surrounding text
+
+    Uses Python's JSONDecoder.raw_decode() for robust parsing that correctly
+    handles JSON strings containing braces.
 
     Args:
         text: Text that may contain a JSON object
@@ -37,33 +40,30 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
             return None
         text = text[first_newline + 1 : closing].strip()
 
-    # Try to parse directly first
+    # Try to parse directly first (most common case)
     try:
         result = json.loads(text)
         if isinstance(result, dict):
-            return result
+            # Cast through intermediate variable for pyright
+            typed: dict[str, Any] = result
+            return typed
         return None
     except json.JSONDecodeError:
         pass
 
-    # Find and extract JSON object with brace matching
-    start = text.find("{")
-    if start == -1:
-        return None
-
-    depth = 0
-    for i, c in enumerate(text[start:], start):
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    result = json.loads(text[start : i + 1])
-                    if isinstance(result, dict):
-                        return result
-                except json.JSONDecodeError:
-                    pass
-                break
+    # Use raw_decode to find JSON object - this correctly handles strings with braces
+    decoder = json.JSONDecoder()
+    # Find all potential JSON start positions
+    for i, c in enumerate(text):
+        if c != "{":
+            continue
+        try:
+            result, _ = decoder.raw_decode(text, i)
+            if isinstance(result, dict):
+                # Cast through intermediate variable for pyright
+                typed: dict[str, Any] = result
+                return typed
+        except json.JSONDecodeError:
+            continue
 
     return None
