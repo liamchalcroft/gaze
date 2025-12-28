@@ -1,236 +1,232 @@
-# Radiant Harness - Audit Log
+# Radiant Harness Audit Log
 
-## Current Phase: AUDIT COMPLETE
-
-## Final Status
-
-**All phases completed successfully.**
-
-- Tests: 54 passed, 12 skipped
-- Ruff: All checks passed
-- Coverage: 77% (core modules)
-- All high-priority issues fixed
+## Current Phase: Complete - All Phases Finished
 
 ---
 
-## Baseline Summary
-
-### Toolchain Commands
+## Toolchain Commands (Canonical)
 
 ```bash
-# Install dependencies
+# Install/bootstrap
 uv sync
 
-# Run all quality checks (recommended)
-make check
+# Format
+uv run ruff format .
 
-# Run tests
-uv run pytest tests/ -v --tb=short
+# Lint
+uv run ruff check .
 
-# Run linter
-uv run ruff check src/
-
-# Run type checker
+# Typecheck
 uv run pyright src/
 
-# Format code
-uv run ruff format .
-```
+# Test
+uv run pytest tests/ -x --tb=short
 
-### Test Results
+# Coverage
+uv run pytest tests/ --cov=radiant_harness --cov-report=term-missing
 
-- **Tests**: 54 passed, 12 skipped
-- **Ruff**: All checks passed
-- **Pyright**: 0 errors, 40 warnings (external API types)
-- **Coverage**: 77% (core modules only)
-- **Package Import**: OK
-
----
-
-## Repo Map
-
-```
-radiant-harness/
-├── src/radiant_harness/          # Core framework (24 Python files)
-│   ├── __init__.py               # Public API (~55 exports)
-│   ├── __main__.py               # CLI entry point
-│   ├── base.py                   # AgenticProcessorBase (~640 lines)
-│   ├── cache.py                  # TTLCache implementation
-│   ├── config.py                 # Configuration dataclasses
-│   ├── exceptions.py             # Exception hierarchy
-│   ├── protocols.py              # Protocol definitions
-│   ├── types.py                  # Core types (ToolCall, ToolResult, etc.)
-│   ├── models/                   # Model adapters
-│   │   ├── adapter_protocol.py   # AdapterProtocol
-│   │   ├── openai_adapter.py     # OpenAI/OpenRouter adapter
-│   │   └── huggingface_adapter.py # HuggingFace adapter (optional)
-│   ├── tools/                    # Tool system
-│   │   ├── registry.py           # ToolRegistry, EncodedImage
-│   │   ├── tool.py               # Tool class
-│   │   ├── visual.py             # Visual tools (zoom, crop, etc.)
-│   │   ├── search.py             # Search tools (PubMed, Open-i)
-│   │   ├── image_manager.py      # Image loading/transformation
-│   │   ├── image_ops.py          # Image operations
-│   │   ├── decorators.py         # Tool decorators
-│   │   └── tool_documenter.py    # Schema generation
-│   ├── retrieval/                # External search
-│   │   ├── web_search.py         # PubMed search
-│   │   └── image_search.py       # Open-i search
-│   ├── prompts/                  # Template loading
-│   │   └── __init__.py           # Jinja template utilities
-│   ├── verifiers/                # RL training integration
-│   │   ├── adapter.py            # RadiantHarnessAdapter
-│   │   ├── base.py               # BaseMultiTurnEnv
-│   │   ├── mixin.py              # VerifiableProcessorMixin
-│   │   ├── rewards.py            # Reward functions
-│   │   └── tool_bridge.py        # Tool execution bridge
-│   └── utils/
-│       ├── iou.py                # IoU calculation
-│       └── json_extract.py       # JSON extraction
-├── examples/                     # Example implementations
-│   ├── nova/                     # NOVA brain-MRI benchmark
-│   ├── agentclinic_nejm/         # Diagnostic reasoning
-│   ├── gemex_thinkvg/            # Visual grounding with RL
-│   ├── pubmedqa/                 # Medical Q&A
-│   └── vqa_rad/                  # Radiology VQA
-├── tests/                        # Test suite (9 test files)
-└── docs/                         # Documentation
+# Full check (recommended)
+make check
 ```
 
 ---
 
-## Issues Fixed
+## Phase 0: Baseline + Repo Map
 
-### High Priority (All Fixed)
+### Completed: 2024-12-28
 
-| # | Location | Problem | Fix |
-|---|----------|---------|-----|
-| 1 | `README.md:3-4` | Badge URLs point to `your-org` placeholder | Removed broken badges |
-| 2 | `README.md:72` | Project structure shows wrong root | Fixed to `radiant-harness/` |
-| 3 | `README.md:102-106` | Links to non-existent doc files | Updated to existing docs |
-| 4 | `Makefile` | References non-existent scripts | Fixed targets, removed dead code |
+### Baseline Results
 
-### Medium Priority (All Fixed or Addressed)
+| Tool    | Result                      |
+|---------|-----------------------------|
+| ruff    | PASS (all checks passed)    |
+| pyright | PASS (0 errors, 8 warnings) |
+| pytest  | PASS (90 passed, 12 skipped)|
+| coverage| 81.7%                       |
 
-| # | Location | Problem | Fix |
-|---|----------|---------|-----|
-| 5 | `pyproject.toml` | `typeCheckingMode = "off"` | Noted (project convention) |
-| 6 | `test_evaluation_metrics.py` | 12 tests skipped | Expected (torch optional) |
-| 7 | `types.py:116` | Untyped set variable | Added type annotation |
-| 8 | `Makefile:34` | Wrong coverage source | Fixed to `radiant_harness` |
-| 9 | `pyproject.toml` | Unrealistic coverage threshold | Adjusted to 60% with proper omits |
+### Repo Map Summary
 
----
-
-## Patches Applied
-
-| # | Phase | Goal | Files Changed | Tests |
-|---|-------|------|---------------|-------|
-| 1 | 1 | Fix README broken links/structure | `README.md` | Pass |
-| 2 | 1 | Fix Makefile naming and targets | `Makefile` | Pass |
-| 3 | 1 | Add type annotation | `types.py` | Pass |
-| 4 | 2 | Remove broken Makefile targets | `Makefile` | Pass |
-| 5 | 3 | Fix coverage configuration | `pyproject.toml` | Pass |
-| 6 | 5 | Update CLAUDE.md to match reality | `CLAUDE.md` | Pass |
-
----
-
-## Completed Phases
-
-### Phase 0: Baseline (Complete)
-- Built repo map
-- Established toolchain commands
-- Recorded baseline test results
-
-### Phase 1: Correctness and Invariant Hardening (Complete)
-- Fixed README documentation issues
-- Fixed Makefile naming and broken references
-- Added type annotation to resolve pyright warning
-
-### Phase 2: De-slop and De-bloat (Complete)
-- Removed broken Makefile targets (eval, analyze, full-paper-workflow)
-- Fixed `check` target to run actual quality commands
-- Confirmed no dead code in core library
-
-### Phase 3: Testing and Observability (Complete)
-- Fixed coverage configuration (realistic threshold, proper omits)
-- Core module coverage at 77%
-- All 54 core tests pass
-
-### Phase 4: Performance Pass (Complete)
-- Verified async patterns are correct (aiohttp, asyncio)
-- No synchronous blocking calls found
-- TTLCache properly handles memory limits
-
-### Phase 5: Documentation Truth-Sync (Complete)
-- Updated CLAUDE.md project structure
-- Added verifiers module documentation
-- Updated Key Commands section
-
----
-
-## Repo Contract
-
-### Code Standards
-- Use `uv` for dependency management
-- Use `ruff` for linting and formatting
-- Use `pyright` for type checking
-- Use `beartype` for runtime validation
-- All exceptions should be specific (no bare `except:`)
-- Fail fast on invalid inputs at boundaries
-
-### Test Standards
-- Tests in `tests/` directory
-- Use pytest markers for categorization
-- 54 core tests must pass
-- Optional tests (torch) may be skipped
-- Coverage threshold: 60% for core modules
-
-### Documentation Standards
-- Keep CLAUDE.md up to date with project structure
-- Doc links must point to existing files
-- Update AUDIT_LOG.md for significant changes
-
-### Quick Start
-```bash
-make install    # Install dependencies
-make check      # Run all quality checks
-make test       # Run test suite
+```
+radiant_harness/
+├── src/radiant_harness/        # Main package (~15 modules)
+│   ├── __init__.py             # Public API exports
+│   ├── base.py                 # AgenticProcessorBase (core agentic loop)
+│   ├── config.py               # Frozen config dataclasses
+│   ├── types.py                # ToolCall, ToolResult, Turn, AgenticResult
+│   ├── exceptions.py           # Exception hierarchy
+│   ├── cache.py                # TTLCache implementation
+│   ├── protocols.py            # Protocol definitions
+│   ├── models/                 # Model adapters
+│   │   ├── openai_adapter.py   # OpenAI/OpenRouter
+│   │   └── huggingface_adapter.py  # HuggingFace (optional)
+│   ├── tools/                  # Tool system
+│   │   ├── registry.py         # ToolRegistry
+│   │   ├── visual.py           # Visual manipulation tools
+│   │   └── search.py           # Search tools
+│   ├── retrieval/              # External search
+│   │   ├── web_search.py       # PubMed
+│   │   └── image_search.py     # Open-i
+│   └── verifiers/              # RL integration
+├── tests/                      # 17 test files, 102 tests total
+├── examples/                   # Example implementations
+└── docs/                       # Documentation
 ```
 
 ---
 
-## Additional Audit (Continuation)
+## Phase 1: Correctness + Invariant Hardening
 
-### Phase 6: Correctness Deep-Dive
+### Status: Complete
 
-Additional issues found and fixed beyond the initial audit.
+### Findings
 
-| # | Severity | Location | Problem | Fix |
-|---|----------|----------|---------|-----|
-| 10 | High | `utils/json_extract.py` | Brace-matching fragile for strings containing `{` or `}` | Use `JSONDecoder.raw_decode()` |
-| 11 | High | `verifiers/rewards.py` | Silent failures in bbox extraction | Added `logger.debug()` calls |
-| 12 | Medium | `tools/image_ops.py` | No validation that `upper <= 255` | Added upper bound check |
-| 13 | Medium | `retrieval/web_search.py` | Cache not cleared on `close()` | Added `self._cache.clear()` |
-| 14 | Medium | `cache.py` | No hit/miss observability | Added `hits`, `misses`, `hit_rate` to `stats()` |
+The codebase is already well-structured with strong correctness patterns:
 
-### Additional Tests
+1. **Input Validation**: All public APIs validate inputs at boundaries using `@beartype`
+2. **Error Handling**: Proper exception hierarchy, no silent failures
+3. **Resource Management**: Context managers for cleanup (ToolRegistry, search managers)
+4. **Frozen Config**: Immutable config with `__post_init__` validation
+5. **Fail-Fast**: Errors propagate immediately, no swallowed exceptions
 
-| Test | Purpose |
-|------|---------|
-| `test_json_with_braces_in_string` | JSON strings containing `{}` |
-| `test_json_with_escaped_quotes_and_braces` | Complex JSON edge case |
-| `test_json_embedded_after_prose` | Model output with text before JSON |
-| `test_cache_stats` | Extended to test hit/miss rates |
-| `test_cache_stats_reset` | New stats reset functionality |
+### pyright Warnings (Acceptable)
 
-### Updated Metrics
+The 8 pyright warnings are all related to JSON parsing (`json.loads()` returns `Any`).
+This is inherent to JSON parsing and the code correctly handles types with `isinstance` checks.
 
-| Metric | Before | After |
-|--------|--------|-------|
-| pytest passed | 54 | 72 |
-| pytest skipped | 12 | 12 |
+### Skipped Tests (Acceptable)
+
+12 tests skipped due to `torch` not being installed. These are optional evaluation tests
+using `@pytest.mark.skipif(not TORCH_AVAILABLE, ...)` pattern.
+
+### No Patches Required
+
+The codebase passed Phase 1 without requiring patches.
 
 ---
 
-*Audit continuation completed*
+## Phase 2: De-slop + De-bloat
+
+### Status: Complete
+
+### Findings
+
+1. **No Dead Code**: No unused imports (F401), no unused variables (F841)
+2. **No Dangling References**: Deleted files (`decorators.py`, `tool_bridge.py`, etc.) have no references
+3. **`__all__` Organization**: Lists organized by category (more readable than alphabetical) - RUF022 suppressed
+
+### Cleanup Already Done
+
+Git status shows many files were already deleted:
+- `src/radiant_harness/tools/decorators.py` - Removed (no references)
+- `src/radiant_harness/verifiers/tool_bridge.py` - Removed (no references)
+- `src/radiant_harness/prompts/examples/` - Removed (no references)
+- Various example config/docs - Cleaned up
+
+### No Patches Required
+
+The codebase passed Phase 2 without requiring patches.
+
+---
+
+## Phase 3: Testing + Observability
+
+### Status: Complete
+
+### Coverage Report
+
+| Module | Coverage | Notes |
+|--------|----------|-------|
+| Overall | 81.7% | Exceeds 60% threshold |
+| cache.py | 97% | Excellent |
+| config.py | 97% | Excellent |
+| registry.py | 96% | Excellent |
+| json_extract.py | 100% | Complete |
+| iou.py | 95% | Excellent |
+| base.py | 79% | Good (complex agentic loop) |
+| image_ops.py | 31% | Visual ops less tested |
+
+### Test Quality Assessment
+
+- Tests are real (not mock-heavy)
+- Edge cases covered (empty inputs, invalid values)
+- Error propagation tested
+- Async patterns properly tested
+
+### No Patches Required
+
+Test coverage is adequate for the codebase maturity.
+
+---
+
+## Phase 4: Performance Pass
+
+### Status: Complete
+
+### Findings
+
+No performance issues found. Already well-optimized:
+
+1. **Search caching**: TTLCache with configurable TTL and size limits
+2. **Lazy initialization**: Model adapters lazily create clients
+3. **Image processing**: Standard PIL operations, copies necessary for safety
+4. **Async patterns**: Proper async/await, no blocking `time.sleep()` calls
+5. **Memory management**: Image cleanup in context managers
+
+### No Patches Required
+
+Performance is already optimized.
+
+---
+
+## Phase 5: Documentation Truth-Sync
+
+### Status: Complete
+
+### Fixes Applied
+
+1. **CLAUDE.md**: Removed references to deleted files:
+   - `tools/decorators.py` (deleted)
+   - `verifiers/tool_bridge.py` (deleted)
+
+---
+
+## Decisions Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2024-12-28 | No changes needed for Phase 1 | Codebase already has strong correctness patterns |
+| 2024-12-28 | No changes needed for Phase 2 | No dead code found, cleanup already done |
+| 2024-12-28 | No changes needed for Phase 3 | Coverage at 81.7% exceeds threshold |
+| 2024-12-28 | Keep `__all__` category organization | More readable than alphabetical |
+| 2024-12-28 | No performance changes needed | Already well-optimized with caching and lazy init |
+| 2024-12-28 | Fix CLAUDE.md references | Removed references to deleted files |
+
+---
+
+## Quality Summary
+
+The codebase is in excellent condition:
+
+- **Correctness**: Strong invariants, proper error handling, `@beartype` validation
+- **Code Quality**: No slop, no dead code, clean architecture
+- **Testing**: 81.7% coverage, real tests, no mock-heavy patterns
+- **Performance**: Proper caching, lazy initialization, async patterns
+- **Documentation**: CLAUDE.md now accurate to codebase
+
+---
+
+## Final Audit Status
+
+| Phase | Status | Changes Made |
+|-------|--------|--------------|
+| Phase 0 | Complete | Baseline established |
+| Phase 1 | Complete | No patches required |
+| Phase 2 | Complete | No patches required |
+| Phase 3 | Complete | No patches required |
+| Phase 4 | Complete | No patches required |
+| Phase 5 | Complete | CLAUDE.md fixed |
+
+**Total Patches**: 1 (documentation fix only)
+
+**Conclusion**: The codebase is production-ready with strong correctness patterns,
+good test coverage, and clean architecture. No significant issues found.

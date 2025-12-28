@@ -62,18 +62,31 @@ combined = CombinedReward(
 ### 3. Adapting Processors
 
 ```python
-from radiant_harness import AggressiveProcessorBase, HarnessConfig
-from radiant_harness.verifiers import wrap_processor_for_verifiers
+from radiant_harness import AgenticProcessorBase
+from radiant_harness.verifiers import VerifiableProcessorMixin
+from radiant_harness.verifiers import ExactMatchReward
 
-# Create processor
-processor = MyProcessor(HarnessConfig(model_name="gpt-4o"))
+class MyProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
+    def get_system_prompt(self, images, metadata):
+        return "You are a helpful assistant."
 
-# Wrap for verifiers
-env = wrap_processor_for_verifiers(
-    processor,
+    def get_user_message(self, images, metadata):
+        return metadata.get("question", "")
+
+    def get_response_schema(self):
+        return {"type": "object", "properties": {"continue": {"type": "boolean"}}}
+
+    def validate_response(self, response):
+        return "continue" in response
+
+    def get_reward_function(self):
+        return ExactMatchReward()
+
+EnvClass = MyProcessor.as_verifiers_env(
     max_turns=5,
-    name="MyEnv",
+    dataset_path="my_data.jsonl",
 )
+env = EnvClass()
 ```
 
 ## Core Components
@@ -192,27 +205,14 @@ Bridges between Radiant Harness processors and verifiers:
 ```python
 from radiant_harness.verifiers import RadiantHarnessAdapter
 
-adapter = RadiantHarnessAdapter(
-    processor=processor,
-    registry=tool_registry,
-    max_tool_calls=5,
-)
+adapter = RadiantHarnessAdapter(processor=processor)
 
 # Process verifiers messages
-result = adapter.process_verifiers_messages(messages, info)
-```
+result = await adapter.process_verifiers_messages(messages, info)
 
-#### Quick Wrapper
-
-```python
-from radiant_harness.verifiers import wrap_processor_for_verifiers
-
-# One-line wrapper
-env = wrap_processor_for_verifiers(
-    processor=processor,
-    max_turns=5,
-    log_dir="./logs",
-)
+# Or build a MultiTurnEnv class
+EnvClass = adapter.create_environment_class(max_turns=5)
+env = EnvClass()
 ```
 
 ## Training Setup
@@ -464,15 +464,14 @@ class CombinedReward:
 class RadiantHarnessAdapter:
     def __init__(
         self,
-        processor: AggressiveProcessorBase,
-        registry: ToolRegistry | None = None,
-        max_tool_calls: int = 5,
+        processor: AgenticProcessorBase,
     )
 
-def wrap_processor_for_verifiers(
-    processor: AggressiveProcessorBase,
-    **kwargs: Any,
-) -> vf.MultiTurnEnv
+    def create_environment_class(
+        self,
+        base_class: type[vf.MultiTurnEnv] | None = None,
+        **env_kwargs: Any,
+    ) -> type[vf.MultiTurnEnv]
 ```
 
 ## Troubleshooting

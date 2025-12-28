@@ -234,7 +234,7 @@ def create_prompt(
             mode="agentic",
             context={
                 "domain_expertise": "You are an expert radiologist...",
-                "tool_documentation": registry.generate_prompt_documentation(),
+                "tool_documentation": registry.get_documenter().generate_prompt_documentation(),
                 "task_instructions": "Analyze this brain MRI...",
                 "image_path": "/path/to/image.png",
             },

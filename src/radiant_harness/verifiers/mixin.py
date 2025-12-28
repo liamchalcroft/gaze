@@ -111,7 +111,6 @@ class VerifiableProcessorMixin:
                 self._processor = processor_cls(**processor_kwargs)
                 self._adapter = RadiantHarnessAdapter(
                     processor=self._processor,
-                    registry=None,  # Registry created per-episode
                 )
                 self._image_base_path = image_base_path
 
@@ -210,41 +209,3 @@ class VerifiableProcessorMixin:
                 return self._processor.get_reward_function()
 
         return _VerifiableEnv
-
-
-@beartype
-def create_verifiable_processor(
-    base_processor_cls: type,
-    reward_fn: BaseRewardFunction,
-) -> type:
-    """Create a VerifiableProcessor from a base processor class and reward function.
-
-    Utility for adding verifiers support to existing processors without
-    modifying the original class.
-
-    Args:
-        base_processor_cls: AgenticProcessorBase subclass
-        reward_fn: Reward function to use
-
-    Returns:
-        New class with VerifiableProcessorMixin
-
-    Example:
-        VerifiableNOVA = create_verifiable_processor(
-            NOVAProcessor,
-            CombinedReward([ExactMatchReward(), IoUReward()]),
-        )
-    """
-
-    class _VerifiableProcessor(VerifiableProcessorMixin, base_processor_cls):
-        """Dynamically generated verifiable processor."""
-
-        _reward_fn = reward_fn
-
-        def get_reward_function(self) -> BaseRewardFunction:
-            return self._reward_fn
-
-    _VerifiableProcessor.__name__ = f"Verifiable{base_processor_cls.__name__}"
-    _VerifiableProcessor.__qualname__ = _VerifiableProcessor.__name__
-
-    return _VerifiableProcessor

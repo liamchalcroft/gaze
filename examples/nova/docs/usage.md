@@ -1,221 +1,93 @@
 # Usage Guide
 
-## Installation
+## Setup
 
 ### Prerequisites
 
 - Python 3.10+
 - uv package manager
-- OpenRouter and/or OpenAI API keys
+- OpenRouter and/or OpenAI API keys (required for hosted models)
 
 ### Install Dependencies
 
 ```bash
-git clone https://github.com/your-org/radiant-harness.git
-cd radiant-harness/examples/nova
+# From repo root
+cd examples/nova
 uv sync
 ```
 
-### Environment Setup
-Create a `.env` file in `examples/nova`:
-```dotenv
-# OpenRouter API key (for accessing 100+ models)
-OPENROUTER_API_KEY=your_openrouter_api_key_here
+### Environment
 
-# OpenAI API key (optional, for OpenAI models)
+Create a `.env` file in `examples/nova`:
+
+```dotenv
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
 
-# Optional: App identification
-APP_NAME=NOVA Retrieval VLM
-APP_URL=https://your-app-url.com
-
-# Data directories (relative to examples/nova)
+# Optional defaults
 DATA_DIR=./data/nova
 OUTPUT_DIR=./runs
 ```
 
-## Basic Usage
+## Data Requirements
 
-### Download Dataset
-```bash
-python scripts/download_nova.py --data-dir $DATA_DIR
-```
+- Images are loaded from the HuggingFace dataset `c-i-ber/Nova` at runtime.
+- Ground-truth CSVs must exist in `DATA_DIR`:
+  - `captions.csv`
+  - `case_metadata.csv`
+  - `bboxes_gold.csv`
 
-### Command Line Interface
+If these files are missing, the CLI will fail fast when loading ground truth.
 
-#### Simple Localization Task
-```bash
-uv run python -m src.cli \
-  task=localization \
-  model.name=openai/gpt-4o-mini:free \
-  max_iterations=5
-```
+## CLI Usage
 
-#### Agentic Processing
+### Basic Run
+
 ```bash
 uv run python -m src.cli \
-  task=localization \
-  agentic.enabled=true \
-  agentic.use_tools=true \
-  model.name=openai/gpt-4o
+  --task localization \
+  --model openai/gpt-4o \
+  --data-dir ./data/nova \
+  --output-dir ./runs
 ```
 
-#### Multi-turn Analysis
+### Enable Tools + Web Search
+
 ```bash
 uv run python -m src.cli \
-  task=diagnosis \
-  approach=multiturn \
-  model.name=anthropic/claude-3.5-sonnet
+  --task diagnosis \
+  --model openai/gpt-4o \
+  --use-tools \
+  --use-web-search \
+  --max-turns 5
 ```
 
-## Task Types
+### Re-run Existing Samples
 
-### Localization
-Detect and localize anomalies in brain MRI images.
-- **Metrics**: mAP@0.3, mAP@0.5, mAP@0.50-0.95
-- **Output**: Bounding boxes with confidence scores
-
-### Captioning
-Generate descriptive captions for medical images.
-- **Metrics**: BLEU, METEOR, BERTScore, RadGraph F1
-- **Output**: Natural language descriptions
-
-### Diagnosis
-Provide differential diagnosis based on imaging findings.
-- **Metrics**: Top-1/Top-5 accuracy, coverage, entropy
-- **Output**: Ranked list of potential diagnoses
-
-## Analysis Approaches
-
-### Baseline
-Single-turn analysis without retrieval.
-```bash
-uv run python -m src.cli approach=baseline
-```
-
-### Multi-turn
-Iterative reasoning with conditional continuation.
-```bash
-uv run python -m src.cli approach=multiturn
-```
-
-### Visual Operations
-Interactive visual reasoning with zoom/crop/contrast.
-```bash
-uv run python -m src.cli approach=visual
-```
-
-### Comprehensive
-All capabilities combined.
-```bash
-uv run python -m src.cli approach=comprehensive
-```
-
-### Agentic Mode
-Multi-turn reasoning with visual tools and web search integration.
-```bash
-# Enable agentic processing
-uv run python -m src.cli task=localization agentic.enabled=true
-
-# With visual reasoning and tools
-uv run python -m src.cli task=diagnosis agentic.enabled=true agentic.use_tools=true
-
-# Configure max turns
-uv run python -m src.cli task=localization agentic.enabled=true agentic.max_turns=5
-```
-
-## Model Selection
-
-### Free Models (Rate Limited)
-- `openai/gpt-4o-mini:free`
-- `meta-llama/llama-3.2-11b-vision-instruct:free`
-- `google/gemma-2-9b-it:free`
-
-### Premium Models
-- `openai/gpt-4o` - Best performance
-- `anthropic/claude-3.5-sonnet` - Excellent reasoning
-- `meta-llama/llama-3.2-90b-vision-instruct` - Strong open source
-
-See [OpenRouter Models](https://openrouter.ai/models) for complete list.
-
-## Configuration Files
-
-Create custom YAML configs:
-```yaml
-# configs/experiment.yaml
-model:
-  name: "openai/gpt-4o"
-  temperature: 0.1
-
-agentic:
-  enabled: true
-  use_tools: true
-  max_turns: 5
-
-task: "diagnosis"
-max_iterations: 15
-```
-
-Use with:
-```bash
-python -m src.cli --config-path=configs --config-name=experiment
-```
-
-## Batch Processing
-
-### Process Full Dataset
 ```bash
 uv run python -m src.cli \
-  task=localization \
-  max_iterations=0 \
-  batch_size=8
+  --task caption \
+  --model openai/gpt-4o-mini \
+  --no-skip-existing
 ```
 
-### Resume Interrupted Runs
+### Verbose Logs
+
 ```bash
-uv run python -m src.cli \
-  task=localization \
-  skip_existing=true
+uv run python -m src.cli --task all --model openai/gpt-4o -v
 ```
 
-## Visualization
+## Outputs
 
-### Generate Plots
-```bash
-uv run python scripts/plot_results.py --input-dir runs/experiment
-```
+The CLI writes per-sample results and a summary:
 
-### Interactive GUI
+- `sample_<index>.json` for each processed sample
+- `summary.json` with aggregate metrics and configuration
+
+## Visualization (Optional)
+
 ```bash
 uv run streamlit run src/visualization/gui.py
 ```
 
-## Troubleshooting
-
-### Common Issues
-
-1. **API Key Errors**
-   ```
-   Error: OPENROUTER_API_KEY not set
-   ```
-   Solution: Check your `.env` file and ensure API keys are set.
-
-2. **Rate Limiting**
-   ```
-   Error: Rate limit exceeded
-   ```
-   Solution: Increase `request_delay` or use free models for testing.
-
-3. **Memory Issues**
-   ```
-   Error: Out of memory
-   ```
-   Solution: Reduce `batch_size` or enable image compression.
-
-### Debug Mode
-```bash
-export LOGURU_LEVEL=DEBUG
-uv run python -m src.cli task=localization --verbose
-```
-
-For more details, see the [main README](../README.md) and [troubleshooting section](../README.md#troubleshooting).
+See [Agentic Workflow](./agentic_workflow.md) for the tool loop and prompt flow.

@@ -20,8 +20,8 @@ A production-ready, modular framework for building multi-turn agentic vision-lan
 ### Installation
 ```bash
 # Clone and install
-git clone https://github.com/your-org/radiant-harness.git
-cd radiant-harness
+git clone https://github.com/liamchalcroft/radiant_harness.git
+cd radiant_harness
 uv sync  # or pip install -e .
 ```
 
@@ -68,7 +68,7 @@ print(f"Confidence: {result.confidence:.2f}")
 ## 📁 Project Structure
 
 ```
-radiant-harness/
+radiant_harness/
 ├── src/radiant_harness/         # Core framework
 │   ├── tools/                   # Tool system (visual, search)
 │   ├── models/                  # Model adapters (OpenAI, HuggingFace)
@@ -142,4 +142,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 Built with inspiration from the medical AI community and designed to accelerate research in vision-language models for healthcare.
-

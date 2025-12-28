@@ -89,6 +89,7 @@ class TTLCache(Generic[T]):
         timestamp, value = self._cache[key]
         if time.time() - timestamp > self._config.cache_duration_seconds:
             # Expired - remove and return None
+            self._close_value(key, value, "expired")
             del self._cache[key]
             self._misses += 1
             return None
@@ -118,10 +119,9 @@ class TTLCache(Generic[T]):
             key: Cache key
             value: Value to store
         """
-        # Evict before adding to ensure space
-        self._evict_stale()
-
         self._cache[key] = (time.time(), value)
+        # Enforce size limit after insert
+        self._evict_stale()
 
     @beartype
     def delete(self, key: str) -> bool:

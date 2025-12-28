@@ -12,7 +12,6 @@ from abc import ABC
 from abc import abstractmethod
 from typing import Any
 
-import verifiers as vf
 from loguru import logger
 
 from radiant_harness.utils.iou import compute_iou
@@ -353,7 +352,3 @@ class CombinedReward(BaseRewardFunction):
         info["_reward_details"] = details
 
         return total_reward
-
-    def get_rubric(self) -> Any:
-        """Get verifiers rubric for this reward."""
-        return vf.Rubric(funcs=self.rewards, weights=self.weights)

@@ -1,7 +1,7 @@
-"""Web Image Search Tool for Medical Image Reference.
+"""Web image search tool for medical image reference.
 
 Provides image search capabilities for finding reference medical images from
-trusted sources like NIH Open-i and Radiopaedia.
+trusted sources like NIH Open-i.
 """
 
 from __future__ import annotations
@@ -28,6 +28,57 @@ from radiant_harness.config import CacheConfig
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
 
+_MODALITY_KEYWORDS = {
+    "mri": "MRI",
+    "magnetic resonance": "MRI",
+    "ct scan": "CT",
+    "computed tomography": "CT",
+    "x-ray": "X-ray",
+    "radiograph": "X-ray",
+    "ultrasound": "Ultrasound",
+    "sonography": "Ultrasound",
+    "pet": "PET",
+    "positron emission": "PET",
+    "flair": "MRI",
+    "t1-weighted": "MRI",
+    "t2-weighted": "MRI",
+    "dwi": "MRI",
+    "mammograph": "Mammography",
+}
+
+_BODY_PART_KEYWORDS = {
+    "brain": "brain",
+    "cerebral": "brain",
+    "head": "head",
+    "chest": "chest",
+    "thorax": "chest",
+    "lung": "chest",
+    "pulmonary": "chest",
+    "abdomen": "abdomen",
+    "abdominal": "abdomen",
+    "liver": "abdomen",
+    "kidney": "abdomen",
+    "spine": "spine",
+    "spinal": "spine",
+    "vertebr": "spine",
+    "pelvis": "pelvis",
+    "hip": "pelvis",
+    "knee": "knee",
+    "shoulder": "shoulder",
+    "heart": "cardiac",
+    "cardiac": "cardiac",
+}
+
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+
+_CONTENT_TYPE_EXTENSION_MAP = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/webp": ".webp",
+}
+
 
 @dataclass
 class ImageSearchResult:
@@ -37,7 +88,7 @@ class ImageSearchResult:
     image_url: str
     thumbnail_url: str | None
     source_url: str  # URL to the source article/case
-    source: str  # e.g., "openi", "radiopaedia"
+    source: str  # e.g., "openi"
     modality: str | None = None  # e.g., "MRI", "CT", "X-ray"
     body_part: str | None = None  # e.g., "brain", "chest"
     diagnosis: str | None = None
@@ -48,24 +99,6 @@ class ImageSearchResult:
     license: str | None = None
     reliability_score: float = 0.8
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for LLM consumption."""
-        return {
-            "title": self.title,
-            "image_url": self.image_url,
-            "thumbnail_url": self.thumbnail_url,
-            "source_url": self.source_url,
-            "source": self.source,
-            "modality": self.modality,
-            "body_part": self.body_part,
-            "diagnosis": self.diagnosis,
-            "caption": self.caption[:500] + "..."
-            if self.caption and len(self.caption) > 500
-            else self.caption,
-            "article_title": self.article_title,
-            "reliability": f"{self.reliability_score:.2f}",
-        }
 
 
 class ImageSearchError(Exception):
@@ -254,8 +287,9 @@ class OpenISearchEngine(ImageSearchEngine):
             title = item.get("title") or "Medical Image"
             caption = item.get("caption", "")
             article_title = item.get("articleTitle", "")
-            modality = self._extract_modality(caption + " " + title)
-            body_part = self._extract_body_part(caption + " " + title)
+            combined_text = f"{caption} {title}"
+            modality = self._extract_modality(combined_text)
+            body_part = self._extract_body_part(combined_text)
 
             pmcid = item.get("pmcid", "")
             source_url = (
@@ -293,24 +327,8 @@ class OpenISearchEngine(ImageSearchEngine):
     @beartype
     def _extract_modality(self, text: str) -> str | None:
         text_lower = text.lower()
-        modalities = {
-            "mri": "MRI",
-            "magnetic resonance": "MRI",
-            "ct scan": "CT",
-            "computed tomography": "CT",
-            "x-ray": "X-ray",
-            "radiograph": "X-ray",
-            "ultrasound": "Ultrasound",
-            "sonography": "Ultrasound",
-            "pet": "PET",
-            "positron emission": "PET",
-            "flair": "MRI",
-            "t1-weighted": "MRI",
-            "t2-weighted": "MRI",
-            "dwi": "MRI",
-            "mammograph": "Mammography",
-        }
-        for keyword, modality in modalities.items():
+        keywords = _MODALITY_KEYWORDS
+        for keyword, modality in keywords.items():
             if keyword in text_lower:
                 return modality
         return None
@@ -318,29 +336,8 @@ class OpenISearchEngine(ImageSearchEngine):
     @beartype
     def _extract_body_part(self, text: str) -> str | None:
         text_lower = text.lower()
-        body_parts = {
-            "brain": "brain",
-            "cerebral": "brain",
-            "head": "head",
-            "chest": "chest",
-            "thorax": "chest",
-            "lung": "chest",
-            "pulmonary": "chest",
-            "abdomen": "abdomen",
-            "abdominal": "abdomen",
-            "liver": "abdomen",
-            "kidney": "abdomen",
-            "spine": "spine",
-            "spinal": "spine",
-            "vertebr": "spine",
-            "pelvis": "pelvis",
-            "hip": "pelvis",
-            "knee": "knee",
-            "shoulder": "shoulder",
-            "heart": "cardiac",
-            "cardiac": "cardiac",
-        }
-        for keyword, part in body_parts.items():
+        keywords = _BODY_PART_KEYWORDS
+        for keyword, part in keywords.items():
             if keyword in text_lower:
                 return part
         return None
@@ -387,9 +384,22 @@ class MedicalImageSearchManager:
         self._cache_config = cache_config or config.cache
 
         self.max_results_per_engine = (
-            max_results_per_engine or self._search_config.max_results_per_engine
+            self._search_config.max_results_per_engine
+            if max_results_per_engine is None
+            else max_results_per_engine
         )
-        self.rate_limit_delay = rate_limit_delay or self._search_config.rate_limit_delay_seconds
+        self.rate_limit_delay = (
+            self._search_config.rate_limit_delay_seconds
+            if rate_limit_delay is None
+            else rate_limit_delay
+        )
+
+        if self.max_results_per_engine < 1:
+            raise ValueError(
+                f"max_results_per_engine must be >= 1, got {self.max_results_per_engine}"
+            )
+        if self.rate_limit_delay < 0:
+            raise ValueError(f"rate_limit_delay must be >= 0, got {self.rate_limit_delay}")
 
         # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[ImageSearchResult]] = TTLCache(self._cache_config)
@@ -511,14 +521,17 @@ class MedicalImageSearchManager:
                 f"All image search engines failed: {[str(e) for e in errors]}",
             )
 
-        if modality:
+        modality_filter = modality.lower() if modality else None
+        body_part_filter = body_part.lower() if body_part else None
+
+        if modality_filter:
             all_results = [
-                r for r in all_results if r.modality and modality.lower() in r.modality.lower()
+                r for r in all_results if r.modality and modality_filter in r.modality.lower()
             ]
 
-        if body_part:
+        if body_part_filter:
             all_results = [
-                r for r in all_results if r.body_part and body_part.lower() in r.body_part.lower()
+                r for r in all_results if r.body_part and body_part_filter in r.body_part.lower()
             ]
 
         seen_urls: set[str] = set()
@@ -611,45 +624,14 @@ class MedicalImageSearchManager:
 
     def _get_extension_from_url(self, url: str) -> str | None:
         url_lower = url.lower()
-        for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+        for ext in _IMAGE_EXTENSIONS:
             if ext in url_lower:
                 return ext
         return None
 
     def _get_extension_from_content_type(self, content_type: str) -> str:
-        content_type_map = {
-            "image/jpeg": ".jpg",
-            "image/png": ".png",
-            "image/gif": ".gif",
-            "image/bmp": ".bmp",
-            "image/webp": ".webp",
-        }
         main_type = content_type.split(";")[0].strip().lower()
-        return content_type_map.get(main_type, ".jpg")
-
-    def format_for_llm(self, results: list[ImageSearchResult]) -> str:
-        if not results:
-            return "No reference images found."
-
-        formatted = ["## Reference Medical Images\n"]
-
-        for i, result in enumerate(results, 1):
-            entry = f"""
-### Image {i}
-
-**Title:** {result.title}
-**Source:** {result.source} (Reliability: {result.reliability_score:.2f})
-**Modality:** {result.modality or "Unknown"}
-**Body Part:** {result.body_part or "Unknown"}
-
-**Caption:** {result.caption[:300] + "..." if result.caption and len(result.caption) > 300 else result.caption or "No caption"}
-
-**Image URL:** {result.image_url}
-**Source Article:** {result.source_url}
-"""
-            formatted.append(entry)
-
-        return "\n".join(formatted)
+        return _CONTENT_TYPE_EXTENSION_MAP.get(main_type, ".jpg")
 
 
 async def search_medical_images(

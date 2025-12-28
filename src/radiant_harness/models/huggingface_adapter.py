@@ -21,13 +21,15 @@ from beartype import beartype
 from loguru import logger
 
 from radiant_harness.exceptions import ModelError
-from radiant_harness.models._types import GenerationLog
 from radiant_harness.models.adapter_protocol import AdapterProtocol
+from radiant_harness.models.adapter_protocol import GenerationLog
 
 if TYPE_CHECKING:
     from PIL import Image
     from transformers import PreTrainedModel  # pyright: ignore[reportMissingImports]
     from transformers import PreTrainedTokenizer  # pyright: ignore[reportMissingImports]
+
+_TOOL_CALL_BLOCK_RE = re.compile(r"```tool\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _require_torch():
@@ -209,6 +211,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         temperature: float,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        stream: bool = False,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         """Generate a chat completion using the HuggingFace model.
 
@@ -217,15 +220,26 @@ class HuggingFaceAdapter(AdapterProtocol):
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             tools: Tool definitions (handled via prompt engineering)
-            response_format: Response format spec (handled via prompt engineering)
+            response_format: Structured response format (not supported)
 
         Returns:
             Tuple of (content, tool_calls, generation_log)
         """
+        if stream:
+            raise ModelError(
+                "Streaming is not supported for HuggingFace adapters",
+                model_name=self.model_name,
+            )
+
+        if response_format is not None:
+            raise ModelError(
+                "response_format is not supported for HuggingFace adapters",
+                model_name=self.model_name,
+            )
         torch = self.torch
 
         # Convert messages to prompt
-        prompt = self._format_messages(messages, _tools=tools, _response_format=response_format)
+        prompt = self._format_messages(messages)
 
         # Tokenize with memory optimization
         max_input_length = min(self.tokenizer.model_max_length, 2048)  # Reasonable limit
@@ -294,15 +308,10 @@ class HuggingFaceAdapter(AdapterProtocol):
     def _format_messages(
         self,
         messages: list[dict[str, Any]],
-        _tools: list[dict[str, Any]] | None = None,
-        _response_format: dict[str, Any] | None = None,
     ) -> str:
         """Format messages into a prompt string.
 
-        Uses the tokenizer's chat template if available, otherwise falls back
-        to a simple format.
-
-        Note: tools and response_format are handled by the chat template automatically.
+        Uses the tokenizer's chat template for message formatting.
         """
         # Use chat template - all modern HF tokenizers support this
         # Convert any multimodal content to text-only for text-only models
@@ -334,36 +343,6 @@ class HuggingFaceAdapter(AdapterProtocol):
             )
         return text_messages
 
-    def _format_tools(self, tools: list[dict[str, Any]]) -> str:
-        """Format tool definitions for the prompt."""
-        tool_docs = ["Available tools:"]
-        for tool in tools:
-            func = tool.get("function", {})
-            name = func.get("name", "unknown")
-            desc = func.get("description", "")
-            params = func.get("parameters", {})
-            tool_docs.append(f"\n- {name}: {desc}")
-            if params.get("properties"):
-                tool_docs.append(f"  Parameters: {json.dumps(params['properties'], indent=2)}")
-
-        tool_docs.append(
-            "\nTo use a tool, respond with:\n"
-            '```tool\n{"name": "tool_name", "arguments": {...}}\n```'
-        )
-        return "\n".join(tool_docs)
-
-    def _format_response_instructions(
-        self,
-        response_format: dict[str, Any],
-    ) -> str:
-        """Format response format instructions."""
-        if response_format.get("type") == "json_schema":
-            schema = response_format.get("json_schema", {}).get("schema", {})
-            return f"Respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
-        if response_format.get("type") == "json_object":
-            return "Respond with valid JSON."
-        return ""
-
     def _parse_tool_calls(
         self,
         content: str,
@@ -375,13 +354,13 @@ class HuggingFaceAdapter(AdapterProtocol):
         """
         tool_calls = []
 
-        # Look for tool call blocks
-        pattern = r"```tool\s*(\{.*?\})\s*```"
-        matches = re.findall(pattern, content, re.DOTALL)
+        matches = list(_TOOL_CALL_BLOCK_RE.finditer(content))
+        if not matches:
+            return None, content
 
         for i, match in enumerate(matches):
             try:
-                call_data = json.loads(match)
+                call_data = json.loads(match.group(1))
                 tool_calls.append(
                     {
                         "id": f"call_{i}",
@@ -393,7 +372,7 @@ class HuggingFaceAdapter(AdapterProtocol):
                 logger.warning(f"Skipping malformed tool call block {i}: {e}")
 
         # Remove tool blocks from content
-        clean_content = re.sub(pattern, "", content, flags=re.DOTALL).strip()
+        clean_content = _TOOL_CALL_BLOCK_RE.sub("", content).strip()
 
         return tool_calls if tool_calls else None, clean_content
 
@@ -507,15 +486,27 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         temperature: float,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        stream: bool = False,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         """Generate a chat completion with image support."""
+        if stream:
+            raise ModelError(
+                "Streaming is not supported for HuggingFace adapters",
+                model_name=self.model_name,
+            )
+
+        if response_format is not None:
+            raise ModelError(
+                "response_format is not supported for HuggingFace adapters",
+                model_name=self.model_name,
+            )
         torch = self.torch
 
         # Extract images from messages
         images = self._extract_images(messages)
 
         # Format prompt
-        prompt = self._format_messages(messages, _tools=tools, _response_format=response_format)
+        prompt = self._format_messages(messages)
 
         # Process inputs
         if images:

@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Removed
+- `radiant_harness.tools.tool` and `radiant_harness.tools.visual_tool` decorators (unused wrapper API)
+- `ToolDocumenter` helpers: `get_all_tools`, `get_categories`, `validate_all_tools`, `has_tool`, `count_tools`
+- `ImageManager` helpers: `get_size`, `copy_current`
+- `OpenAIAdapter.health_check` (silent error swallowing and unused)
+- Verifiers utilities: `ToolBridge`, `create_tool_bridge`, `create_verifiers_rubric`, `create_verifiable_processor`
+- `CombinedReward.get_rubric` (unused helper)
+- `RadiantHarnessAdapter` params `registry` and `max_tool_calls` (unused)
+- Built-in prompt examples under `radiant_harness.prompts.examples` (unused templates)
+- `SearchResult.to_llm_dict` and `WebSearchManager.format_for_llm` (unused formatting helpers)
+- `ImageSearchResult.to_dict` and `MedicalImageSearchManager.format_for_llm` (unused formatting helpers)
+- `ToolRegistry.set_image` and async context manager hooks (unused in repo)
+- `ImageManager` async context manager hooks (unused in repo)
+- `ToolRegistry.aclose` (redundant async close)
+- Stale NOVA example configs, scripts, and docs tied to removed Hydra workflow
+
+### Changed
+- HuggingFace adapters now accept `stream` and fail fast with `ModelError` when streaming is requested
+- HuggingFace adapters now fail fast on non-`None` `response_format` inputs instead of silently ignoring them
+- `AgenticProcessorBase._create_tool_registry` no longer takes `active_image_index`
+- Tool execution now wraps unexpected tool exceptions in `AgenticProcessingError`
+- Tool execution history now uses a bounded deque for O(1) eviction
+- Web search ranking now reuses per-query values to avoid per-result recomputation
+- HuggingFace tool-call parsing reuses a compiled regex and skips cleanup when no tool blocks are present
+- Web search ranking now uses a compiled publication-year regex to reduce per-result overhead
+- Image search keyword extraction and extension lookup now reuse module-level constants to reduce per-call allocations
+- Search tool metadata accumulation now uses sets to avoid redundant list-to-set conversions
+
 ## [0.2.0] - 2025-12-09
 
 ### Added

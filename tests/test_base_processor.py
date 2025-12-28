@@ -50,6 +50,12 @@ class TestAgenticProcessorBase:
         assert result[0].path == temp_image_path
         assert result[0].label == "T1-weighted"
 
+    def test_normalize_image_inputs_single_image_label_mismatch(self, temp_image_path: Path):
+        """Test error when label count doesn't match single image."""
+        processor = _TestProcessor()
+        with pytest.raises(ValueError, match="Number of labels .* must match"):
+            processor._normalize_image_inputs(temp_image_path, ["t1", "t2"])
+
     def test_normalize_image_inputs_multiple_images(self, temp_image_paths: tuple[Path, Path]):
         """Test normalizing multiple image inputs."""
         processor = _TestProcessor()
@@ -86,6 +92,10 @@ class TestAgenticProcessorBase:
 
         with pytest.raises(ValueError, match="Unsupported image format"):
             processor._normalize_image_inputs(invalid_path, None)
+
+    def test_invalid_reasoning_effort_raises(self):
+        with pytest.raises(ValueError, match="reasoning_effort"):
+            _TestProcessor(reasoning_effort="extreme")
 
 
 class _TestProcessor(AgenticProcessorBase):

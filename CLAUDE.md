@@ -9,7 +9,7 @@ The repository also includes `examples/nova/` - a complete example implementatio
 
 ### Project Structure
 ```
-radiant-harness/
+radiant_harness/
 ├── src/radiant_harness/        # Main Python package
 │   ├── __init__.py             # Public API exports
 │   ├── __main__.py             # CLI entry point
@@ -30,7 +30,6 @@ radiant-harness/
 │   │   ├── search.py           # Search tools (web, image)
 │   │   ├── image_manager.py    # Image loading and transformation
 │   │   ├── image_ops.py        # Image operations
-│   │   ├── decorators.py       # Tool decorator helpers
 │   │   └── tool_documenter.py  # Schema generation
 │   ├── retrieval/              # External search integrations
 │   │   ├── web_search.py       # PubMed search
@@ -41,8 +40,7 @@ radiant-harness/
 │   │   ├── adapter.py          # RadiantHarnessAdapter
 │   │   ├── base.py             # BaseMultiTurnEnv
 │   │   ├── mixin.py            # VerifiableProcessorMixin
-│   │   ├── rewards.py          # Reward functions
-│   │   └── tool_bridge.py      # Tool execution bridge
+│   │   └── rewards.py          # Reward functions
 │   └── utils/
 │       ├── iou.py              # IoU calculation
 │       └── json_extract.py     # JSON extraction

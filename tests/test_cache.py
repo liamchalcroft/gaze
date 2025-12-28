@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from radiant_harness.cache import TTLCache
 from radiant_harness.config import CacheConfig
 
@@ -64,7 +66,7 @@ class TestTTLCache:
 
     def test_cache_size_limit_eviction(self):
         """Test that oldest objects are evicted when size limit is reached."""
-        # max_cache_size=2 means when we try to add a 4th item, 3 items will exceed limit
+        # max_cache_size=2 means when we try to add a 3rd item, size exceeds limit
         # With evict_ratio=0.5, target_size = 2 * (1-0.5) = 1
         # So we need to go from 3 items to 1 item (evict 2)
         config = CacheConfig(cache_duration_seconds=60, max_cache_size=2, evict_ratio=0.5)
@@ -82,11 +84,11 @@ class TestTTLCache:
         time.sleep(0.01)
         cache.set("key3", mock_obj3)  # len=3 (eviction checks when > 2)
         time.sleep(0.01)
-        # Now with 3 items, adding a 4th triggers eviction when _evict_stale checks
-        cache.set("key4", mock_obj4)  # Should trigger eviction of oldest items
+        # Now with 3 items, adding a 4th keeps size within limit after eviction
+        cache.set("key4", mock_obj4)
 
         # After eviction, cache size should be at most max_cache_size
-        assert cache.size <= config.max_cache_size + 1  # +1 for the just-added item
+        assert cache.size <= config.max_cache_size
 
     def test_cache_error_handling_during_cleanup(self):
         """Test that cleanup errors (OSError/IOError) are handled gracefully."""
@@ -122,7 +124,7 @@ class TestTTLCache:
         cache.set("key3", mock3)  # size=3, but eviction checks BEFORE add (size=2, not > 2)
         time.sleep(0.01)
 
-        # Adding key4 triggers eviction (size=3 > max_cache_size=2 when evict_stale is called)
+        # Eviction happens on key3; adding key4 should not evict further
         mock4 = MagicMock()
         cache.set("key4", mock4)
 
@@ -206,3 +208,13 @@ class TestTTLCache:
         assert cache.get("key1") == "value1"
         stats = cache.stats()
         assert stats["hits"] == 1
+
+    def test_cache_config_validation_rejects_invalid_values(self):
+        with pytest.raises(ValueError):
+            CacheConfig(max_cache_size=0)
+        with pytest.raises(ValueError):
+            CacheConfig(cache_duration_seconds=0)
+        with pytest.raises(ValueError):
+            CacheConfig(evict_ratio=-0.1)
+        with pytest.raises(ValueError):
+            CacheConfig(evict_ratio=1.1)

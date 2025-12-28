@@ -1,14 +1,25 @@
-"""Lightweight protocol for chat adapters used by the harness."""
+"""Adapter protocol and types for model adapters."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 from typing import Any
 from typing import Protocol
 
-if TYPE_CHECKING:
-    from radiant_harness.models._types import GenerationLog
+
+@dataclass
+class GenerationLog:
+    """Token usage metadata for a generation call."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    finish_reason: str | None
+
+    @property
+    def tokens(self) -> int:
+        """Total tokens used."""
+        return self.prompt_tokens + self.completion_tokens
 
 
 class AdapterProtocol(Protocol):

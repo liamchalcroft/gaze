@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from radiant_harness.models._types import GenerationLog
 from radiant_harness.models.adapter_protocol import AdapterProtocol
+from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
 if TYPE_CHECKING:

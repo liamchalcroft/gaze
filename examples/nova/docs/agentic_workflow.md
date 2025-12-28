@@ -100,7 +100,7 @@ Visual manipulation tools the model can request during analysis:
 | `flip_vertical` | - | Mirror image top-bottom |
 | `rotate` | `clockwise: bool` | Rotate 90 degrees |
 | `reset` | - | Restore original image |
-| `search_web` | `query: str, search_type: str` | Search medical literature (PubMed/Radiopaedia) with reliability scoring |
+| `search_web` | `query: str, search_type: str` | Search PubMed literature with reliability scoring |
 
 ```python
 from radiant_harness import ToolRegistry, create_visual_tools, create_search_tools
@@ -118,7 +118,7 @@ result = await registry.execute("flip_horizontal")
 result = await registry.execute("rotate", clockwise=True)
 
 # Web search tool
-result = await registry.execute("search_web", query="glioblastoma MRI", search_type="pubmed")
+result = await registry.execute("search_web", query="glioblastoma MRI", search_type="diagnosis")
 # Returns: ToolResult(success=True, metadata={...}, description="Found 5 reliable sources")
 ```
 
@@ -130,22 +130,18 @@ Enhanced web search with medical reliability scoring:
 flowchart LR
     QUERY[Search Query] --> WSM[WebSearchManager]
     WSM --> PUBMED[PubMed Search]
-    WSM --> RADIOPAEDIA[Radiopaedia Search]
-    WSM --> GENERAL[General Web Search]
     PUBMED --> SCORE[Reliability Scoring]
-    RADIOPAEDIA --> SCORE
-    GENERAL --> SCORE
     SCORE --> RESULTS[Ranked Results]
 ```
 
 ```python
-from src.retrieval.enhanced_web_search import search_medical_literature_sync
+from radiant_harness.retrieval.web_search import search_medical_literature
 
-# Search with automatic medical source prioritization
-results = search_medical_literature_sync(
+# Search with automatic query enhancements by search_type
+results = await search_medical_literature(
     query="brain MRI lesion differential diagnosis",
     max_results=5,
-    search_type="pubmed"  # pubmed, radiopaedia, or general
+    search_type="diagnosis",
 )
 
 # Each result includes:
@@ -260,39 +256,27 @@ print(result.final_response["localization"])
 ## CLI Usage
 
 ```bash
-# Enable agentic processing with Grok model
-python -m src.cli task=localization \
-    model.name=x-ai/grok-4.1-fast:free \
-    agentic.enabled=true
-
-# Configure agentic options with reasoning
+# Enable visual tools
 python -m src.cli \
-    task=diagnosis \
-    model.name=x-ai/grok-4.1-fast:free \
-    agentic.enabled=true \
-    agentic.use_tools=true \
-    agentic.max_turns=10 \
-    agentic.confidence_threshold=0.8 \
-    model.reasoning_enabled=true
+    --task localization \
+    --model x-ai/grok-4.1-fast:free \
+    --use-tools
 
-# Example with web search enabled
+# Reasoning with bounded turns
 python -m src.cli \
-    task=diagnosis \
-    model.name=x-ai/grok-4.1-fast:free \
-    agentic.enabled=true \
-    agentic.use_tools=true \
-    agentic.max_turns=15
-```
+    --task diagnosis \
+    --model x-ai/grok-4.1-fast:free \
+    --use-tools \
+    --max-turns 10 \
+    --reasoning
 
-## Configuration
-
-```python
-class AgenticConfig(BaseModel):
-    enabled: bool = False
-    use_tools: bool = True
-    max_turns: int = 10         # 1-20 (increased from 10)
-    confidence_threshold: float = 0.7  # 0.0-1.0
-    reasoning_enabled: bool = False    # For models that support reasoning
+# Web search enabled
+python -m src.cli \
+    --task diagnosis \
+    --model x-ai/grok-4.1-fast:free \
+    --use-tools \
+    --use-web-search \
+    --max-turns 15
 ```
 
 ## When to Use Agentic Mode
@@ -302,7 +286,7 @@ class AgenticConfig(BaseModel):
 | Simple, clear scans | Standard processor (faster) |
 | Complex findings | Agentic with tools |
 | Need literature search | Agentic with search_web (PubMed) |
-| Need comparison images | Agentic with search_web (Radiopaedia) |
+| Need comparison images | Agentic with search_images (Open-i) |
 | Ambiguous cases | Agentic with web search + tools |
 | Research/benchmarking | Standard for reproducibility |
 | Clinical decision support | Agentic with all features |
@@ -312,16 +296,20 @@ class AgenticConfig(BaseModel):
 The enhanced `search_web` tool follows LLM agent best practices:
 
 ### 1. **Reliability Scoring**
-- PubMed articles: 0.9-1.0 (peer-reviewed)
-- Radiopaedia: 0.8-0.9 (expert-curated)
-- Medical journals: 0.7-0.9 (varies by impact factor)
-- General web: 0.3-0.7 (varies by source)
+- PubMed/NCBI articles: ~0.95 (peer-reviewed)
+- Government/academic domains (.gov, .edu, .ac.uk): ~0.80
+- Major medical publishers: ~0.85
+- Other sources: 0.60 (default)
 
 ### 2. **LLM-Friendly Formatting**
 ```python
-# Search results are automatically formatted for LLM consumption:
-formatted_results = format_for_llm(results)
-# Returns structured text with reliability indicators and medical entities
+# search_web returns formatted text for direct model consumption:
+result = await registry.execute(
+    "search_web",
+    query="glioblastoma MRI findings differential diagnosis",
+    search_type="diagnosis",
+)
+formatted_results = result.metadata["formatted_results"]
 ```
 
 ### 3. **Medical Entity Extraction**
@@ -332,7 +320,6 @@ formatted_results = format_for_llm(results)
 ### 4. **Error Handling & Retry Logic**
 - Graceful degradation when sources are unavailable
 - Automatic retry with exponential backoff
-- Fallback to general web search if specialized sources fail
 
 ### Usage Examples
 
@@ -340,17 +327,17 @@ formatted_results = format_for_llm(results)
 # Search for specific conditions
 registry.execute("search_web",
     query="glioblastoma MRI findings differential diagnosis",
-    search_type="pubmed")
-
-# Search for imaging examples
-registry.execute("search_web",
-    query="meningioma MRI T1 with contrast radiopaedia",
-    search_type="radiopaedia")
+    search_type="diagnosis")
 
 # General medical information
 registry.execute("search_web",
     query="brain tumor types MRI characteristics",
     search_type="general")
+
+# Reference images
+registry.execute("search_images",
+    query="meningioma MRI T1 with contrast",
+    modality="MRI")
 ```
 
 ## Architecture Benefits
@@ -358,5 +345,5 @@ registry.execute("search_web",
 1. **Fully Agentic**: No static knowledge base - the model actively searches
 2. **Up-to-Date**: Always accesses latest medical literature
 3. **Reliable**: Source prioritization and scoring ensure quality
-4. **Flexible**: Supports multiple search types (PubMed, Radiopaedia, general)
-5. **LLM-Optimized**: Results formatted for effective LLM reasoning
+4. **Flexible**: Query enhancements for diagnosis, guidelines, research, anatomy, treatment, differential, general
+5. **LLM-Optimized**: Tool results include formatted summaries for model reasoning

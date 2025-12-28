@@ -101,7 +101,6 @@ Modules:
     - types: ToolCall, ToolResult, Turn, AgenticResult dataclasses
     - tools: ToolRegistry, Tool, create_visual_tools, create_search_tools
     - prompts: Jinja2 template loading utilities
-    - protocols: Protocol classes for type hints
     - exceptions: Harness-specific exception hierarchy
 """
 
@@ -117,7 +116,6 @@ from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
-from radiant_harness.config import VerifiersConfig
 from radiant_harness.config import get_config
 from radiant_harness.config import set_config
 from radiant_harness.exceptions import AgenticProcessingError
@@ -145,10 +143,6 @@ from radiant_harness.prompts import load_prompt
 from radiant_harness.prompts import load_system_prompt
 from radiant_harness.prompts import load_task_prompt
 from radiant_harness.prompts import load_template
-from radiant_harness.protocols import PromptBuilder
-from radiant_harness.protocols import ResponseParser
-from radiant_harness.protocols import TaskEvaluator
-from radiant_harness.protocols import TaskSchema
 from radiant_harness.tools import EncodedImage
 from radiant_harness.tools import Tool
 from radiant_harness.tools import ToolRegistry
@@ -174,7 +168,6 @@ __all__ = [
     "SearchConfig",
     "ImageProcessingConfig",
     "RankingWeights",
-    "VerifiersConfig",
     "get_config",
     "set_config",
     # Result types
@@ -204,11 +197,6 @@ __all__ = [
     "load_task_prompt",
     "create_prompt",
     "combine_prompts",
-    # Protocols
-    "TaskSchema",
-    "TaskEvaluator",
-    "PromptBuilder",
-    "ResponseParser",
     # Exceptions
     "HarnessError",
     "AgenticProcessingError",

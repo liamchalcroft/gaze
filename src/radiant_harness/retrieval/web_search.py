@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from types import TracebackType
-from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
@@ -28,10 +27,12 @@ from radiant_harness.config import get_config
 # If you encounter SSL issues with specific endpoints, handle them explicitly
 # per-request rather than globally disabling SSL warnings.
 
+_PUBLICATION_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
 
 @dataclass
 class SearchResult:
-    """Enhanced search result with LLM-friendly formatting."""
+    """Enhanced search result with ranking metadata."""
 
     title: str
     url: str
@@ -49,26 +50,6 @@ class SearchResult:
     citation_count: int | None = None  # For academic sources
     open_access: bool = False
     ranking_score: float = 0.0  # Composite ranking score (set during ranking)
-
-    def to_llm_dict(self) -> dict[str, Any]:
-        """Convert to LLM-friendly dictionary format."""
-        config = get_config()
-        max_preview = config.search.max_content_preview_length
-        return {
-            "title": self.title,
-            "url": self.url,
-            "summary": self.snippet,
-            "content": self.content[:max_preview] + "..."
-            if len(self.content) > max_preview
-            else self.content,
-            "source": self.source,
-            "reliability": f"{self.reliability_score:.2f}",
-            "medical_relevance": f"{self.medical_relevance:.2f}",
-            "publication_date": self.publication_date,
-            "content_type": self.content_type,
-            "key_entities": self.extracted_entities[:10],  # Top 10 entities
-            "open_access": self.open_access,
-        }
 
 
 class SearchError(Exception):
@@ -455,7 +436,6 @@ class WebSearchManager:
     Example:
         async with WebSearchManager() as manager:
             results = await manager.search("glioblastoma MRI features")
-            formatted = manager.format_for_llm(results)
     """
 
     SUPPORTED_ENGINES = {"pubmed"}
@@ -509,10 +489,23 @@ class WebSearchManager:
         self._ranking_weights = ranking_weights or config.ranking
 
         self.max_results_per_engine = (
-            max_results_per_engine or self._search_config.max_results_per_engine
+            self._search_config.max_results_per_engine
+            if max_results_per_engine is None
+            else max_results_per_engine
         )
-        self.max_total_results = max_total_results or self._search_config.max_total_results
+        self.max_total_results = (
+            self._search_config.max_total_results
+            if max_total_results is None
+            else max_total_results
+        )
         self.rate_limit_delay = self._search_config.rate_limit_delay_seconds
+
+        if self.max_results_per_engine < 1:
+            raise ValueError(
+                f"max_results_per_engine must be >= 1, got {self.max_results_per_engine}"
+            )
+        if self.max_total_results < 1:
+            raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
 
         # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[SearchResult]] = TTLCache(self._cache_config)
@@ -704,8 +697,11 @@ class WebSearchManager:
         Returns:
             Results sorted by ranking score (descending)
         """
-        query_terms = query.lower().split()
+        query_lower = query.lower()
+        query_terms = query_lower.split()
+        current_year = datetime.now().year
         weights = self._ranking_weights
+        content_type_boosts = weights.content_type_boosts.get(search_type, {})
 
         for result in results:
             # Base score from reliability
@@ -716,10 +712,9 @@ class WebSearchManager:
 
             # Boost for recent publications (newer = higher boost)
             if result.publication_date:
-                match = re.search(r"\b(19|20)\d{2}\b", result.publication_date)
+                match = _PUBLICATION_YEAR_RE.search(result.publication_date)
                 if match:
                     year = int(match.group())
-                    current_year = datetime.now().year
                     years_old = current_year - year
                     # Newer papers get higher boost, decays over configured years
                     recency_boost = max(
@@ -734,7 +729,6 @@ class WebSearchManager:
                 score += weights.open_access_boost
 
             # Content type boosts based on search type
-            content_type_boosts = weights.content_type_boosts.get(search_type, {})
             content_boost = content_type_boosts.get(result.content_type, 0.0)
             score += content_boost
 
@@ -750,9 +744,7 @@ class WebSearchManager:
             )
 
             # Entity matching
-            entity_matches = sum(
-                1 for entity in result.extracted_entities if entity in query.lower()
-            )
+            entity_matches = sum(1 for entity in result.extracted_entities if entity in query_lower)
             score += entity_matches * weights.entity_match_weight
 
             # Store in ranking_score, preserving original reliability_score
@@ -761,61 +753,6 @@ class WebSearchManager:
         # Sort by ranking score (descending)
         results.sort(key=lambda x: x.ranking_score, reverse=True)
         return results
-
-    def format_for_llm(
-        self, results: list[SearchResult], max_content_length: int | None = None
-    ) -> str:
-        """Format results for LLM consumption.
-
-        Args:
-            results: Search results to format
-            max_content_length: Maximum total content length
-
-        Returns:
-            Formatted string for LLM
-        """
-        if max_content_length is None:
-            max_content_length = get_config().search.max_content_for_llm
-
-        if not results:
-            return "No search results found."
-
-        formatted_results = ["## Search Results\n"]
-        total_length = len(formatted_results[0])
-
-        for i, result in enumerate(results, 1):
-            result_dict = result.to_llm_dict()
-
-            # Create formatted result
-            formatted = f"""
-### Result {i}
-
-**Title:** {result_dict["title"]}
-
-**Source:** {result_dict["source"]} (Reliability: {result_dict["reliability"]})
-**Type:** {result_dict["content_type"]} | Medical Relevance: {result_dict["medical_relevance"]}
-
-**Summary:** {result_dict["summary"]}
-
-**Key Information:**
-{result_dict["content"]}
-
-**Key Entities:** {", ".join(result_dict["key_entities"])}
-
-**URL:** {result_dict["url"]}
-"""
-
-            # Check length limit
-            if total_length + len(formatted) > max_content_length:
-                formatted_results.append(
-                    f"\n... ({len(results) - i + 1} more results omitted due to length limit)"
-                )
-                break
-
-            formatted_results.append(formatted)
-            total_length += len(formatted)
-
-        return "\n".join(formatted_results)
 
 
 # Convenience functions for common use cases

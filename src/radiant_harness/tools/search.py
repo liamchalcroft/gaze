@@ -57,14 +57,14 @@ async def _execute_search_web(
         )
 
     formatted_results: list[str] = []
-    sources: list[str] = []
+    sources: set[str] = set()
     total_reliability = 0.0
-    content_types: list[str] = []
+    content_types: set[str] = set()
 
     for i, result in enumerate(search_results, 1):
-        sources.append(result.source)
+        sources.add(result.source)
         total_reliability += result.reliability_score
-        content_types.append(result.content_type)
+        content_types.add(result.content_type)
 
         lines = [
             f"{i}. **{result.title}**",
@@ -93,9 +93,9 @@ async def _execute_search_web(
             "query": query,
             "search_type": search_type,
             "results_count": len(search_results),
-            "sources": list(set(sources)),
+            "sources": list(sources),
             "avg_reliability": round(avg_reliability, 2),
-            "content_types": list(set(content_types)),
+            "content_types": list(content_types),
             "open_access_count": sum(1 for r in search_results if r.open_access),
             "formatted_results": formatted_summary,
         },
@@ -143,14 +143,14 @@ async def _execute_search_images(
         )
 
     formatted_results: list[str] = []
-    modalities_found: list[str] = []
-    body_parts_found: list[str] = []
+    modalities_found: set[str] = set()
+    body_parts_found: set[str] = set()
 
     for i, result in enumerate(search_results, 1):
         if result.modality:
-            modalities_found.append(result.modality)
+            modalities_found.add(result.modality)
         if result.body_part:
-            body_parts_found.append(result.body_part)
+            body_parts_found.add(result.body_part)
 
         lines = [
             f"{i}. **{result.title}**",
@@ -176,8 +176,8 @@ async def _execute_search_images(
             "modality": modality_filter,
             "body_part": body_part_filter,
             "results_count": len(search_results),
-            "modalities_found": list(set(modalities_found)),
-            "body_parts_found": list(set(body_parts_found)),
+            "modalities_found": list(modalities_found),
+            "body_parts_found": list(body_parts_found),
             "image_urls": [r.image_url for r in search_results],
             "formatted_results": formatted_summary,
         },
@@ -188,7 +188,7 @@ async def _execute_search_images(
 SEARCH_WEB_PROMPT_DOC = """
 **search_web** - Search PubMed for medical literature and evidence
   - Parameter `query` (string): Medical search terms (e.g., "glioblastoma MRI imaging characteristics")
-  - Parameter `search_type` (string): One of "diagnosis", "guidelines", "research", "anatomy", "general"
+  - Parameter `search_type` (string): One of "diagnosis", "guidelines", "research", "anatomy", "treatment", "differential", "general"
   - Use for: Verifying findings, accessing diagnostic criteria, researching conditions
   - Returns: Article titles, abstracts, publication info, and reliability scores
   - Tip: Include condition name, imaging modality, and specific findings in query

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from types import TracebackType
 
 from beartype import beartype
 from loguru import logger
@@ -156,38 +155,3 @@ class ImageManager:
             self._original_image.close()
             self._original_image = None
         self._image_path = None
-
-    @beartype
-    def get_size(self) -> tuple[int, int] | None:
-        """Get the current image size as (width, height).
-
-        Returns:
-            Tuple of (width, height) or None if no image loaded
-        """
-        if self._current_image is not None:
-            return self._current_image.size
-        return None
-
-    @beartype
-    def copy_current(self) -> Image.Image | None:
-        """Create a copy of the current image.
-
-        Returns:
-            Copy of current image or None if no image loaded
-        """
-        if self._current_image is not None:
-            return self._current_image.copy()
-        return None
-
-    async def __aenter__(self) -> ImageManager:
-        """Async context manager entry."""
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        """Async context manager exit with cleanup."""
-        self.close()

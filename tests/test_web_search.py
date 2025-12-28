@@ -9,6 +9,20 @@ from radiant_harness.retrieval.web_search import PubMedSearchEngine
 from radiant_harness.retrieval.web_search import WebSearchManager
 
 
+class TestSearchConfigValidation:
+    def test_invalid_values_raise(self) -> None:
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            SearchConfig(timeout_seconds=0)
+        with pytest.raises(ValueError, match="max_retries"):
+            SearchConfig(max_retries=0)
+        with pytest.raises(ValueError, match="rate_limit_delay_seconds"):
+            SearchConfig(rate_limit_delay_seconds=-0.1)
+        with pytest.raises(ValueError, match="max_results_per_engine"):
+            SearchConfig(max_results_per_engine=0)
+        with pytest.raises(ValueError, match="max_total_results"):
+            SearchConfig(max_total_results=0)
+
+
 class TestPubMedSearchEngine:
     """Tests for PubMedSearchEngine."""
 
@@ -46,6 +60,12 @@ class TestWebSearchManager:
         manager = WebSearchManager()
         assert len(manager.engines) == 1
         assert manager.engines[0].name == "PubMed"
+
+    def test_invalid_limits_raise(self) -> None:
+        with pytest.raises(ValueError, match="max_results_per_engine"):
+            WebSearchManager(max_results_per_engine=0)
+        with pytest.raises(ValueError, match="max_total_results"):
+            WebSearchManager(max_total_results=0)
 
     @pytest.mark.asyncio
     async def test_invalid_search_type_raises(self) -> None:

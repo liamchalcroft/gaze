@@ -8,8 +8,6 @@ from typing import Any
 
 from beartype import beartype
 from loguru import logger
-from openai import APIConnectionError
-from openai import APIError as OpenAIAPIError
 from openai import APITimeoutError
 from openai import AsyncOpenAI
 from openai import OpenAIError
@@ -21,8 +19,8 @@ from tenacity import wait_exponential
 
 from radiant_harness.exceptions import APIError
 from radiant_harness.exceptions import ModelError
-from radiant_harness.models._types import GenerationLog
 from radiant_harness.models.adapter_protocol import AdapterProtocol
+from radiant_harness.models.adapter_protocol import GenerationLog
 
 
 class OpenAIAdapter(AdapterProtocol):
@@ -183,23 +181,3 @@ class OpenAIAdapter(AdapterProtocol):
                     f"OpenAI API streaming error after retries: {e}", model_name=self.model_name
                 ) from e
             raise APIError(f"OpenAI streaming failed: {e}", model_name=self.model_name) from e
-
-    @beartype
-    async def health_check(self) -> bool:
-        """Check if the model is available and responding."""
-        try:
-            await self._create_completion_with_retry(
-                model=self.model_name,
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=1,
-                temperature=0,
-                tools=None,
-                response_format=None,
-            )
-            return True
-        except (OpenAIAPIError, APIConnectionError, RateLimitError, APITimeoutError) as e:
-            logger.warning(f"Health check failed for {self.model_name}: {e}")
-            return False
-        except OpenAIError as e:
-            logger.error(f"Unexpected OpenAI error during health check for {self.model_name}: {e}")
-            return False

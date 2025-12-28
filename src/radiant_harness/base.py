@@ -109,6 +109,12 @@ class AgenticProcessorBase(ABC):
         if max_turns < 1:
             raise ValueError(f"max_turns must be >= 1, got {max_turns}")
 
+        allowed_reasoning_efforts = {"low", "medium", "high"}
+        if reasoning_effort not in allowed_reasoning_efforts:
+            raise ValueError(
+                f"reasoning_effort must be one of {sorted(allowed_reasoning_efforts)}, got {reasoning_effort}"
+            )
+
         self.model_name = model_name
         self.use_tools = use_tools
         self.use_web_search = use_web_search
@@ -147,13 +153,11 @@ class AgenticProcessorBase(ABC):
     def _create_tool_registry(
         self,
         images: list[ImageInput],
-        active_image_index: int = 0,
     ) -> ToolRegistry | None:
         """Create a tool registry with appropriate tools.
 
         Args:
             images: List of loaded image inputs (may be empty for text-only)
-            active_image_index: Index of the initially active image for tools
 
         Returns:
             ToolRegistry if images are present and tools enabled, None otherwise
@@ -177,7 +181,7 @@ class AgenticProcessorBase(ABC):
         if not tools:
             return None
 
-        active_image = images[active_image_index]
+        active_image = images[0]
         return ToolRegistry(image_path=active_image.path, tools=tools)
 
     @abstractmethod
@@ -297,7 +301,7 @@ class AgenticProcessorBase(ABC):
             )
         finally:
             if tool_registry is not None:
-                await tool_registry.aclose()
+                tool_registry.close()
 
     @beartype
     def _normalize_image_inputs(
@@ -310,12 +314,16 @@ class AgenticProcessorBase(ABC):
             return []
 
         # Validate inputs
-        if isinstance(images, list) and labels and len(images) != len(labels):
+        if isinstance(images, list) and labels is not None and len(images) != len(labels):
             raise ValueError(
                 f"Number of labels ({len(labels)}) must match number of images ({len(images)})"
             )
 
         if isinstance(images, Path):
+            if labels is not None and len(labels) != 1:
+                raise ValueError(
+                    f"Number of labels ({len(labels)}) must match number of images (1)"
+                )
             # Validate single image exists
             if not images.exists():
                 raise FileNotFoundError(f"Image file not found: {images}")
@@ -391,7 +399,6 @@ class AgenticProcessorBase(ABC):
         for turn_idx in range(self.max_turns):
             is_last_turn = turn_idx == self.max_turns - 1
             current_tools = None if is_last_turn else tool_schemas
-            current_schema = response_schema
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
 
             chat_result = await model_adapter.generate_chat(
@@ -399,7 +406,7 @@ class AgenticProcessorBase(ABC):
                 max_tokens=self._config.default_max_tokens,
                 temperature=self._config.default_temperature,
                 tools=current_tools,
-                response_format=current_schema,
+                response_format=response_schema,
             )
             if isinstance(chat_result, AsyncIterator):
                 raise AgenticProcessingError(
@@ -619,6 +626,15 @@ class AgenticProcessorBase(ABC):
                     f"Tool '{tool_call.name}' failed during execution: {e}",
                     turns_completed=turn_idx + 1,
                     partial_response={"error": "tool_execution_failed", "tool": tool_call.name},
+                ) from e
+            except Exception as e:
+                logger.error(
+                    f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",
+                )
+                raise AgenticProcessingError(
+                    f"Tool '{tool_call.name}' raised unexpected error: {e}",
+                    turns_completed=turn_idx + 1,
+                    partial_response={"error": "tool_unexpected_error", "tool": tool_call.name},
                 ) from e
 
             results.append(result)

@@ -16,7 +16,6 @@ from verifiers.types import Messages
 from verifiers.types import State
 
 from .. import AgenticProcessorBase
-from .. import ToolRegistry
 from ..types import AgenticResult
 
 
@@ -25,27 +24,21 @@ class RadiantHarnessAdapter:
 
     Bridges the gap between the two packages:
     - Converts messages between formats
-    - Handles tool execution
-    - Manages image data
+    - Collects tool calls and results from processor runs
+    - Manages image metadata
     """
 
     @beartype
     def __init__(
         self,
         processor: AgenticProcessorBase,
-        registry: ToolRegistry | None = None,
-        max_tool_calls: int = 5,
     ) -> None:
         """Initialize adapter.
 
         Args:
             processor: Radiant Harness processor
-            registry: Tool registry (optional, created from processor if not provided)
-            max_tool_calls: Maximum tool calls per turn
         """
         self.processor = processor
-        self.registry = registry
-        self.max_tool_calls = max_tool_calls
 
     @beartype
     async def process_verifiers_messages(
@@ -178,6 +171,7 @@ class RadiantHarnessAdapter:
         Returns:
             Environment class
         """
+        _ = env_kwargs
         if base_class is None:
             from .base import BaseMultiTurnEnv
 
@@ -185,16 +179,12 @@ class RadiantHarnessAdapter:
 
         # Capture adapter config in closure
         captured_processor = self.processor
-        captured_registry = self.registry
-        max_tool_calls = env_kwargs.get("max_tool_calls", 5)
 
         class AdapterEnv(base_class):
             def __init__(self, *args: Any, **kwargs: Any):
                 super().__init__(*args, **kwargs)
                 self._adapter = RadiantHarnessAdapter(
                     processor=captured_processor,
-                    registry=captured_registry,
-                    max_tool_calls=max_tool_calls,
                 )
 
             async def env_response(
@@ -227,19 +217,3 @@ class RadiantHarnessAdapter:
                 return state.get("is_complete", False)
 
         return AdapterEnv
-
-
-def create_verifiers_rubric(
-    reward_functions: list[Any],
-    weights: list[float] | None = None,
-) -> vf.Rubric:
-    """Create a verifiers rubric from reward functions.
-
-    Args:
-        reward_functions: List of reward functions
-        weights: Optional weights
-
-    Returns:
-        Configured rubric
-    """
-    return vf.Rubric(funcs=reward_functions, weights=weights)

@@ -46,6 +46,16 @@ class CacheConfig:
     cache_duration_seconds: int = 300  # 5 minutes
     evict_ratio: float = 0.5
 
+    def __post_init__(self) -> None:
+        if self.max_cache_size < 1:
+            raise ValueError(f"max_cache_size must be >= 1, got {self.max_cache_size}")
+        if self.cache_duration_seconds <= 0:
+            raise ValueError(
+                f"cache_duration_seconds must be > 0, got {self.cache_duration_seconds}"
+            )
+        if not 0.0 <= self.evict_ratio <= 1.0:
+            raise ValueError(f"evict_ratio must be between 0.0 and 1.0, got {self.evict_ratio}")
+
 
 @dataclass(frozen=True)
 class SearchConfig:
@@ -74,6 +84,22 @@ class SearchConfig:
     max_content_for_llm: int = 5000
     ncbi_base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
     openi_base_url: str = "https://openi.nlm.nih.gov/api/search"
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError(f"timeout_seconds must be > 0, got {self.timeout_seconds}")
+        if self.max_retries < 1:
+            raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
+        if self.rate_limit_delay_seconds < 0:
+            raise ValueError(
+                f"rate_limit_delay_seconds must be >= 0, got {self.rate_limit_delay_seconds}"
+            )
+        if self.max_results_per_engine < 1:
+            raise ValueError(
+                f"max_results_per_engine must be >= 1, got {self.max_results_per_engine}"
+            )
+        if self.max_total_results < 1:
+            raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
 
 
 @dataclass(frozen=True)
@@ -129,27 +155,6 @@ class AgenticConfig:
 
 
 @dataclass(frozen=True)
-class VerifiersConfig:
-    """Configuration for verifiers RL training integration.
-
-    Attributes:
-        default_max_turns: Default max turns for RL episodes
-        max_tool_calls_per_turn: Maximum tool calls allowed per turn
-        enable_visual_tools: Whether to enable visual manipulation tools by default
-        enable_search_tools: Whether to enable search tools by default
-        reward_clip_min: Minimum reward value (for gradient stability)
-        reward_clip_max: Maximum reward value (for gradient stability)
-    """
-
-    default_max_turns: int = 10
-    max_tool_calls_per_turn: int = 5
-    enable_visual_tools: bool = True
-    enable_search_tools: bool = False
-    reward_clip_min: float = -1.0
-    reward_clip_max: float = 1.0
-
-
-@dataclass(frozen=True)
 class HarnessConfig:
     """Root configuration for the radiant harness.
 
@@ -176,7 +181,6 @@ class HarnessConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
     ranking: RankingWeights = field(default_factory=RankingWeights)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
-    verifiers: VerifiersConfig = field(default_factory=VerifiersConfig)
 
 
 class _ConfigHolder:
