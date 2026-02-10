@@ -129,8 +129,8 @@ def _normalize_diagnosis(diagnosis: str) -> str:
 
 @beartype
 def compute_localization_reward(
-    prediction: list[list[float]],
-    reference: list[list[float]],
+    prediction: list[list[int | float]],
+    reference: list[list[int | float]],
     iou_threshold: float = 0.3,
 ) -> float:
     """Compute localization reward using IoU matching.
@@ -143,20 +143,28 @@ def compute_localization_reward(
     Returns:
         Detection score in [0.0, 1.0]
     """
+    if not prediction and not reference:
+        return 1.0
     if not prediction or not reference:
-        return 0.0 if reference else 1.0  # No predictions is fine if no ground truth
+        return 0.0
 
     matched_refs = set()
     true_positives = 0
 
     for pred_box in prediction:
+        if len(pred_box) < 4:
+            continue
+        pred_box_f = [float(coord) for coord in pred_box[:4]]
         best_iou = 0.0
         best_ref_idx = -1
 
         for ref_idx, ref_box in enumerate(reference):
             if ref_idx in matched_refs:
                 continue
-            iou = compute_iou(pred_box, ref_box)
+            if len(ref_box) < 4:
+                continue
+            ref_box_f = [float(coord) for coord in ref_box[:4]]
+            iou = compute_iou(pred_box_f, ref_box_f)
             if iou > best_iou:
                 best_iou = iou
                 best_ref_idx = ref_idx
@@ -257,11 +265,11 @@ class NOVAVerifiersReward(BaseRewardFunction):
         """Compute caption reward."""
         pred_caption = response.get("caption", "")
         if isinstance(pred_caption, dict):
-            pred_caption = pred_caption.get("text", "")
+            pred_caption = pred_caption.get("description", pred_caption.get("text", ""))
 
         ref_caption = info.get("caption", info.get("gold_caption", ""))
         if isinstance(ref_caption, dict):
-            ref_caption = ref_caption.get("text", "")
+            ref_caption = ref_caption.get("description", ref_caption.get("text", ""))
 
         return compute_caption_reward(str(pred_caption), str(ref_caption))
 
@@ -275,11 +283,17 @@ class NOVAVerifiersReward(BaseRewardFunction):
         if isinstance(diagnosis, str):
             pred_diag = diagnosis
         else:
-            pred_diag = diagnosis.get("primary", diagnosis.get("diagnosis", ""))
+            pred_diag = diagnosis.get(
+                "primary_diagnosis",
+                diagnosis.get("primary", diagnosis.get("diagnosis", "")),
+            )
 
         ref_diagnosis = info.get("diagnosis", info.get("gold_diagnosis", ""))
         if isinstance(ref_diagnosis, dict):
-            ref_diagnosis = ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", ""))
+            ref_diagnosis = ref_diagnosis.get(
+                "primary_diagnosis",
+                ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", "")),
+            )
 
         return compute_diagnosis_reward(pred_diag, ref_diagnosis)
 
@@ -289,30 +303,35 @@ class NOVAVerifiersReward(BaseRewardFunction):
         info: dict[str, Any],
     ) -> float:
         """Compute localization reward."""
-        localization = response.get("localization", {})
-        pred_boxes = []
+        def _extract_boxes(raw: Any) -> list[list[int | float]]:
+            boxes: list[list[int | float]] = []
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict):
+                        box = item.get("bounding_box", item.get("bbox"))
+                        if isinstance(box, list) and len(box) >= 4:
+                            boxes.append(box[:4])
+                    elif isinstance(item, list) and len(item) >= 4:
+                        boxes.append(item[:4])
+                return boxes
 
-        # Handle various localization formats
-        if isinstance(localization, list):
-            for loc in localization:
-                if isinstance(loc, dict) and "bbox" in loc:
-                    pred_boxes.append(loc["bbox"])
-                elif isinstance(loc, list) and len(loc) == 4:
-                    pred_boxes.append(loc)
-        elif isinstance(localization, dict):
-            if "localizations" in localization:
-                pred_boxes.extend(
-                    loc["bbox"]
-                    for loc in localization["localizations"]
-                    if isinstance(loc, dict) and "bbox" in loc
-                )
-            elif "bbox" in localization:
-                pred_boxes.append(localization["bbox"])
+            if isinstance(raw, dict):
+                if isinstance(raw.get("boxes"), list):
+                    return _extract_boxes(raw["boxes"])
+                if isinstance(raw.get("localizations"), list):
+                    return _extract_boxes(raw["localizations"])
+                box = raw.get("bounding_box", raw.get("bbox"))
+                if isinstance(box, list) and len(box) >= 4:
+                    boxes.append(box[:4])
+            return boxes
 
-        # Get reference boxes
-        ref_boxes = info.get("boxes", info.get("gold_boxes", []))
-        if isinstance(ref_boxes, dict):
-            ref_boxes = ref_boxes.get("boxes", [])
+        pred_boxes = _extract_boxes(response.get("localization", {}))
+
+        # Accept benchmark info in either {"boxes": ...} or {"localizations": [{"bbox": ...}]}
+        ref_source = info.get("boxes", info.get("gold_boxes"))
+        if ref_source is None:
+            ref_source = info.get("localizations", info.get("gold_localizations", []))
+        ref_boxes = _extract_boxes(ref_source)
 
         return compute_localization_reward(pred_boxes, ref_boxes)
 
