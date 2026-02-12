@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -218,3 +219,132 @@ class TestTTLCache:
             CacheConfig(evict_ratio=-0.1)
         with pytest.raises(ValueError):
             CacheConfig(evict_ratio=1.1)
+        with pytest.raises(ValueError):
+            CacheConfig(evict_ratio=0.0)
+        with pytest.raises(ValueError):
+            CacheConfig(evict_ratio=1.0)
+
+
+class TestTTLCacheStress:
+    """Stress and concurrency tests for TTLCache."""
+
+    def test_concurrent_threads_no_corruption(self):
+        """Many threads doing get/set simultaneously must not corrupt state."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=50, evict_ratio=0.3)
+        cache: TTLCache[int] = TTLCache(config)
+        errors: list[Exception] = []
+
+        def writer(start: int) -> None:
+            try:
+                for i in range(start, start + 100):
+                    cache.set(f"key-{i}", i)
+            except Exception as e:
+                errors.append(e)
+
+        def reader(start: int) -> None:
+            try:
+                for i in range(start, start + 100):
+                    cache.get(f"key-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=writer, args=(0,)),
+            threading.Thread(target=writer, args=(100,)),
+            threading.Thread(target=writer, args=(200,)),
+            threading.Thread(target=reader, args=(0,)),
+            threading.Thread(target=reader, args=(100,)),
+            threading.Thread(target=reader, args=(200,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Threads raised exceptions: {errors}"
+        assert cache.size <= config.max_cache_size
+        stats = cache.stats()
+        assert stats["hits"] + stats["misses"] > 0
+
+    def test_eviction_under_pressure(self):
+        """Filling cache far beyond max_size stays bounded after each set."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=20, evict_ratio=0.5)
+        cache: TTLCache[int] = TTLCache(config)
+
+        for i in range(500):
+            cache.set(f"key-{i}", i)
+
+        assert cache.size <= config.max_cache_size
+
+    def test_mixed_ttl_expiry_and_size_eviction(self):
+        """Entries expire by TTL while new entries trigger size eviction."""
+        config = CacheConfig(cache_duration_seconds=0.1, max_cache_size=10, evict_ratio=0.3)
+        cache: TTLCache[int] = TTLCache(config)
+
+        # Fill with entries that will expire
+        for i in range(10):
+            cache.set(f"old-{i}", i)
+
+        time.sleep(0.15)
+
+        # Insert new entries; stale ones should be cleaned first
+        for i in range(15):
+            cache.set(f"new-{i}", i)
+
+        assert cache.size <= config.max_cache_size
+
+        # Old entries must all be gone
+        for i in range(10):
+            assert cache.get(f"old-{i}") is None
+
+        # Most recent entries should be retrievable
+        assert cache.get(f"new-{14}") == 14
+
+    def test_has_does_not_affect_stats(self):
+        """has() must never change hit/miss counters."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=10)
+        cache: TTLCache[str] = TTLCache(config)
+
+        cache.set("a", "val")
+
+        cache.has("a")       # exists
+        cache.has("missing") # does not exist
+
+        stats = cache.stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+
+    def test_concurrent_delete_and_get(self):
+        """Concurrent delete and get on the same keys must not raise."""
+        config = CacheConfig(cache_duration_seconds=60, max_cache_size=100)
+        cache: TTLCache[int] = TTLCache(config)
+        errors: list[Exception] = []
+
+        for i in range(100):
+            cache.set(f"key-{i}", i)
+
+        def deleter() -> None:
+            try:
+                for i in range(100):
+                    cache.delete(f"key-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        def getter() -> None:
+            try:
+                for i in range(100):
+                    cache.get(f"key-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=deleter),
+            threading.Thread(target=getter),
+            threading.Thread(target=getter),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Threads raised exceptions: {errors}"

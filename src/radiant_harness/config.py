@@ -92,8 +92,10 @@ class CacheConfig:
             raise ValueError(
                 f"cache_duration_seconds must be > 0, got {self.cache_duration_seconds}"
             )
-        if not 0.0 <= self.evict_ratio <= 1.0:
-            raise ValueError(f"evict_ratio must be between 0.0 and 1.0, got {self.evict_ratio}")
+        if not 0.0 < self.evict_ratio < 1.0:
+            raise ValueError(
+                f"evict_ratio must be between 0.0 and 1.0 exclusive, got {self.evict_ratio}"
+            )
 
 
 def _validate_base_url(url: str, field_name: str) -> None:

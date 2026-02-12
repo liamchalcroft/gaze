@@ -453,6 +453,7 @@ class MedicalImageSearchManager:
     async def close(self) -> None:
         for engine in self.engines:
             await engine.close()
+        self._cache.clear()
 
         # Clean up temporary directory if we created it
         if self._created_temp_dir:
@@ -497,7 +498,7 @@ class MedicalImageSearchManager:
         if body_part:
             enhanced_query += f" {body_part}"
 
-        query_hash = hashlib.sha256(enhanced_query.encode()).hexdigest()[:8]
+        query_hash = hashlib.sha256(enhanced_query.encode()).hexdigest()[:16]
         cache_key = f"img:{query_hash}|mod={modality}|part={body_part}"
 
         # Check cache using TTLCache (handles expiration automatically)

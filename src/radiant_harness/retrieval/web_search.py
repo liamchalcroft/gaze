@@ -683,7 +683,7 @@ class WebSearchManager:
 
         # Cache key must capture all knobs that change result sets
         engine_names = ",".join(engine.name for engine in self.engines)
-        query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:8]
+        query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:16]
         cache_key = f"{query_hash}:{search_type}:{medical_focus}:{self.max_results_per_engine}:{self.max_total_results}:{engine_names}"
 
         # Check cache using TTLCache (handles expiration automatically)

@@ -5,6 +5,7 @@ Provides a generic TTL cache implementation used by search managers.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 from typing import Generic
@@ -63,6 +64,7 @@ class TTLCache(Generic[T]):
             config: Cache configuration. If None, uses global default config.
         """
         self._config = config or get_config().cache
+        self._lock = threading.Lock()
         self._cache: dict[str, tuple[float, T]] = {}
         self._hits: int = 0
         self._misses: int = 0
@@ -82,24 +84,27 @@ class TTLCache(Generic[T]):
         Returns:
             Cached value if found and not expired, None otherwise
         """
-        if key not in self._cache:
-            self._misses += 1
-            return None
+        with self._lock:
+            if key not in self._cache:
+                self._misses += 1
+                return None
 
-        timestamp, value = self._cache[key]
-        if time.time() - timestamp > self._config.cache_duration_seconds:
-            # Expired - remove and return None
-            self._close_value(key, value, "expired")
-            del self._cache[key]
-            self._misses += 1
-            return None
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp > self._config.cache_duration_seconds:
+                # Expired - remove and return None
+                self._close_value(key, value, "expired")
+                del self._cache[key]
+                self._misses += 1
+                return None
 
-        self._hits += 1
-        return value
+            self._hits += 1
+            return value
 
     @beartype
     def has(self, key: str) -> bool:
         """Check if a key exists in cache and is not expired.
+
+        Does not affect hit/miss statistics.
 
         Args:
             key: Cache key to check
@@ -107,7 +112,15 @@ class TTLCache(Generic[T]):
         Returns:
             True if key exists and is not expired
         """
-        return self.get(key) is not None
+        with self._lock:
+            if key not in self._cache:
+                return False
+            timestamp, value = self._cache[key]
+            if time.time() - timestamp > self._config.cache_duration_seconds:
+                self._close_value(key, value, "expired")
+                del self._cache[key]
+                return False
+            return True
 
     @beartype
     def set(self, key: str, value: T) -> None:
@@ -119,13 +132,16 @@ class TTLCache(Generic[T]):
             key: Cache key
             value: Value to store
         """
-        self._cache[key] = (time.time(), value)
-        # Enforce size limit after insert
-        self._evict_stale()
+        with self._lock:
+            self._cache[key] = (time.time(), value)
+            # Enforce size limit after insert
+            self._evict_stale()
 
     @beartype
     def delete(self, key: str) -> bool:
         """Remove a key from the cache.
+
+        Calls close() on the cached value if it supports it.
 
         Args:
             key: Cache key to remove
@@ -133,10 +149,13 @@ class TTLCache(Generic[T]):
         Returns:
             True if key was found and removed, False if not found
         """
-        if key in self._cache:
-            del self._cache[key]
-            return True
-        return False
+        with self._lock:
+            if key in self._cache:
+                _, value = self._cache[key]
+                self._close_value(key, value, "deleted")
+                del self._cache[key]
+                return True
+            return False
 
     def _close_value(self, key: str, value: object, reason: str) -> None:
         """Close a cached value if it exposes a close method."""
@@ -153,17 +172,19 @@ class TTLCache(Generic[T]):
         Args:
             reset_stats: If True, also reset hit/miss counters
         """
-        for key, (_, value) in self._cache.items():
-            self._close_value(key, value, "cached")
-        self._cache.clear()
-        if reset_stats:
-            self._hits = 0
-            self._misses = 0
+        with self._lock:
+            for key, (_, value) in self._cache.items():
+                self._close_value(key, value, "cached")
+            self._cache.clear()
+            if reset_stats:
+                self._hits = 0
+                self._misses = 0
 
     def reset_stats(self) -> None:
         """Reset hit/miss counters without clearing cache entries."""
-        self._hits = 0
-        self._misses = 0
+        with self._lock:
+            self._hits = 0
+            self._misses = 0
 
     @beartype
     def _evict_stale(self) -> None:
@@ -201,7 +222,8 @@ class TTLCache(Generic[T]):
     @property
     def size(self) -> int:
         """Get the current number of entries in the cache."""
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
 
     @beartype
     def stats(self) -> dict[str, int | float]:
@@ -210,13 +232,14 @@ class TTLCache(Generic[T]):
         Returns:
             Dictionary with size, max_size, duration, hits, misses, and hit_rate
         """
-        total = self._hits + self._misses
-        hit_rate = self._hits / total if total > 0 else 0.0
-        return {
-            "size": len(self._cache),
-            "max_size": self._config.max_cache_size,
-            "duration_seconds": self._config.cache_duration_seconds,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": round(hit_rate, 3),
-        }
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = self._hits / total if total > 0 else 0.0
+            return {
+                "size": len(self._cache),
+                "max_size": self._config.max_cache_size,
+                "duration_seconds": self._config.cache_duration_seconds,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": round(hit_rate, 3),
+            }
