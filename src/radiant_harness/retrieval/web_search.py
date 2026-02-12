@@ -7,6 +7,7 @@ import functools
 import hashlib
 import os
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -307,7 +308,10 @@ class PubMedSearchEngine(SearchEngine):
             "db": "pubmed",
             "id": ids_str,
             "retmode": "json",
+            "tool": "radiant_harness",
         }
+        if self.email:
+            summary_params["email"] = self.email
         if self.api_key:
             summary_params["api_key"] = self.api_key
 
@@ -393,7 +397,10 @@ class PubMedSearchEngine(SearchEngine):
             "id": ",".join(pmid_list),
             "rettype": "abstract",
             "retmode": "xml",
+            "tool": "radiant_harness",
         }
+        if self.email:
+            fetch_params["email"] = self.email
         if self.api_key:
             fetch_params["api_key"] = self.api_key
 
@@ -418,32 +425,35 @@ class PubMedSearchEngine(SearchEngine):
     def _parse_abstracts_xml(self, xml_text: str) -> dict[str, str]:
         """Parse efetch PubMed XML to extract PMID → abstract mappings.
 
-        Uses simple regex parsing to avoid adding an XML library dependency.
+        Uses xml.etree.ElementTree (stdlib) for correct XML parsing.
         The PubMed XML structure wraps each article in <PubmedArticle> with
         a <PMID> element and <AbstractText> elements inside <Abstract>.
         """
         abstracts: dict[str, str] = {}
 
-        # Split into individual PubmedArticle blocks
-        article_pattern = re.compile(r"<PubmedArticle>(.*?)</PubmedArticle>", re.DOTALL)
-        pmid_pattern = re.compile(r"<PMID[^>]*>(\d+)</PMID>")
-        abstract_text_pattern = re.compile(r"<AbstractText[^>]*>(.*?)</AbstractText>", re.DOTALL)
+        try:
+            root = ET.fromstring(xml_text)  # noqa: S314
+        except ET.ParseError:
+            logger.warning("Failed to parse PubMed XML; proceeding without abstracts")
+            return {}
 
-        for article_match in article_pattern.finditer(xml_text):
-            article_xml = article_match.group(1)
-            pmid_match = pmid_pattern.search(article_xml)
-            if not pmid_match:
+        for article in root.iter("PubmedArticle"):
+            pmid_elem = article.find(".//PMID")
+            if pmid_elem is None or not pmid_elem.text:
                 continue
-            pmid = pmid_match.group(1)
+            pmid = pmid_elem.text.strip()
 
             # Collect all AbstractText sections (structured abstracts have
             # multiple sections: Background, Methods, Results, Conclusions)
-            sections = abstract_text_pattern.findall(article_xml)
+            sections: list[str] = []
+            for at in article.iter("AbstractText"):
+                # itertext() yields all text content, stripping child tags
+                text = "".join(at.itertext()).strip()
+                if text:
+                    sections.append(text)
+
             if sections:
-                # Strip XML tags from within abstract text
-                tag_re = re.compile(r"<[^>]+>")
-                clean_sections = [tag_re.sub("", s).strip() for s in sections]
-                abstracts[pmid] = " ".join(clean_sections)
+                abstracts[pmid] = " ".join(sections)
 
         return abstracts
 
@@ -793,6 +803,7 @@ class WebSearchManager:
         """
         query_lower = query.lower()
         query_terms = query_lower.split()
+        query_term_patterns = [re.compile(r"\b" + re.escape(t) + r"\b") for t in query_terms]
         current_year = datetime.now().year
         weights = self._ranking_weights
         content_type_boosts = weights.content_type_boosts.get(search_type, {})
@@ -826,12 +837,17 @@ class WebSearchManager:
             content_boost = content_type_boosts.get(result.content_type, 0.0)
             score += content_boost
 
-            # Query term matching
+            # Query term matching (word-boundary to avoid substring false positives
+            # e.g. "ct" matching "infected")
             title_lower = result.title.lower()
             content_lower = result.content.lower()
 
-            title_matches = sum(1 for term in query_terms if term in title_lower)
-            content_matches = sum(1 for term in query_terms if term in content_lower)
+            title_matches = sum(
+                1 for pat in query_term_patterns if pat.search(title_lower)
+            )
+            content_matches = sum(
+                1 for pat in query_term_patterns if pat.search(content_lower)
+            )
 
             score += (title_matches * weights.title_match_weight) + (
                 content_matches * weights.content_match_weight

@@ -252,3 +252,115 @@ class TestRankingNormalization:
         )
         ranked = manager._rank_results([result], query="test", search_type="general")
         assert ranked[0].ranking_score == 1.0
+
+
+class TestNCBIParamsOnAllRequests:
+    """esummary and efetch must include tool and email params (NCBI requirement)."""
+
+    @pytest.mark.asyncio
+    async def test_esummary_efetch_include_tool_param(self) -> None:
+        """Verify _fetch_article_details builds params with 'tool' key."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch
+
+        engine = PubMedSearchEngine()
+        engine.email = "test@example.com"
+
+        captured_params: list[dict[str, str]] = []
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict[str, str] | None = None):  # type: ignore[override]
+            captured_params.append(dict(params) if params else {})
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            if "esummary" in url:
+                mock_resp.json = AsyncMock(return_value={"result": {}})
+            else:
+                mock_resp.text = AsyncMock(return_value="<PubmedArticleSet></PubmedArticleSet>")
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+            await engine._fetch_article_details(["12345"])
+
+        # Should have 2 calls: esummary, efetch
+        assert len(captured_params) >= 2
+        for params in captured_params:
+            assert "tool" in params, f"Missing 'tool' param in {params}"
+            assert params["tool"] == "radiant_harness"
+            assert "email" in params, f"Missing 'email' param in {params}"
+            assert params["email"] == "test@example.com"
+
+
+class TestXMLParsing:
+    """Tests for the ET-based XML abstract parser."""
+
+    def test_parse_malformed_xml_returns_empty(self) -> None:
+        """Malformed XML should not crash, just return empty dict."""
+        engine = PubMedSearchEngine()
+        result = engine._parse_abstracts_xml("<broken><xml")
+        assert result == {}
+
+    def test_parse_empty_xml_returns_empty(self) -> None:
+        engine = PubMedSearchEngine()
+        result = engine._parse_abstracts_xml("<PubmedArticleSet></PubmedArticleSet>")
+        assert result == {}
+
+    def test_parse_xml_with_cdata_like_content(self) -> None:
+        """Articles with special characters in abstracts should parse."""
+        engine = PubMedSearchEngine()
+        xml = """
+        <PubmedArticleSet>
+          <PubmedArticle>
+            <MedlineCitation>
+              <PMID>99999</PMID>
+              <Article>
+                <Abstract>
+                  <AbstractText>Signal &gt; noise ratio was &lt; 0.5.</AbstractText>
+                </Abstract>
+              </Article>
+            </MedlineCitation>
+          </PubmedArticle>
+        </PubmedArticleSet>
+        """
+        result = engine._parse_abstracts_xml(xml)
+        assert "99999" in result
+        assert "Signal > noise ratio was < 0.5." in result["99999"]
+
+
+class TestWordBoundaryRanking:
+    """Query term matching must use word boundaries, not substring."""
+
+    def test_ct_does_not_match_infected(self) -> None:
+        """Short term 'ct' must not match 'infected' or 'detection'."""
+        manager = WebSearchManager()
+
+        result_with_ct = SearchResult(
+            title="CT scan findings in stroke",
+            url="https://pubmed.ncbi.nlm.nih.gov/444/",
+            content="CT imaging reveals hypodensity.",
+            snippet="CT",
+            source="pubmed",
+            reliability_score=0.95,
+        )
+        result_without_ct = SearchResult(
+            title="Detection of infected tissue",
+            url="https://pubmed.ncbi.nlm.nih.gov/555/",
+            content="Infected areas were detected via microscopy.",
+            snippet="Detection",
+            source="pubmed",
+            reliability_score=0.95,
+        )
+
+        ranked = manager._rank_results(
+            [result_without_ct, result_with_ct],
+            query="ct",
+            search_type="general",
+        )
+
+        # The result with actual "CT" should rank higher
+        assert ranked[0].url.endswith("/444/")
+        assert ranked[0].ranking_score > ranked[1].ranking_score

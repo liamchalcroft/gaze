@@ -328,8 +328,10 @@ class OpenISearchEngine(ImageSearchEngine):
     @beartype
     def _extract_modality(self, text: str) -> str | None:
         text_lower = text.lower()
-        keywords = _MODALITY_KEYWORDS
-        for keyword, modality in keywords.items():
+        # Check longer keywords first so "ct scan" matches before "ct" substring
+        for keyword, modality in sorted(
+            _MODALITY_KEYWORDS.items(), key=lambda kv: len(kv[0]), reverse=True
+        ):
             if keyword in text_lower:
                 return modality
         return None
@@ -337,8 +339,10 @@ class OpenISearchEngine(ImageSearchEngine):
     @beartype
     def _extract_body_part(self, text: str) -> str | None:
         text_lower = text.lower()
-        keywords = _BODY_PART_KEYWORDS
-        for keyword, part in keywords.items():
+        # Check longer keywords first for more specific matches
+        for keyword, part in sorted(
+            _BODY_PART_KEYWORDS.items(), key=lambda kv: len(kv[0]), reverse=True
+        ):
             if keyword in text_lower:
                 return part
         return None
@@ -637,10 +641,14 @@ class MedicalImageSearchManager:
 
             # Enforce size limit before reading the full body.
             content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > self._MAX_DOWNLOAD_BYTES:
+            try:
+                declared_size = int(content_length) if content_length else 0
+            except ValueError:
+                declared_size = 0
+            if declared_size > self._MAX_DOWNLOAD_BYTES:
                 raise ImageDownloadError(
                     result.image_url,
-                    f"Image too large: {content_length} bytes "
+                    f"Image too large: {declared_size} bytes "
                     f"(max {self._MAX_DOWNLOAD_BYTES})",
                 )
 
@@ -670,11 +678,14 @@ class MedicalImageSearchManager:
             return filepath
 
     def _get_extension_from_url(self, url: str) -> str | None:
-        url_lower = url.lower()
-        for ext in _IMAGE_EXTENSIONS:
-            if ext in url_lower:
-                return ext
-        return None
+        """Extract image extension from URL path suffix (not substring)."""
+        import posixpath
+        from urllib.parse import urlparse as _urlparse
+
+        path = _urlparse(url).path
+        _, ext = posixpath.splitext(path)
+        ext = ext.lower()
+        return ext if ext in _IMAGE_EXTENSIONS else None
 
     def _get_extension_from_content_type(self, content_type: str) -> str:
         main_type = content_type.split(";")[0].strip().lower()
