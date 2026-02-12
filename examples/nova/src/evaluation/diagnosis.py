@@ -152,7 +152,9 @@ async def llm_semantic_match_async(
     Raises:
         ValueError: If LLM API call fails (semantic matching is required for NOVA evaluation).
     """
-    from ..models import get_model_client
+    import os
+
+    from openai import AsyncOpenAI
 
     prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
@@ -164,7 +166,6 @@ Consider these diagnostically equivalent:
 - Abbreviations vs full terms (e.g., "MI" = "myocardial infarction")
 - Different word orders for the same diagnosis
 - Synonymous medical terms
-- Different levels of specificity that refer to the same core condition
 
 PREDICTION: "{pred}"
 REFERENCE: "{ref}"
@@ -173,12 +174,31 @@ Respond with ONLY "YES" if they refer to the same medical condition,
 or "NO" if they refer to different conditions.
 """
 
-    client = get_model_client(model_name)
-    response, _ = await client.generate_text(
-        prompt_text=prompt,
-        system_prompt="You are a medical expert. Respond only with YES or NO.",
+    openai_key = os.getenv("OPENAI_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = openai_key or openrouter_key
+    if not api_key:
+        raise ValueError(
+            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY "
+            "for LLM semantic matching."
+        )
+
+    base_url: str | None = None
+    if not openai_key and openrouter_key:
+        base_url = "https://openrouter.ai/api/v1"
+
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    response = await client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": "You are a medical expert. Respond only with YES or NO."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=5,
+        temperature=0.0,
     )
-    return response.strip().upper() == "YES"
+    content = response.choices[0].message.content or ""
+    return content.strip().upper() == "YES"
 
 
 @beartype

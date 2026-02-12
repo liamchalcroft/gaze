@@ -2,6 +2,11 @@
 
 Defines the unified response schema for NOVA brain-MRI analysis tasks
 including localization, diagnosis, and captioning.
+
+NOTE: This schema uses OpenAI strict mode ("strict": true), which requires:
+  - Every object must have "additionalProperties": false
+  - Every property in an object must be listed in "required"
+  - No optional properties (use nullable types instead if needed)
 """
 
 from __future__ import annotations
@@ -9,6 +14,9 @@ from __future__ import annotations
 from typing import Any
 
 # NOVA Unified Response Schema for all three tasks
+# Fully compliant with OpenAI strict structured outputs:
+# - All objects have additionalProperties: false
+# - All properties are required (strict mode mandate)
 NOVA_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
@@ -35,9 +43,7 @@ NOVA_SCHEMA: dict[str, Any] = {
                         },
                         "confidence": {
                             "type": "number",
-                            "minimum": 0.0,
-                            "maximum": 1.0,
-                            "description": "Confidence in caption analysis",
+                            "description": "Confidence in caption analysis (0.0-1.0)",
                         },
                         "findings": {
                             "type": "array",
@@ -55,7 +61,10 @@ NOVA_SCHEMA: dict[str, Any] = {
                         "sequence_characteristics",
                         "orientation",
                         "confidence",
+                        "findings",
+                        "anatomical_regions",
                     ],
+                    "additionalProperties": False,
                 },
                 "diagnosis": {
                     "type": "object",
@@ -73,19 +82,16 @@ NOVA_SCHEMA: dict[str, Any] = {
                                     "diagnosis": {"type": "string"},
                                     "confidence": {
                                         "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
                                     },
                                 },
                                 "required": ["diagnosis", "confidence"],
+                                "additionalProperties": False,
                             },
                             "description": "Alternative diagnoses with confidence",
                         },
                         "confidence": {
                             "type": "number",
-                            "minimum": 0.0,
-                            "maximum": 1.0,
-                            "description": "Confidence in primary diagnosis",
+                            "description": "Confidence in primary diagnosis (0.0-1.0)",
                         },
                         "evidence": {
                             "type": "array",
@@ -97,7 +103,14 @@ NOVA_SCHEMA: dict[str, Any] = {
                             "description": "Recommended next steps",
                         },
                     },
-                    "required": ["primary_diagnosis", "confidence", "evidence"],
+                    "required": [
+                        "primary_diagnosis",
+                        "differential_diagnoses",
+                        "confidence",
+                        "evidence",
+                        "clinical_recommendations",
+                    ],
+                    "additionalProperties": False,
                 },
                 "localization": {
                     "type": "object",
@@ -115,8 +128,6 @@ NOVA_SCHEMA: dict[str, Any] = {
                                     "bounding_box": {
                                         "type": "array",
                                         "items": {"type": "number"},
-                                        "minItems": 4,
-                                        "maxItems": 4,
                                         "description": "[x1, y1, x2, y2] in pixels",
                                     },
                                     "anatomical_location": {
@@ -125,8 +136,6 @@ NOVA_SCHEMA: dict[str, Any] = {
                                     },
                                     "confidence": {
                                         "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
                                     },
                                 },
                                 "required": [
@@ -135,6 +144,7 @@ NOVA_SCHEMA: dict[str, Any] = {
                                     "anatomical_location",
                                     "confidence",
                                 ],
+                                "additionalProperties": False,
                             },
                             "description": "List of localized abnormalities",
                         },
@@ -145,6 +155,7 @@ NOVA_SCHEMA: dict[str, Any] = {
                                 "height": {"type": "integer"},
                             },
                             "required": ["width", "height"],
+                            "additionalProperties": False,
                         },
                         "coordinate_system": {
                             "type": "string",
@@ -152,6 +163,7 @@ NOVA_SCHEMA: dict[str, Any] = {
                         },
                     },
                     "required": ["localizations", "image_dimensions", "coordinate_system"],
+                    "additionalProperties": False,
                 },
                 "continue": {
                     "type": "boolean",
@@ -165,7 +177,13 @@ NOVA_SCHEMA: dict[str, Any] = {
                     "description": "Chain-of-thought reasoning for the analysis",
                 },
             },
-            "required": ["caption", "diagnosis", "localization", "continue"],
+            "required": [
+                "caption",
+                "diagnosis",
+                "localization",
+                "continue",
+                "reasoning",
+            ],
             "additionalProperties": False,
         },
     },

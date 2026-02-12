@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from .diagnosis import evaluate_diagnosis_nova_official
 
 
 @beartype
-def evaluate(
+async def evaluate_async(
     preds_jsonl: str | Path, refs_jsonl: str | Path, task: str = "localization"
 ) -> dict[str, float]:
     """
@@ -133,7 +134,7 @@ def evaluate(
                 raise ValueError(f"Reference {i} missing required 'diagnosis' field")
             ref_diags.append(r["diagnosis"])
 
-        diag_scores = evaluate_diagnosis_nova_official(pred_diags, ref_diags)
+        diag_scores = await evaluate_diagnosis_nova_official(pred_diags, ref_diags)
         # Validate evaluation returned expected metrics
         required_metrics = ["top1", "top5", "coverage", "entropy"]
         for metric in required_metrics:
@@ -157,9 +158,22 @@ def evaluate(
     return result_metrics
 
 
+@beartype
+def evaluate(
+    preds_jsonl: str | Path, refs_jsonl: str | Path, task: str = "localization"
+) -> dict[str, float]:
+    """Synchronous wrapper for evaluate_async.
+
+    Note: Cannot be called from within an async context.
+    Use evaluate_async directly when in async context.
+    """
+    return asyncio.run(evaluate_async(preds_jsonl, refs_jsonl, task))
+
+
 # Public API
 __all__ = [
     "evaluate",
+    "evaluate_async",
     "evaluate_detection",
     "evaluate_diagnosis_nova_official",
 ]

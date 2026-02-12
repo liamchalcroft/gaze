@@ -90,7 +90,8 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     bleu = sacrebleu.corpus_bleu(preds, [refs])
 
     _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
-    bert_f1_score = float(f1_scores.mean()) * 100
+    # Baseline rescaling can produce negative scores; clamp to [0, 100]
+    bert_f1_score = max(0.0, float(f1_scores.mean()) * 100)
 
     # METEOR calculation with proper tokenization
     # Prepare references for METEOR (list of lists format)
