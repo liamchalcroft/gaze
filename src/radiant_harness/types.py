@@ -6,8 +6,10 @@ and agentic analysis results.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
+from types import MappingProxyType
 from typing import Any
 from typing import Literal
 
@@ -48,7 +50,17 @@ class ToolResult:
     error: str | None = None
     image_base64: str | None = None
     image_mime_type: str | None = None
-    metadata: dict[str, Any] = field(default_factory=lambda: {})
+    metadata: Mapping[str, Any] = field(default_factory=lambda: {})
+
+    def __post_init__(self) -> None:
+        if bool(self.image_base64) != bool(self.image_mime_type):
+            raise ValueError(
+                "image_base64 and image_mime_type must both be set or both be None"
+            )
+        # Freeze the metadata dict to enforce immutability contract
+        if isinstance(self.metadata, MappingProxyType):
+            return
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @property
     def success(self) -> bool:
@@ -68,7 +80,7 @@ class ToolResult:
         return str(formatted) if formatted is not None else None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Turn:
     """Represents a single turn in the agentic conversation.
 
@@ -87,7 +99,7 @@ class Turn:
     image_base64: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class AgenticResult:
     """Result of an agentic analysis session.
 

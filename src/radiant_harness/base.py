@@ -36,6 +36,7 @@ from radiant_harness.types import AgenticResult
 from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
+from radiant_harness.utils.json_extract import extract_json_from_text
 
 
 @dataclass
@@ -48,6 +49,7 @@ class ImageInput:
         width: Image width in pixels (set after loading)
         height: Image height in pixels (set after loading)
         encoded: Base64-encoded image (set after loading)
+        pil_image: Loaded PIL Image kept in memory to avoid re-reading from disk
     """
 
     path: Path
@@ -55,14 +57,24 @@ class ImageInput:
     width: int = 0
     height: int = 0
     encoded: EncodedImage | None = None
+    pil_image: Image.Image | None = None
 
     @beartype
     def load(self) -> None:
-        """Load image and populate dimensions and encoding."""
-        with Image.open(self.path) as img:
-            self.width = img.width
-            self.height = img.height
-            self.encoded = encode_image(img)
+        """Load image and populate dimensions, encoding, and PIL reference."""
+        img = Image.open(self.path)
+        img.load()  # Force full pixel decode into memory
+        max_dim = get_config().image.max_image_dimension
+        if img.width > max_dim or img.height > max_dim:
+            img.close()
+            raise ValueError(
+                f"Image dimensions {img.width}x{img.height} exceed "
+                f"maximum allowed dimension of {max_dim}px"
+            )
+        self.width = img.width
+        self.height = img.height
+        self.encoded = encode_image(img)
+        self.pil_image = img
 
 
 class AgenticProcessorBase(ABC):
@@ -187,6 +199,16 @@ class AgenticProcessorBase(ABC):
                 f"using first of {len(images)} images, rest will be ignored"
             )
         active_image = images[0]
+
+        # If the PIL Image was kept from load(), hand it directly to the
+        # ImageManager to avoid re-reading the file from disk.
+        if active_image.pil_image is not None:
+            registry = ToolRegistry(tools=tools)
+            registry.get_image_manager().set_preloaded_image(
+                active_image.pil_image, active_image.path
+            )
+            return registry
+
         return ToolRegistry(image_path=active_image.path, tools=tools)
 
     @abstractmethod
@@ -464,7 +486,12 @@ class AgenticProcessorBase(ABC):
                     {
                         "id": tc.id,
                         "type": "function",
-                        "function": {"name": tc.name, "arguments": tc.arguments},
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.arguments
+                            if isinstance(tc.arguments, str)
+                            else json.dumps(tc.arguments),
+                        },
                     }
                     for tc in typed_tool_calls
                 ]
@@ -482,13 +509,14 @@ class AgenticProcessorBase(ABC):
                     tool_call_id = typed_tool_calls[i].id
                     image_data_url = result.get_image_data_url()
 
+                    tool_content: str | list[dict[str, Any]]
                     if image_data_url:
-                        tool_content: str | list[dict[str, Any]] = [
+                        tool_content = [
                             {"type": "text", "text": result.description},
                             {"type": "image_url", "image_url": {"url": image_data_url}},
                         ]
                     else:
-                        tool_content: str | list[dict[str, Any]] = result.description
+                        tool_content = result.description
                         if result.error:
                             tool_content = f"{tool_content}\nError: {result.error}"
                         if formatted := result.formatted_results:
@@ -513,11 +541,16 @@ class AgenticProcessorBase(ABC):
                 parsed_obj: dict[str, Any] | list | str | int | float | bool | None = json.loads(
                     response_text
                 )
-            except json.JSONDecodeError as e:
-                raise AgenticProcessingError(
-                    f"Invalid JSON on turn {turn_idx + 1}: {e}. Response: {response_text[:200]}",
-                    turns_completed=turn_idx + 1,
-                ) from e
+            except json.JSONDecodeError:
+                # Fallback: extract JSON from markdown code blocks or embedded text
+                fallback = extract_json_from_text(response_text)
+                if fallback is None:
+                    raise AgenticProcessingError(
+                        f"No valid JSON found on turn {turn_idx + 1}. "
+                        f"Response: {response_text[:200]}",
+                        turns_completed=turn_idx + 1,
+                    ) from None
+                parsed_obj = fallback
 
             if not isinstance(parsed_obj, dict):
                 raise AgenticProcessingError(
@@ -555,6 +588,13 @@ class AgenticProcessorBase(ABC):
                     f"final turn. You must provide complete analysis with 'continue': false]"
                 )
                 messages.append({"role": "user", "content": turn_warning})
+        else:
+            raise AgenticProcessingError(
+                f"Analysis loop exhausted all {self.max_turns} turns without "
+                f"producing a final response "
+                f"(model may have returned tool calls on every turn)",
+                turns_completed=len(turns),
+            )
 
         if not self.validate_response(final_response):
             raise AgenticProcessingError(
@@ -572,6 +612,82 @@ class AgenticProcessorBase(ABC):
             confidence=confidence,
         )
 
+    def _parse_tool_args(self, tool_call: ToolCall, turn_idx: int) -> dict[str, Any]:
+        """Parse tool call arguments, raising on malformed JSON."""
+        if isinstance(tool_call.arguments, str):
+            try:
+                parsed_args: dict[str, Any] | list | str | int | float | bool | None = json.loads(
+                    tool_call.arguments
+                )
+            except json.JSONDecodeError as e:
+                raise AgenticProcessingError(
+                    f"Malformed JSON in tool arguments for '{tool_call.name}': {e}",
+                    turns_completed=turn_idx + 1,
+                    partial_response={"error": "malformed_tool_args", "tool": tool_call.name},
+                ) from e
+
+            if not isinstance(parsed_args, dict):
+                raise AgenticProcessingError(
+                    f"Tool arguments for '{tool_call.name}' must be a JSON object, got {type(parsed_args).__name__}",
+                    turns_completed=turn_idx + 1,
+                    partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
+                )
+            return parsed_args
+
+        if not isinstance(tool_call.arguments, dict):
+            raise AgenticProcessingError(
+                f"Tool arguments for '{tool_call.name}' must be a dict, got {type(tool_call.arguments).__name__}",
+                turns_completed=turn_idx + 1,
+                partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
+            )
+        return dict(tool_call.arguments)
+
+    @beartype
+    async def _run_single_tool(
+        self,
+        tool_call: ToolCall,
+        tool_registry: ToolRegistry,
+        turn_idx: int,
+    ) -> ToolResult:
+        """Execute a single tool call with error handling."""
+        tool_args = self._parse_tool_args(tool_call, turn_idx)
+        logger.debug(f"Executing: {tool_call.name}({tool_args})")
+
+        try:
+            return await tool_registry.execute(tool_call.name, **tool_args)
+        except UnknownToolError as e:
+            logger.error(f"Unknown tool requested on turn {turn_idx + 1}: {tool_call.name}")
+            raise AgenticProcessingError(
+                f"Tool '{tool_call.name}' is not registered",
+                turns_completed=turn_idx + 1,
+                partial_response={"error": "unknown_tool", "tool": tool_call.name},
+            ) from e
+        except ToolExecutionError as e:
+            logger.error(
+                f"Tool '{tool_call.name}' failed during execution on turn {turn_idx + 1}: {e}"
+            )
+            raise AgenticProcessingError(
+                f"Tool '{tool_call.name}' failed during execution: {e}",
+                turns_completed=turn_idx + 1,
+                partial_response={"error": "tool_execution_failed", "tool": tool_call.name},
+            ) from e
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+        ) as e:
+            logger.error(
+                f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",
+            )
+            raise AgenticProcessingError(
+                f"Tool '{tool_call.name}' raised unexpected error: {e}",
+                turns_completed=turn_idx + 1,
+                partial_response={"error": "tool_unexpected_error", "tool": tool_call.name},
+            ) from e
+
     @beartype
     async def _execute_tools(
         self,
@@ -579,72 +695,44 @@ class AgenticProcessorBase(ABC):
         tool_registry: ToolRegistry,
         turn_idx: int,
     ) -> list[ToolResult]:
-        """Execute a list of tool calls."""
-        results: list[ToolResult] = []
+        """Execute a list of tool calls, parallelizing when safe.
 
-        for tool_call in tool_calls:
-            # Parse arguments: either already a dict or a JSON string
-            if isinstance(tool_call.arguments, str):
-                try:
-                    parsed_args: dict[str, Any] | list | str | int | float | bool | None = (
-                        json.loads(tool_call.arguments)
-                    )
-                except json.JSONDecodeError as e:
-                    raise AgenticProcessingError(
-                        f"Malformed JSON in tool arguments for '{tool_call.name}': {e}",
-                        turns_completed=turn_idx + 1,
-                        partial_response={"error": "malformed_tool_args", "tool": tool_call.name},
-                    ) from e
+        Image-mutating tools (requires_image=True) run sequentially to
+        preserve shared ImageManager state.  Independent tools (search, etc.)
+        run concurrently via asyncio.gather when possible.
+        """
+        import asyncio
 
-                if not isinstance(parsed_args, dict):
-                    raise AgenticProcessingError(
-                        f"Tool arguments for '{tool_call.name}' must be a JSON object, got {type(parsed_args).__name__}",
-                        turns_completed=turn_idx + 1,
-                        partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
-                    )
-                tool_args: dict[str, Any] = parsed_args
-            else:
-                if not isinstance(tool_call.arguments, dict):
-                    raise AgenticProcessingError(
-                        f"Tool arguments for '{tool_call.name}' must be a dict, got {type(tool_call.arguments).__name__}",
-                        turns_completed=turn_idx + 1,
-                        partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
-                    )
-                tool_args = dict(tool_call.arguments)
+        if len(tool_calls) <= 1:
+            return [await self._run_single_tool(tc, tool_registry, turn_idx) for tc in tool_calls]
 
-            logger.debug(f"Executing: {tool_call.name}({tool_args})")
+        def _is_image_tool(tc: ToolCall) -> bool:
+            tool = tool_registry.get_documenter().get_tool(tc.name)
+            return tool is not None and tool.requires_image
 
-            try:
-                result = await tool_registry.execute(tool_call.name, **tool_args)
-            except UnknownToolError as e:
-                logger.error(f"Unknown tool requested on turn {turn_idx + 1}: {tool_call.name}")
-                raise AgenticProcessingError(
-                    f"Tool '{tool_call.name}' is not registered",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "unknown_tool", "tool": tool_call.name},
-                ) from e
-            except ToolExecutionError as e:
-                logger.error(
-                    f"Tool '{tool_call.name}' failed during execution on turn {turn_idx + 1}: {e}"
+        # Partition into image-mutating (must be sequential) and independent tools
+        image_indices = [i for i, tc in enumerate(tool_calls) if _is_image_tool(tc)]
+        other_indices = [i for i, tc in enumerate(tool_calls) if not _is_image_tool(tc)]
+
+        results: list[ToolResult | None] = [None] * len(tool_calls)
+
+        # Run image tools sequentially to preserve shared ImageManager state
+        for i in image_indices:
+            results[i] = await self._run_single_tool(tool_calls[i], tool_registry, turn_idx)
+
+        # Run non-image tools concurrently
+        if other_indices:
+            other_results = await asyncio.gather(
+                *(
+                    self._run_single_tool(tool_calls[i], tool_registry, turn_idx)
+                    for i in other_indices
                 )
-                raise AgenticProcessingError(
-                    f"Tool '{tool_call.name}' failed during execution: {e}",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "tool_execution_failed", "tool": tool_call.name},
-                ) from e
-            except Exception as e:
-                logger.error(
-                    f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",
-                )
-                raise AgenticProcessingError(
-                    f"Tool '{tool_call.name}' raised unexpected error: {e}",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "tool_unexpected_error", "tool": tool_call.name},
-                ) from e
+            )
+            for i, result in zip(other_indices, other_results):
+                results[i] = result
 
-            results.append(result)
-
-        return results
+        # All slots filled — assert and return in original order
+        return [r for r in results if r is not None]
 
     @beartype
     def _format_tool_results(self, tool_results: list[ToolResult]) -> str:

@@ -246,7 +246,15 @@ def create_search_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     "search_type": {
                         "type": "string",
                         "description": "Type of search.",
-                        "enum": ["diagnosis", "research", "guidelines", "anatomy", "general"],
+                        "enum": [
+                            "diagnosis",
+                            "research",
+                            "guidelines",
+                            "anatomy",
+                            "treatment",
+                            "differential",
+                            "general",
+                        ],
                         "default": "general",
                     },
                 },

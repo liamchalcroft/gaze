@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from radiant_harness.base import AgenticProcessorBase
+from radiant_harness.base import ImageInput
 from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
@@ -76,12 +77,12 @@ class FakeProcessor(AgenticProcessorBase):
             adapter_factory=FakeAdapter,
         )
 
-    def get_system_prompt(self, images=None, metadata=None) -> str:  # type: ignore[override]
-        _ = images, metadata  # Unused
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
         return "system"
 
-    def get_user_message(self, images=None, metadata=None) -> str:  # type: ignore[override]
-        _ = images, metadata  # Unused
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
         return "user"
 
     def get_response_schema(self) -> dict[str, Any] | None:
@@ -105,8 +106,8 @@ class FakeProcessor(AgenticProcessorBase):
     def validate_response(self, response: dict[str, Any]) -> bool:
         return {"continue", "result"} <= set(response)
 
-    def _create_tool_registry(self, images=None) -> ToolRegistry | None:  # type: ignore[override]
-        _ = images  # Unused
+    def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+        _ = images
         tool = Tool(
             name="echo",
             description="echo back",
@@ -127,11 +128,11 @@ class FailingToolProcessor(AgenticProcessorBase):
             adapter_factory=FailingAdapter,
         )
 
-    def get_system_prompt(self, images=None, metadata=None) -> str:  # type: ignore[override]
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
         _ = images, metadata
         return "system"
 
-    def get_user_message(self, images=None, metadata=None) -> str:  # type: ignore[override]
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
         _ = images, metadata
         return "user"
 
@@ -142,7 +143,7 @@ class FailingToolProcessor(AgenticProcessorBase):
         _ = response
         return True
 
-    def _create_tool_registry(self, images=None) -> ToolRegistry | None:  # type: ignore[override]
+    def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
         _ = images
         tool = Tool(
             name="boom",
@@ -174,3 +175,139 @@ async def test_agentic_processor_surfaces_unexpected_tool_errors() -> None:
     assert "unexpected error" in str(exc.value)
     assert exc.value.partial_response is not None
     assert exc.value.partial_response["error"] == "tool_unexpected_error"
+
+
+# --- Adapters and processors for new edge-case tests ---
+
+
+class AlwaysToolAdapter(AdapterProtocol):
+    """Adapter that always returns tool calls, even when tools=None."""
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        return (
+            "",
+            [{"id": "call-1", "name": "echo", "arguments": {"value": 1}}],
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+        )
+
+
+class MarkdownJsonAdapter(AdapterProtocol):
+    """Adapter that returns JSON wrapped in a markdown code block."""
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        return (
+            '```json\n{"continue": false, "result": "wrapped"}\n```',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+class LoopExhaustionProcessor(AgenticProcessorBase):
+    """Processor whose adapter always returns tool calls, exhausting the loop."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="test-model",
+            use_tools=True,
+            use_web_search=False,
+            max_turns=2,
+            adapter_factory=AlwaysToolAdapter,
+        )
+
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "system"
+
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "user"
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        return None
+
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        _ = response
+        return True
+
+    def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+        _ = images
+        tool = Tool(
+            name="echo",
+            description="echo back",
+            parameters={"value": {"type": "integer", "description": "value to echo"}},
+            execute=_echo_tool,
+            requires_image=False,
+        )
+        return ToolRegistry(image_path=None, tools=[tool])
+
+
+class MarkdownJsonProcessor(AgenticProcessorBase):
+    """Processor whose adapter returns JSON in a markdown code block."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="test-model",
+            use_tools=False,
+            use_web_search=False,
+            max_turns=1,
+            adapter_factory=MarkdownJsonAdapter,
+        )
+
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "system"
+
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "user"
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        return None
+
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        return "result" in response
+
+    def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+        _ = images
+        return None
+
+
+# --- New edge-case tests ---
+
+
+@pytest.mark.asyncio
+async def test_loop_exhaustion_raises_when_all_turns_use_tools() -> None:
+    """Loop guard fires when model returns tool calls on every turn."""
+    processor = LoopExhaustionProcessor()
+
+    with pytest.raises(AgenticProcessingError) as exc:
+        await processor.analyze(images=None, metadata={})
+
+    assert "exhausted" in str(exc.value).lower()
+    assert exc.value.turns_completed > 0
+
+
+@pytest.mark.asyncio
+async def test_markdown_wrapped_json_parsed_correctly() -> None:
+    """JSON wrapped in ```json ... ``` is parsed via fallback."""
+    processor = MarkdownJsonProcessor()
+    result: AgenticResult = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "wrapped"
+    assert result.final_response["continue"] is False

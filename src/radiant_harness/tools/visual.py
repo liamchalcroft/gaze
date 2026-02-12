@@ -11,6 +11,7 @@ This module combines:
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -67,12 +68,21 @@ def zoom_image(
         )
 
     width, height = image.size
-    new_size = (int(width * factor), int(height * factor))
+    new_w = int(width * factor)
+    new_h = int(height * factor)
 
-    # Ensure minimum size to prevent degenerate images
-    new_size = (max(cfg.min_image_size, new_size[0]), max(cfg.min_image_size, new_size[1]))
+    # Ensure minimum size while preserving aspect ratio.
+    # Per-axis clamping would distort the image, which is unacceptable
+    # for diagnostic medical imaging where geometry must be faithful.
+    min_sz = cfg.min_image_size
+    if new_w < min_sz or new_h < min_sz:
+        safe_w = max(1, new_w)
+        safe_h = max(1, new_h)
+        scale_up = max(min_sz / safe_w, min_sz / safe_h)
+        new_w = max(min_sz, int(safe_w * scale_up))
+        new_h = max(min_sz, int(safe_h * scale_up))
 
-    return image.resize(new_size, Image.LANCZOS)
+    return image.resize((new_w, new_h), Image.LANCZOS)
 
 
 @beartype
@@ -261,7 +271,7 @@ async def _execute_zoom(registry: ToolRegistry, factor: float) -> ToolResult:
 
     current = _get_current_image(registry)
     new_size = current.size
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="zoom",
@@ -281,12 +291,17 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     if len(box) != 4:
         raise ToolExecutionError(f"Crop requires [x1, y1, x2, y2], got {len(box)} values")
 
-    # Validate box values are within [0, 1] range
+    # Validate types and range before arithmetic
+    coord_names = ["x1", "y1", "x2", "y2"]
     for i, value in enumerate(box):
+        if not isinstance(value, int | float):
+            raise ToolExecutionError(
+                f"Crop coordinates must be numbers, got {coord_names[i]}={value!r} "
+                f"(type {type(value).__name__})"
+            )
         if not 0 <= value <= 1:
             raise ToolExecutionError(
-                f"Crop coordinates must be in range [0, 1]. "
-                f"Got {['x1', 'y1', 'x2', 'y2'][i]}={value}"
+                f"Crop coordinates must be in range [0, 1]. Got {coord_names[i]}={value}"
             )
 
     image = _require_image(registry)
@@ -302,7 +317,7 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     current = _get_current_image(registry)
     new_size = current.size
     area_percentage = (x2 - x1) * (y2 - y1) * 100
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="crop",
@@ -330,7 +345,7 @@ async def _execute_contrast(registry: ToolRegistry, factor: float) -> ToolResult
         raise ToolExecutionError(f"Invalid contrast factor: {e}") from e
 
     current = _get_current_image(registry)
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="adjust_contrast",
@@ -353,7 +368,7 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
         raise ToolExecutionError(f"Invalid threshold bounds: {e}") from e
 
     current = _get_current_image(registry)
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="threshold",
@@ -371,7 +386,7 @@ async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
     image_manager.transform_image(flip_horizontal)
 
     current = _get_current_image(registry)
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="flip_horizontal",
@@ -389,7 +404,7 @@ async def _execute_flip_vertical(registry: ToolRegistry) -> ToolResult:
     image_manager.transform_image(flip_vertical)
 
     current = _get_current_image(registry)
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="flip_vertical",
@@ -410,7 +425,7 @@ async def _execute_rotate(registry: ToolRegistry, clockwise: bool = True) -> Too
 
     current = _get_current_image(registry)
     direction = "clockwise" if clockwise else "counter-clockwise"
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="rotate",
@@ -434,7 +449,7 @@ async def _execute_reset(registry: ToolRegistry) -> ToolResult:
     image_manager.reset_to_original()
 
     current = _get_current_image(registry)
-    encoded = encode_image(current)
+    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="reset",
@@ -445,14 +460,10 @@ async def _execute_reset(registry: ToolRegistry) -> ToolResult:
     )
 
 
-# Prompt documentation for visual tools
-ZOOM_PROMPT_DOC = """**zoom** - Magnify the image (factor: 0.5-4.0)""".strip()
-
+# Static prompt documentation for tools with fixed parameters
 CROP_PROMPT_DOC = (
     """**crop** - Extract region [x1, y1, x2, y2] with normalized coordinates (0-1)""".strip()
 )
-
-CONTRAST_PROMPT_DOC = """**adjust_contrast** - Enhance contrast (factor: 0.5-3.0)""".strip()
 
 THRESHOLD_PROMPT_DOC = (
     """**threshold** - Apply intensity windowing (lower: 0-254, upper: 1-255)""".strip()
@@ -470,17 +481,31 @@ RESET_PROMPT_DOC = """**reset** - Return to original image""".strip()
 
 
 @beartype
-def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
+def create_visual_tools(
+    disabled_tools: set[str] | None = None,
+    config: ImageProcessingConfig | None = None,
+) -> list[Tool]:
     """Create the standard set of visual tools for image analysis.
 
     Args:
         disabled_tools: Set of tool names to exclude from the returned list
+        config: Image processing config for schema ranges. If None, uses global default.
 
     Returns:
         List of Tool objects ready for registration with ToolRegistry
     """
+    cfg = config or _get_image_config()
     disabled = disabled_tools or set()
     tools: list[Tool] = []
+
+    # Generate prompt docs from config so ranges stay in sync
+    zoom_prompt_doc = (
+        f"**zoom** - Magnify the image (factor: {cfg.min_zoom_factor}-{cfg.max_zoom_factor})"
+    )
+    contrast_prompt_doc = (
+        f"**adjust_contrast** - Enhance contrast "
+        f"(factor: {cfg.min_contrast_factor}-{cfg.max_contrast_factor})"
+    )
 
     if "zoom" not in disabled:
         tools.append(
@@ -491,13 +516,13 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     "factor": {
                         "type": "number",
                         "description": "Zoom factor: 1.0=unchanged, 2.0=2x zoom.",
-                        "minimum": 0.5,
-                        "maximum": 4.0,
+                        "minimum": cfg.min_zoom_factor,
+                        "maximum": cfg.max_zoom_factor,
                     }
                 },
                 execute=_execute_zoom,
                 requires_image=True,
-                prompt_documentation=ZOOM_PROMPT_DOC,
+                prompt_documentation=zoom_prompt_doc,
                 category="visual",
             )
         )
@@ -535,13 +560,13 @@ def create_visual_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                     "factor": {
                         "type": "number",
                         "description": "Contrast factor: 1.0=no change, >1.0=increase, <1.0=decrease.",
-                        "minimum": 0.5,
-                        "maximum": 3.0,
+                        "minimum": cfg.min_contrast_factor,
+                        "maximum": cfg.max_contrast_factor,
                     }
                 },
                 execute=_execute_contrast,
                 requires_image=True,
-                prompt_documentation=CONTRAST_PROMPT_DOC,
+                prompt_documentation=contrast_prompt_doc,
                 category="visual",
             )
         )

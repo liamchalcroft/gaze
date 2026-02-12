@@ -116,12 +116,17 @@ def compute_diagnosis_reward(
 
 
 def _normalize_diagnosis(diagnosis: str) -> str:
-    """Normalize diagnosis text for comparison."""
+    """Normalize diagnosis text for comparison.
+
+    Strips hedging modifiers (possible, probable, likely, suspected) that
+    indicate uncertainty but NOT severity qualifiers (mild, moderate, severe)
+    which are clinically meaningful and change the diagnosis.
+    """
     # Lowercase and remove punctuation
     normalized = diagnosis.lower()
     normalized = re.sub(r"[^\w\s]", " ", normalized)
-    # Remove common modifiers
-    for modifier in ["possible", "probable", "likely", "suspected", "mild", "moderate", "severe"]:
+    # Remove hedging modifiers only — severity qualifiers are clinically meaningful
+    for modifier in ["possible", "probable", "likely", "suspected"]:
         normalized = normalized.replace(modifier, "")
     # Collapse whitespace
     return " ".join(normalized.split())
@@ -131,14 +136,17 @@ def _normalize_diagnosis(diagnosis: str) -> str:
 def compute_localization_reward(
     prediction: list[list[int | float]],
     reference: list[list[int | float]],
-    iou_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
 ) -> float:
     """Compute localization reward using IoU matching.
+
+    Uses IoU threshold of 0.5 by default to align with NOVA evaluation
+    metric (ACC50 / mAP@0.5), preventing reward-eval misalignment.
 
     Args:
         prediction: List of predicted bounding boxes [x1, y1, x2, y2]
         reference: List of ground truth bounding boxes
-        iou_threshold: IoU threshold for positive match
+        iou_threshold: IoU threshold for positive match (default 0.5 per NOVA eval)
 
     Returns:
         Detection score in [0.0, 1.0]
@@ -303,6 +311,7 @@ class NOVAVerifiersReward(BaseRewardFunction):
         info: dict[str, Any],
     ) -> float:
         """Compute localization reward."""
+
         def _extract_boxes(raw: Any) -> list[list[int | float]]:
             boxes: list[list[int | float]] = []
             if isinstance(raw, list):

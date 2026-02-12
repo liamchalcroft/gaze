@@ -96,10 +96,14 @@ class ImageManager:
             if self._image_path is None:
                 raise ToolExecutionError("No image path set - call set_image() first")
 
+            image_path = self._image_path  # capture for thread closure
+
+            def _load_image() -> tuple[Image.Image, Image.Image]:
+                with Image.open(image_path) as img:
+                    return img.copy(), img.copy()
+
             try:
-                with Image.open(self._image_path) as img:
-                    self._original_image = img.copy()
-                    self._current_image = img.copy()
+                original, current = await asyncio.to_thread(_load_image)
             except FileNotFoundError as e:
                 raise ToolExecutionError(f"Image file not found: {self._image_path}") from e
             except UnidentifiedImageError as e:
@@ -109,9 +113,18 @@ class ImageManager:
                     f"Failed to read image file {self._image_path}: {e}"
                 ) from e
 
+            self._original_image = original
+            self._current_image = current
+
     @beartype
     def transform_image(self, operation: Callable[[Image.Image], Image.Image]) -> None:
         """Apply a transformation to the current image with automatic cleanup.
+
+        This method is synchronous and does **not** acquire ``_image_lock``.
+        It is safe to call from the single-threaded asyncio event loop (the
+        normal execution path via ``ToolRegistry.execute``), but callers must
+        not invoke it concurrently from multiple coroutines on the same
+        ``ImageManager`` instance.
 
         Args:
             operation: Function that takes current image and returns new image
@@ -128,6 +141,23 @@ class ImageManager:
         old_image = self._current_image
         self._current_image = operation(old_image)
         old_image.close()
+
+    @beartype
+    def set_preloaded_image(self, image: Image.Image, image_path: Path) -> None:
+        """Set a pre-loaded PIL Image, avoiding a redundant disk read.
+
+        The caller transfers ownership of *image* — it must not be modified
+        or closed afterwards.  One internal copy is made for the working
+        ("current") image; the original reference is kept as-is for resets.
+
+        Args:
+            image: Already-loaded PIL Image (must have pixel data in memory).
+            image_path: Path to the source file (stored for reset/logging).
+        """
+        self.close()
+        self._original_image = image
+        self._current_image = image.copy()
+        self._image_path = image_path
 
     @beartype
     def reset_to_original(self) -> None:

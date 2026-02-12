@@ -69,6 +69,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         reasoning_effort: str = "high",
         task: NOVATask = "all",
         confidence_config: ConfidenceConfig = DEFAULT_CONFIDENCE_CONFIG,
+        mode: Literal["agentic", "single_turn"] = "agentic",
     ) -> None:
         """Initialize NOVA processor.
 
@@ -81,6 +82,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_effort: Reasoning effort level
             task: NOVA task type for reward computation
             confidence_config: Configuration for confidence calculations
+            mode: Prompt mode — "agentic" for multi-turn or "single_turn"
         """
         super().__init__(
             model_name=model_name,
@@ -92,6 +94,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         )
         self._task = task
         self._confidence_config = confidence_config
+        self._mode = mode
 
     def get_reward_function(self) -> BaseRewardFunction:
         """Return NOVA reward function for verifiers integration.
@@ -140,7 +143,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
 
         return create_prompt(
             prompts_dir=NOVA_PROMPTS_DIR,
-            mode="agentic",
+            mode=self._mode,
             context=context,
             template_name="task.jinja",
         )
@@ -206,14 +209,14 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         if evidence := diagnosis.get("evidence"):
             confidence += min(
                 len(evidence) * self._confidence_config.per_evidence,
-                self._confidence_config.max_bonus
+                self._confidence_config.max_bonus,
             )
 
         # Bonus for differential diagnoses
         if differentials := diagnosis.get("differential_diagnoses"):
             confidence += min(
                 len(differentials) * self._confidence_config.per_differential,
-                self._confidence_config.max_bonus
+                self._confidence_config.max_bonus,
             )
 
         # Bonus for localizations
@@ -221,14 +224,13 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         if localizations := localization.get("localizations"):
             confidence += min(
                 len(localizations) * self._confidence_config.per_localization,
-                self._confidence_config.max_bonus
+                self._confidence_config.max_bonus,
             )
 
         # Bonus for tool usage
         tool_turns = sum(1 for t in turns if t.tool_calls)
         confidence += min(
-            tool_turns * self._confidence_config.per_tool_turn,
-            self._confidence_config.max_bonus
+            tool_turns * self._confidence_config.per_tool_turn, self._confidence_config.max_bonus
         )
 
         return min(1.0, confidence)

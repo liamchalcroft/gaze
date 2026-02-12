@@ -11,7 +11,22 @@ class HarnessError(Exception):
 
 
 class ToolExecutionError(HarnessError):
-    """Raised when a tool execution fails due to invalid state or parameters."""
+    """Raised when a tool execution fails due to invalid state or parameters.
+
+    Attributes:
+        tool_name: Name of the tool that failed (if known)
+        tool_args: Arguments passed to the tool (if available)
+    """
+
+    def __init__(
+        self,
+        message: str,
+        tool_name: str | None = None,
+        tool_args: dict[str, Any] | None = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+        super().__init__(message)
 
 
 class TemplateError(HarnessError):

@@ -22,6 +22,7 @@ from radiant_harness.config import CacheConfig
 from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
+from radiant_harness.exceptions import HarnessError
 
 # Note: SSL verification is enabled by default for security.
 # If you encounter SSL issues with specific endpoints, handle them explicitly
@@ -52,7 +53,7 @@ class SearchResult:
     ranking_score: float = 0.0  # Composite ranking score (set during ranking)
 
 
-class SearchError(Exception):
+class SearchError(HarnessError):
     """Raised when a search operation fails."""
 
     def __init__(self, engine_name: str, message: str, original_error: Exception | None = None):
@@ -251,9 +252,8 @@ class PubMedSearchEngine(SearchEngine):
         self.api_key = os.getenv("NCBI_API_KEY")
         self.email = _get_ncbi_email()
 
-        if self.api_key:
-            self.headers["Authorization"] = f"Bearer {self.api_key}"
-
+        # NCBI E-utilities authenticate via the api_key query parameter,
+        # not via Bearer token headers.  Do NOT inject the key into headers.
         self._rate_limit_delay = self._config.rate_limit_delay_seconds
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
@@ -293,70 +293,71 @@ class PubMedSearchEngine(SearchEngine):
         return await self._fetch_article_details(pmid_list)
 
     async def _fetch_article_details(self, pmid_list: list[str]) -> list[SearchResult]:
-        """Fetch detailed article information from PubMed."""
-        fetch_url = f"{self.base_url}esummary.fcgi"
-        fetch_params = {
+        """Fetch detailed article information from PubMed.
+
+        Uses esummary for metadata and efetch for abstracts (esummary does
+        not return abstract text).
+        """
+        ids_str = ",".join(pmid_list)
+        session = await self._get_session()
+
+        # --- esummary: metadata (title, authors, journal, pubtype, …) ---
+        summary_url = f"{self.base_url}esummary.fcgi"
+        summary_params: dict[str, str] = {
             "db": "pubmed",
-            "id": ",".join(pmid_list),
+            "id": ids_str,
             "retmode": "json",
         }
-
         if self.api_key:
-            fetch_params["api_key"] = self.api_key
+            summary_params["api_key"] = self.api_key
 
-        # Rate limiting to avoid overwhelming NCBI API
         await asyncio.sleep(self._rate_limit_delay)
 
-        session = await self._get_session()
-        async with session.get(fetch_url, params=fetch_params) as response:
+        async with session.get(summary_url, params=summary_params) as response:
             if response.status != 200:
                 raise SearchError(
                     self.name,
                     f"Failed to fetch article details: status {response.status}",
                 )
-            data = await response.json()
+            summary_data = await response.json()
 
-        if "result" not in data:
+        if "result" not in summary_data:
             return []
+
+        # --- efetch: abstracts (XML) ---
+        abstracts = await self._fetch_abstracts(pmid_list)
 
         results: list[SearchResult] = []
         for pmid in pmid_list:
-            if pmid not in data["result"]:
+            if pmid not in summary_data["result"]:
                 continue
 
-            article = data["result"][pmid]
+            article = summary_data["result"][pmid]
 
             # Extract metadata
             title = article.get("title", "").strip()
             authors = article.get("authors", [])
             journal = article.get("fulljournalname", "")
             pub_date = article.get("pubdate", "")
-            abstract = article.get("abstract", "")
             doi = article.get("doi", "")
             article_ids = article.get("articleids", [])
 
-            # Check for open access
+            # Check for open access (PMC ID present → open access)
             open_access = any(
                 aid.get("idtype") == "pmc" for aid in article_ids if isinstance(aid, dict)
             )
 
-            # Determine content type
-            publication_types = article.get("publicationtypes", [])
-            content_type = "article"  # default
-            if "Review" in publication_types:
-                content_type = "review"
-            elif "Case Reports" in publication_types:
-                content_type = "case_report"
-            elif "Guideline" in publication_types:
-                content_type = "guidelines"
+            # Determine content type from PubMed's pubtype field.
+            publication_types = article.get("pubtype", [])
+            content_type = self._classify_content_type(publication_types)
 
-            # Create content
+            # Use abstract from efetch if available, else title
+            abstract = abstracts.get(pmid, "")
             content = abstract if abstract else title
 
             # Extract medical entities
             entities = self._extract_medical_entities(title + " " + content)
 
-            # Create search result
             result = SearchResult(
                 title=title,
                 url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
@@ -379,6 +380,99 @@ class PubMedSearchEngine(SearchEngine):
             results.append(result)
 
         return results
+
+    async def _fetch_abstracts(self, pmid_list: list[str]) -> dict[str, str]:
+        """Fetch abstracts via efetch XML (esummary does not include them).
+
+        Returns:
+            Mapping of PMID → abstract text.  Missing abstracts are omitted.
+        """
+        fetch_url = f"{self.base_url}efetch.fcgi"
+        fetch_params: dict[str, str] = {
+            "db": "pubmed",
+            "id": ",".join(pmid_list),
+            "rettype": "abstract",
+            "retmode": "xml",
+        }
+        if self.api_key:
+            fetch_params["api_key"] = self.api_key
+
+        await asyncio.sleep(self._rate_limit_delay)
+
+        session = await self._get_session()
+        try:
+            async with session.get(fetch_url, params=fetch_params) as response:
+                if response.status != 200:
+                    logger.warning(
+                        f"efetch returned status {response.status}; proceeding without abstracts"
+                    )
+                    return {}
+                xml_text = await response.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning(f"efetch request failed ({exc}); proceeding without abstracts")
+            return {}
+
+        return self._parse_abstracts_xml(xml_text)
+
+    @beartype
+    def _parse_abstracts_xml(self, xml_text: str) -> dict[str, str]:
+        """Parse efetch PubMed XML to extract PMID → abstract mappings.
+
+        Uses simple regex parsing to avoid adding an XML library dependency.
+        The PubMed XML structure wraps each article in <PubmedArticle> with
+        a <PMID> element and <AbstractText> elements inside <Abstract>.
+        """
+        abstracts: dict[str, str] = {}
+
+        # Split into individual PubmedArticle blocks
+        article_pattern = re.compile(r"<PubmedArticle>(.*?)</PubmedArticle>", re.DOTALL)
+        pmid_pattern = re.compile(r"<PMID[^>]*>(\d+)</PMID>")
+        abstract_text_pattern = re.compile(r"<AbstractText[^>]*>(.*?)</AbstractText>", re.DOTALL)
+
+        for article_match in article_pattern.finditer(xml_text):
+            article_xml = article_match.group(1)
+            pmid_match = pmid_pattern.search(article_xml)
+            if not pmid_match:
+                continue
+            pmid = pmid_match.group(1)
+
+            # Collect all AbstractText sections (structured abstracts have
+            # multiple sections: Background, Methods, Results, Conclusions)
+            sections = abstract_text_pattern.findall(article_xml)
+            if sections:
+                # Strip XML tags from within abstract text
+                tag_re = re.compile(r"<[^>]+>")
+                clean_sections = [tag_re.sub("", s).strip() for s in sections]
+                abstracts[pmid] = " ".join(clean_sections)
+
+        return abstracts
+
+    @beartype
+    def _classify_content_type(self, publication_types: list[str]) -> str:
+        """Classify PubMed article content type from pubtype strings.
+
+        PubMed pubtype values are strings like "Practice Guideline",
+        "Systematic Review", "Case Reports", "Journal Article", etc.
+        We use substring matching because values can be compound
+        (e.g. "Systematic Review" should still match "review").
+
+        Args:
+            publication_types: List of pubtype strings from esummary
+
+        Returns:
+            One of "guidelines", "review", "case_report", or "article"
+        """
+        lower_types = [pt.lower() for pt in publication_types]
+        for pt in lower_types:
+            if "guideline" in pt:
+                return "guidelines"
+        for pt in lower_types:
+            if "review" in pt:
+                return "review"
+        for pt in lower_types:
+            if "case report" in pt:
+                return "case_report"
+        return "article"
 
     @beartype
     def _create_snippet(self, title: str, content: str) -> str:
@@ -747,8 +841,16 @@ class WebSearchManager:
             entity_matches = sum(1 for entity in result.extracted_entities if entity in query_lower)
             score += entity_matches * weights.entity_match_weight
 
-            # Store in ranking_score, preserving original reliability_score
-            result.ranking_score = min(1.0, score)
+            result.ranking_score = score
+
+        # Normalize scores to [0, 1] so that ranking_score remains meaningful.
+        # The raw additive score easily exceeds 1.0, so we scale relative to
+        # the observed maximum rather than clamping (which destroyed differentiation).
+        if results:
+            max_score = max(r.ranking_score for r in results)
+            if max_score > 0:
+                for result in results:
+                    result.ranking_score = result.ranking_score / max_score
 
         # Sort by ranking score (descending)
         results.sort(key=lambda x: x.ranking_score, reverse=True)

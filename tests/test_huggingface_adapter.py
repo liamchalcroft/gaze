@@ -230,3 +230,104 @@ class TestParseToolCalls:
         tool_calls, remaining = self.adapter._parse_tool_calls(content)
         assert tool_calls is None
         assert "Some text." in remaining
+
+
+# ---------------------------------------------------------------------------
+# max_input_length configuration
+# ---------------------------------------------------------------------------
+
+
+class TestMaxInputLength:
+    def test_default_max_input_length_is_none(self) -> None:
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        assert adapter._max_input_length is None
+
+    def test_custom_max_input_length(self) -> None:
+        adapter = HuggingFaceAdapter(model_name="dummy", max_input_length=4096)
+        assert adapter._max_input_length == 4096
+
+    def test_vlm_adapter_accepts_max_input_length(self) -> None:
+        adapter = HuggingFaceVLMAdapter(model_name="dummy", max_input_length=8192)
+        assert adapter._max_input_length == 8192
+
+
+# ---------------------------------------------------------------------------
+# Parity: tool_call dict shape matches OpenAI adapter format
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallParity:
+    """Verify HuggingFace tool_call dicts match OpenAI adapter shape."""
+
+    REQUIRED_KEYS = {"id", "name", "arguments"}
+
+    def test_single_tool_call_has_required_keys(self) -> None:
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        content = '```tool\n{"name": "zoom", "arguments": {"x": 10}}\n```'
+        tool_calls, _ = adapter._parse_tool_calls(content)
+
+        assert tool_calls is not None
+        for tc in tool_calls:
+            assert set(tc.keys()) == self.REQUIRED_KEYS
+
+    def test_arguments_is_json_string(self) -> None:
+        """OpenAI returns arguments as a JSON string, not a dict. HF must match."""
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        content = '```tool\n{"name": "zoom", "arguments": {"x": 10}}\n```'
+        tool_calls, _ = adapter._parse_tool_calls(content)
+
+        assert tool_calls is not None
+        assert isinstance(tool_calls[0]["arguments"], str)
+        # Must be valid JSON
+        import json
+
+        parsed = json.loads(tool_calls[0]["arguments"])
+        assert isinstance(parsed, dict)
+
+    def test_id_is_string(self) -> None:
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        content = '```tool\n{"name": "zoom", "arguments": {}}\n```'
+        tool_calls, _ = adapter._parse_tool_calls(content)
+
+        assert tool_calls is not None
+        assert isinstance(tool_calls[0]["id"], str)
+        assert tool_calls[0]["id"].startswith("call_")
+
+
+# ---------------------------------------------------------------------------
+# Protocol signature parity
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolSignatureParity:
+    """Verify HF adapters match the AdapterProtocol signature."""
+
+    def test_generate_chat_signature_matches_protocol(self) -> None:
+        """Both HF adapters should accept the same params as the protocol."""
+        import inspect
+
+        from radiant_harness.models.adapter_protocol import AdapterProtocol
+
+        proto_sig = inspect.signature(AdapterProtocol.generate_chat)
+        hf_sig = inspect.signature(HuggingFaceAdapter.generate_chat)
+        vlm_sig = inspect.signature(HuggingFaceVLMAdapter.generate_chat)
+
+        proto_params = set(proto_sig.parameters.keys()) - {"self"}
+        hf_params = set(hf_sig.parameters.keys()) - {"self"}
+        vlm_params = set(vlm_sig.parameters.keys()) - {"self"}
+
+        assert hf_params == proto_params, f"HF params {hf_params} != protocol {proto_params}"
+        assert vlm_params == proto_params, f"VLM params {vlm_params} != protocol {proto_params}"
+
+    def test_generate_chat_return_annotation_includes_async_iterator(self) -> None:
+        """Return annotation should include AsyncIterator to match protocol."""
+        import inspect
+
+        hf_sig = inspect.signature(HuggingFaceAdapter.generate_chat)
+        vlm_sig = inspect.signature(HuggingFaceVLMAdapter.generate_chat)
+
+        hf_return = str(hf_sig.return_annotation)
+        vlm_return = str(vlm_sig.return_annotation)
+
+        assert "AsyncIterator" in hf_return, f"HF return {hf_return} missing AsyncIterator"
+        assert "AsyncIterator" in vlm_return, f"VLM return {vlm_return} missing AsyncIterator"

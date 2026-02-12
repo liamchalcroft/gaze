@@ -40,8 +40,12 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         Dictionary of evaluation results
     """
     # Load NOVA dataset
+    gt_dir = config.ground_truth_dir or config.data_dir
     logger.info(f"Loading NOVA dataset from {config.data_dir}")
-    dataset = NovaDataset(data_dir=str(config.data_dir))
+    dataset = NovaDataset(
+        data_dir=str(config.data_dir),
+        ground_truth_dir=str(gt_dir),
+    )
 
     # Create NOVA processor using radiant_harness
     processor = NOVAAgenticProcessor(
@@ -51,6 +55,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         max_turns=config.max_turns,
         reasoning_enabled=config.reasoning_enabled,
         reasoning_effort=config.reasoning_effort,
+        mode=config.mode,
     )
 
     logger.info(f"Running NOVA evaluation with model: {config.model_name}")
@@ -61,80 +66,90 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         config.max_turns,
     )
 
-    # Process samples
+    # Process samples concurrently using batch_size as concurrency limit
+    import tempfile
+
+    semaphore = asyncio.Semaphore(config.batch_size)
     results: list[AgenticResult] = []
     ground_truth: list[dict[str, Any]] = []
+
+    # Pre-validate and collect work items
+    work_items: list[tuple[int, dict[str, Any]]] = []
     for i, sample in enumerate(dataset):
         if config.skip_existing:
             result_file = config.output_dir / f"sample_{i}.json"
             if result_file.exists():
                 logger.debug(f"Skipping existing result: {result_file}")
                 continue
-
-        logger.info(f"Processing sample {i + 1}/{len(dataset)}")
-
         if "ground_truth" not in sample:
             raise KeyError(f"Sample {i} missing ground truth data")
-
-        # Get image and metadata from dataset
         image = sample["image"]
         if not isinstance(image, Image.Image):
             raise TypeError(f"Sample {i} image must be a PIL Image, got {type(image).__name__}")
-        metadata = dict(sample.get("metadata", {}))
-        metadata.setdefault("clinical_history", metadata.get("clinical_history", ""))
-        metadata.setdefault("modality", metadata.get("modality", "MRI"))
-        metadata.setdefault("image_id", metadata.get("image_id", f"sample_{i}"))
+        work_items.append((i, sample))
 
-        # Save lossless copy temporarily for processing (avoid JPEG artifacts)
-        # NamedTemporaryFile creates files with mode 0600 by default on Unix
-        import tempfile
+    async def _process_sample(
+        idx: int, sample: dict[str, Any]
+    ) -> tuple[int, AgenticResult, dict[str, Any]]:
+        async with semaphore:
+            logger.info(f"Processing sample {idx + 1}/{len(dataset)}")
+            image = sample["image"]
+            metadata = dict(sample.get("metadata", {}))
+            metadata.setdefault("clinical_history", "")
+            metadata.setdefault("modality", "MRI")
+            metadata.setdefault("image_id", f"sample_{idx}")
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".png",
-            prefix="nova_temp_",
-            dir=config.output_dir,
-            delete=False,
-        ) as tmp:
-            image.save(tmp.name, format="PNG", optimize=True)
-            temp_image_path = Path(tmp.name)
+            with tempfile.NamedTemporaryFile(
+                suffix=".png",
+                prefix="nova_temp_",
+                dir=config.output_dir,
+                delete=False,
+            ) as tmp:
+                image.save(tmp.name, format="PNG", optimize=True)
+                temp_image_path = Path(tmp.name)
 
-        try:
-            # Run analysis using radiant_harness
-            result = await processor.analyze(
-                images=temp_image_path,
-                metadata=metadata,
-            )
-            results.append(result)
-            ground_truth.append(sample["ground_truth"])
-
-            # Save individual result
-            result_file = config.output_dir / f"sample_{i}.json"
-            with result_file.open("w") as f:
-                json.dump(
-                    {
-                        "sample_id": i,
-                        "response": result.final_response,
-                        "num_turns": result.num_turns,
-                        "tools_used": list(result.get_tools_used()),
-                        "confidence": result.confidence,
-                        "total_tokens": result.total_tokens,
-                    },
-                    f,
-                    indent=2,
+            try:
+                result = await processor.analyze(
+                    images=temp_image_path,
+                    metadata=metadata,
                 )
 
-            logger.info(
-                f"Sample {i}: {result.num_turns} turns, "
-                f"{result.tool_call_count} tool calls, "
-                f"confidence: {result.confidence:.2f}"
-            )
+                result_file = config.output_dir / f"sample_{idx}.json"
+                with result_file.open("w") as f:
+                    json.dump(
+                        {
+                            "sample_id": idx,
+                            "response": result.final_response,
+                            "num_turns": result.num_turns,
+                            "tools_used": list(result.get_tools_used()),
+                            "confidence": result.confidence,
+                            "total_tokens": result.total_tokens,
+                        },
+                        f,
+                        indent=2,
+                    )
 
-        finally:
-            # Clean up temp image with better error handling
-            try:
-                temp_image_path.unlink(missing_ok=True)
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary file {temp_image_path}: {e}")
+                logger.info(
+                    f"Sample {idx}: {result.num_turns} turns, "
+                    f"{result.tool_call_count} tool calls, "
+                    f"confidence: {result.confidence:.2f}"
+                )
+
+                return idx, result, sample["ground_truth"]
+            finally:
+                try:
+                    temp_image_path.unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary file {temp_image_path}: {e}")
+
+    if work_items:
+        completed = await asyncio.gather(
+            *(_process_sample(idx, sample) for idx, sample in work_items)
+        )
+        # Sort by original index to preserve deterministic ordering
+        completed_sorted = sorted(completed, key=lambda x: x[0])
+        results = [r for _, r, _ in completed_sorted]
+        ground_truth = [gt for _, _, gt in completed_sorted]
 
     # Compute evaluation metrics
     logger.info("Computing evaluation metrics...")
@@ -200,9 +215,7 @@ async def compute_metrics(
                 )
             description = caption.get("description")
             if description is None:
-                raise KeyError(
-                    f"Prediction {i} 'caption' missing required 'description' field"
-                )
+                raise KeyError(f"Prediction {i} 'caption' missing required 'description' field")
             pred_captions.append(description)
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
         metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
@@ -302,10 +315,23 @@ def parse_args() -> argparse.Namespace:
         help="Path to NOVA data directory",
     )
     parser.add_argument(
+        "--ground-truth-dir",
+        type=Path,
+        default=None,
+        help="Path to ground truth CSV directory (defaults to --data-dir)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("./runs"),
         help="Output directory for results",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["agentic", "single_turn"],
+        default="agentic",
+        help="Prompt mode: agentic (multi-turn) or single_turn",
     )
     parser.add_argument(
         "--use-tools",
@@ -365,11 +391,13 @@ def main() -> None:
         model_name=args.model,
         task=TaskType(args.task),
         data_dir=args.data_dir,
+        ground_truth_dir=args.ground_truth_dir,
         output_dir=args.output_dir,
         use_tools=args.use_tools,
         use_web_search=args.use_web_search,
         max_turns=args.max_turns,
         reasoning_enabled=args.reasoning,
+        mode=args.mode,
         batch_size=args.batch_size,
         skip_existing=not args.no_skip_existing,
     )

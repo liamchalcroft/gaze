@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from beartype import beartype
 
@@ -38,10 +39,12 @@ class NOVAConfig:
     use_web_search: bool = False
     reasoning_enabled: bool = False
     reasoning_effort: str = "high"
+    mode: Literal["agentic", "single_turn"] = "agentic"
 
     # NOVA-specific settings
     task: TaskType = TaskType.ALL
     data_dir: Path = field(default_factory=lambda: Path("./data/nova"))
+    ground_truth_dir: Path | None = None  # Defaults to data_dir if not set
     output_dir: Path = field(default_factory=lambda: Path("./runs"))
     batch_size: int = 4
     skip_existing: bool = True

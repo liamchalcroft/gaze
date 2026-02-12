@@ -43,13 +43,44 @@ class EncodedImage:
 
 
 @beartype
-def encode_image(image: Image.Image) -> EncodedImage:
-    """Encode a PIL Image to base64 PNG string."""
+def encode_image(
+    image: Image.Image,
+    *,
+    format: str = "JPEG",
+    quality: int | None = None,
+) -> EncodedImage:
+    """Encode a PIL Image to a base64 string.
+
+    Args:
+        image: PIL Image to encode.
+        format: Image format — ``"JPEG"`` (default, much smaller) or ``"PNG"``.
+        quality: JPEG quality 1-100. Ignored for PNG. When *None*, uses
+            ``ImageProcessingConfig.default_jpeg_quality`` (default 85).
+
+    Returns:
+        EncodedImage with base64 data and correct MIME type.
+    """
+    from radiant_harness.config import get_config
+
+    fmt = format.upper()
+    if fmt not in {"JPEG", "PNG"}:
+        raise ValueError(f"Unsupported image format: {format!r}. Use 'JPEG' or 'PNG'.")
+
+    # JPEG cannot encode alpha — convert RGBA/LA/PA to RGB
+    if fmt == "JPEG" and image.mode in {"RGBA", "LA", "PA", "P"}:
+        image = image.convert("RGB")
+
     buffer = BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
-    image_bytes = buffer.getvalue()
-    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-    return EncodedImage(data=image_base64, mime_type="image/png")
+    if fmt == "PNG":
+        image.save(buffer, format="PNG")
+        mime = "image/png"
+    else:
+        q = quality if quality is not None else get_config().image.default_jpeg_quality
+        image.save(buffer, format="JPEG", quality=q)
+        mime = "image/jpeg"
+
+    image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return EncodedImage(data=image_base64, mime_type=mime)
 
 
 @beartype
@@ -326,7 +357,13 @@ class ToolRegistry:
 
     @beartype
     async def execute(self, tool_name: str, **kwargs: Any) -> ToolResult:
-        """Execute a tool by name with given arguments."""
+        """Execute a tool by name with given arguments.
+
+        Raises:
+            UnknownToolError: If ``tool_name`` is not registered.
+            ToolExecutionError: If the tool raises a ``ToolExecutionError`` or
+                if the call fails due to invalid argument types (``TypeError``).
+        """
         tool = self._documenter.get_tool(tool_name)
         if tool is None:
             raise UnknownToolError(tool_name, self._documenter.get_tool_names())
@@ -338,7 +375,12 @@ class ToolRegistry:
                     f"Tool '{tool_name}' requires an image, but no image path was provided"
                 )
 
-        result = await tool.execute(self, **kwargs)
+        try:
+            result = await tool.execute(self, **kwargs)
+        except TypeError as e:
+            raise ToolExecutionError(
+                f"Tool '{tool_name}' received invalid arguments: {e}"
+            ) from e
 
         self._tool_history.append(result)
         return result

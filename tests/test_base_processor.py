@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
 
 from radiant_harness import AgenticProcessorBase
+from radiant_harness.base import ImageInput
 
 
 @pytest.fixture
@@ -101,14 +103,54 @@ class TestAgenticProcessorBase:
 class _TestProcessor(AgenticProcessorBase):
     """Test implementation of AgenticProcessorBase."""
 
-    def get_system_prompt(self, images, metadata):  # noqa: ARG002
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
         return "Test system prompt"
 
-    def get_user_message(self, images, metadata):  # noqa: ARG002
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
         return "Test user message"
 
-    def get_response_schema(self):
+    def get_response_schema(self) -> dict[str, Any] | None:
         return {"type": "object", "properties": {"continue": {"type": "boolean"}}}
 
-    def validate_response(self, response):
+    def validate_response(self, response: dict[str, Any]) -> bool:
         return "continue" in response and isinstance(response["continue"], bool)
+
+
+class TestImageInputLoad:
+    """Test ImageInput.load() behavior."""
+
+    def test_load_rejects_oversized_image(self, tmp_path: Path) -> None:
+        """load() raises ValueError when image exceeds max_image_dimension."""
+        from radiant_harness.config import HarnessConfig
+        from radiant_harness.config import ImageProcessingConfig
+        from radiant_harness.config import get_config
+        from radiant_harness.config import set_config
+
+        original = get_config()
+        try:
+            set_config(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50)))
+
+            image_path = tmp_path / "large.png"
+            img = Image.new("RGB", (100, 100), color="red")
+            img.save(image_path)
+
+            image_input = ImageInput(path=image_path)
+            with pytest.raises(ValueError, match="exceed maximum"):
+                image_input.load()
+        finally:
+            set_config(original)
+
+    def test_load_accepts_image_within_limits(self, tmp_path: Path) -> None:
+        """load() succeeds for images within max_image_dimension."""
+        image_path = tmp_path / "ok.png"
+        img = Image.new("RGB", (100, 100), color="green")
+        img.save(image_path)
+
+        image_input = ImageInput(path=image_path)
+        image_input.load()
+
+        assert image_input.width == 100
+        assert image_input.height == 100
+        assert image_input.encoded is not None

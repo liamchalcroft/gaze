@@ -9,10 +9,12 @@ Note: Requires torch and transformers packages to be installed.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
 import re
+from collections.abc import AsyncIterator
 from io import BytesIO
 from typing import TYPE_CHECKING
 from typing import Any
@@ -152,6 +154,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         load_in_8bit: bool = False,
         load_in_4bit: bool = False,
         use_flash_attention: bool = False,
+        max_input_length: int | None = None,
     ) -> None:
         """Initialize HuggingFace adapter.
 
@@ -163,6 +166,7 @@ class HuggingFaceAdapter(AdapterProtocol):
             load_in_8bit: Enable 8-bit quantization (requires bitsandbytes)
             load_in_4bit: Enable 4-bit quantization (requires bitsandbytes)
             use_flash_attention: Enable Flash Attention 2 (requires flash-attn)
+            max_input_length: Maximum input token length (None = use model's max)
         """
         self.model_name = model_name
         self._device_str = device
@@ -171,6 +175,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         self._load_in_8bit = load_in_8bit
         self._load_in_4bit = load_in_4bit
         self._use_flash_attention = use_flash_attention
+        self._max_input_length = max_input_length
 
         # Lazy-loaded components
         self._model: PreTrainedModel | None = None
@@ -277,7 +282,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
-    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
         """Generate a chat completion using the HuggingFace model.
 
         Args:
@@ -286,9 +291,11 @@ class HuggingFaceAdapter(AdapterProtocol):
             temperature: Sampling temperature
             tools: Tool definitions (handled via prompt engineering)
             response_format: Structured response format (not supported)
+            stream: Not supported; raises ModelError if True
 
         Returns:
-            Tuple of (content, tool_calls, generation_log)
+            Tuple of (content, tool_calls, generation_log).
+            Streaming is not supported and will raise ModelError.
         """
         if stream:
             raise ModelError(
@@ -309,7 +316,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         prompt = self._format_messages(messages)
 
         # Tokenize with memory optimization
-        max_input_length = min(self.tokenizer.model_max_length, 2048)  # Reasonable limit
+        max_input_length = self._max_input_length or self.tokenizer.model_max_length
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
@@ -319,35 +326,30 @@ class HuggingFaceAdapter(AdapterProtocol):
         inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
         input_length = inputs["input_ids"].shape[1]
 
-        # Generate with memory optimizations
-        try:
+        # Generate with memory optimizations — offload to thread to avoid
+        # blocking the event loop during CPU/GPU-bound inference.
+        gen_kwargs = {
+            **inputs,
+            "max_new_tokens": max_tokens,
+            "temperature": max(temperature, 0.01),  # Avoid division by zero
+            "do_sample": temperature > 0,
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "use_cache": True,
+        }
+
+        def _run_generate():
             with torch.inference_mode():
-                # Use autocast if available and enabled
                 if hasattr(torch.cuda, "amp") and torch.cuda.is_available():
                     with torch.cuda.amp.autocast(enabled=True):
-                        outputs = self.model.generate(
-                            **inputs,
-                            max_new_tokens=max_tokens,
-                            temperature=max(temperature, 0.01),  # Avoid division by zero
-                            do_sample=temperature > 0,
-                            pad_token_id=self.tokenizer.pad_token_id,
-                            eos_token_id=self.tokenizer.eos_token_id,
-                            use_cache=True,  # Improve memory efficiency
-                        )
-                else:
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=max_tokens,
-                        temperature=max(temperature, 0.01),  # Avoid division by zero
-                        do_sample=temperature > 0,
-                        pad_token_id=self.tokenizer.pad_token_id,
-                        eos_token_id=self.tokenizer.eos_token_id,
-                        use_cache=True,  # Improve memory efficiency
-                    )
+                        return self.model.generate(**gen_kwargs)
+                return self.model.generate(**gen_kwargs)
+
+        try:
+            outputs = await asyncio.to_thread(_run_generate)
         except torch.cuda.OutOfMemoryError as e:
             raise ModelError(f"CUDA out of memory: {e}", model_name=self.model_name) from e
         except RuntimeError as e:
-            # HuggingFace generation errors are typically RuntimeError
             raise ModelError(
                 f"HuggingFace generation failed: {e}", model_name=self.model_name
             ) from e
@@ -361,11 +363,19 @@ class HuggingFaceAdapter(AdapterProtocol):
         if tools:
             tool_calls, content = self._parse_tool_calls(content)
 
+        # Determine finish reason: "stop" if EOS was generated, "length" if truncated
+        hit_eos = (
+            len(response_ids) > 0
+            and self.tokenizer.eos_token_id is not None
+            and int(response_ids[-1]) == self.tokenizer.eos_token_id
+        )
+        finish_reason = "stop" if hit_eos else "length"
+
         # Build generation log
         gen_log = GenerationLog(
             prompt_tokens=input_length,
             completion_tokens=len(response_ids),
-            finish_reason="stop",
+            finish_reason=finish_reason,
         )
 
         logger.debug(f"HuggingFace completion finished, tokens={gen_log.tokens}")
@@ -466,6 +476,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         load_in_8bit: bool = False,
         load_in_4bit: bool = False,
         use_flash_attention: bool = False,
+        max_input_length: int | None = None,
     ) -> None:
         """Initialize HuggingFace VLM adapter."""
         super().__init__(
@@ -476,6 +487,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             load_in_8bit=load_in_8bit,
             load_in_4bit=load_in_4bit,
             use_flash_attention=use_flash_attention,
+            max_input_length=max_input_length,
         )
         self._processor: Any = None
 
@@ -492,8 +504,11 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
 
     @property
     def tokenizer(self) -> PreTrainedTokenizer:
-        """Get tokenizer from processor."""
-        return self.processor.tokenizer
+        """Get tokenizer from processor, ensuring pad_token is set."""
+        tok = self.processor.tokenizer
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+        return tok
 
     @property
     def model(self) -> PreTrainedModel:
@@ -554,8 +569,11 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
-    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
-        """Generate a chat completion with image support."""
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
+        """Generate a chat completion with image support.
+
+        Streaming is not supported and will raise ModelError.
+        """
         if stream:
             raise ModelError(
                 "Streaming is not supported for HuggingFace adapters",
@@ -593,23 +611,33 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             )
 
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        input_length = inputs.get("input_ids", inputs.get("inputs_embeds")).shape[1]
+        input_ids = inputs.get("input_ids", inputs.get("inputs_embeds"))
+        if input_ids is None:
+            raise ModelError(
+                "Processor returned neither input_ids nor inputs_embeds",
+                model_name=self.model_name,
+            )
+        input_length = input_ids.shape[1]
 
-        # Generate
-        try:
+        # Generate — offload to thread to avoid blocking the event loop
+        gen_kwargs = {
+            **inputs,
+            "max_new_tokens": max_tokens,
+            "temperature": max(temperature, 0.01),
+            "do_sample": temperature > 0,
+            "pad_token_id": self.processor.tokenizer.pad_token_id,
+            "eos_token_id": self.processor.tokenizer.eos_token_id,
+        }
+
+        def _run_vlm_generate():
             with torch.inference_mode():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens,
-                    temperature=max(temperature, 0.01),
-                    do_sample=temperature > 0,
-                    pad_token_id=self.processor.tokenizer.pad_token_id,
-                    eos_token_id=self.processor.tokenizer.eos_token_id,
-                )
+                return self.model.generate(**gen_kwargs)
+
+        try:
+            outputs = await asyncio.to_thread(_run_vlm_generate)
         except torch.cuda.OutOfMemoryError as e:
             raise ModelError(f"CUDA out of memory in VLM: {e}", model_name=self.model_name) from e
         except RuntimeError as e:
-            # HuggingFace generation errors are typically RuntimeError
             raise ModelError(
                 f"HuggingFace VLM generation failed: {e}", model_name=self.model_name
             ) from e
@@ -623,10 +651,15 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         if tools:
             tool_calls, content = self._parse_tool_calls(content)
 
+        # Determine finish reason
+        eos_id = self.processor.tokenizer.eos_token_id
+        hit_eos = len(response_ids) > 0 and eos_id is not None and int(response_ids[-1]) == eos_id
+        finish_reason = "stop" if hit_eos else "length"
+
         gen_log = GenerationLog(
             prompt_tokens=input_length,
             completion_tokens=len(response_ids),
-            finish_reason="stop",
+            finish_reason=finish_reason,
         )
 
         logger.debug(

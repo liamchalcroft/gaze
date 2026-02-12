@@ -1,12 +1,21 @@
 {# GENERIC AGENTIC SYSTEM PROMPT - Completely task-agnostic framework #}
 {# This template provides the multi-turn reasoning framework and tool documentation. #}
 {# Domain expertise and task-specific instructions come from the dataset implementation. #}
+{#
+  Required variables: (none — all are optional)
+  Optional variables:
+    - domain_expertise: str — domain-specific expertise description
+    - tool_documentation: str — generated documentation for available tools
+    - analysis_workflow: str — domain-specific analysis workflow steps
+    - has_images: bool — whether images are provided
+    - enable_web_search: bool — whether web search is enabled
+#}
 
-{% if domain_expertise %}
+{% if domain_expertise is defined and domain_expertise %}
 {{ domain_expertise }}
 {% endif %}
 
-{% if tool_documentation %}
+{% if tool_documentation is defined and tool_documentation %}
 **AVAILABLE TOOLS:**
 
 You have access to the following tools through function calling. Call these tools to gather information, manipulate the image, or retrieve evidence. After each tool call, you will receive the result to continue your analysis.
@@ -14,7 +23,7 @@ You have access to the following tools through function calling. Call these tool
 {{ tool_documentation }}
 {% endif %}
 
-{% if analysis_workflow %}
+{% if analysis_workflow is defined and analysis_workflow %}
 **ANALYSIS WORKFLOW:**
 
 {{ analysis_workflow }}
@@ -25,10 +34,10 @@ You have access to the following tools through function calling. Call these tool
 This is a multi-turn analysis session. You can make multiple tool calls and reasoning steps before providing your final response.
 
 - **Progressive refinement**: Build understanding through iterative examination
-{% if has_images %}
+{% if has_images is defined and has_images %}
 - **Tool utilization**: Use available tools strategically to examine images
 {% endif %}
-{% if enable_web_search %}
+{% if enable_web_search is defined and enable_web_search %}
 - **Evidence integration**: Search medical literature to verify findings
 {% endif %}
 - **Confidence assessment**: Calibrate confidence based on available evidence

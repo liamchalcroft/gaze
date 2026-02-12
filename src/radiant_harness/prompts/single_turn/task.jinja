@@ -1,14 +1,23 @@
 {# GENERIC SINGLE-TURN TASK PROMPT - Template for single-response analysis #}
 {# Supports text-only, single image, and multi-image input modes. #}
 {# Specific tasks are defined by the dataset implementation. #}
+{#
+  Required variables: (none — all are optional)
+  Optional variables:
+    - task_instructions: str — the specific task to perform
+    - images: list[ImageInput] — image objects with .path, .width, .height, .label
+    - image_info: str — fallback text description of images
+    - context: str — additional context (e.g., clinical history)
+    - output_format: str — description of expected output format
+#}
 
-{% if task_instructions %}
+{% if task_instructions is defined and task_instructions %}
 **TASK:**
 
 {{ task_instructions }}
 {% endif %}
 
-{% if images and images|length > 0 %}
+{% if images is defined and images|length > 0 %}
 **INPUT IMAGES:**
 
 {% if images|length == 1 %}
@@ -18,19 +27,19 @@
 - {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.path.name }} ({{ img.width }}x{{ img.height }})
 {% endfor %}
 {% endif %}
-{% elif image_info %}
+{% elif image_info is defined and image_info %}
 **IMAGE INFORMATION:**
 
 {{ image_info }}
 {% endif %}
 
-{% if context %}
-**CONTEXT:**
-
+{% if context is defined and context %}
+<context>
 {{ context }}
+</context>
 {% endif %}
 
-{% if output_format %}
+{% if output_format is defined and output_format %}
 **OUTPUT FORMAT:**
 
 {{ output_format }}

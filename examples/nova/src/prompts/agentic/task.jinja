@@ -1,8 +1,20 @@
 {# NOVA Agentic Task Prompt - Brain MRI Analysis #}
+{#
+  Required variables:
+    - img_path: str — path to the image file
+    - width: int — image width in pixels
+    - height: int — image height in pixels
+  Optional variables:
+    - clinical_history: str — patient clinical history
+    - enable_visual_tools: bool — whether visual tools are enabled
+    - enable_web_search: bool — whether web search is enabled
+#}
 Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confirmed pathology.
 
-{% if clinical_history %}
-**Clinical History:** {{ clinical_history }}
+{% if clinical_history is defined and clinical_history %}
+<clinical_history>
+{{ clinical_history }}
+</clinical_history>
 {% endif %}
 
 **Image:** {{ img_path }} ({{ width }}x{{ height }} pixels)
@@ -19,7 +31,7 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
    - Include 10-20px margin around lesion boundaries
    - Coordinates must be within: x=[0, {{ width - 1 }}], y=[0, {{ height - 1 }}]
 
-{% if enable_visual_tools %}
+{% if enable_visual_tools is defined and enable_visual_tools %}
 **Visual Tools Available:**
 - `zoom(factor)`: 2.0-3.0x for boundary refinement
 - `crop(box)`: Isolate regions with [x1, y1, x2, y2] normalized 0-1
@@ -31,7 +43,7 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
 Use multiple tools per finding for precise localization.
 {% endif %}
 
-{% if enable_web_search %}
+{% if enable_web_search is defined and enable_web_search %}
 **Research Tools Available:**
 - `search_web(query, search_type)`: PubMed literature search
 - `search_images(query, modality, body_part)`: NIH Open-i reference images

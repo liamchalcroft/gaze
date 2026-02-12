@@ -2,6 +2,10 @@
 
 Provides Jinja2 template loading and rendering for system and task prompts.
 Dataset-specific implementations should provide their own prompts directory.
+
+Templates use **strict undefined variable behavior**: any reference to a variable
+not present in the context dict will raise ``TemplateError`` immediately, preventing
+silent generation of incomplete prompts.
 """
 
 from __future__ import annotations
@@ -12,9 +16,14 @@ from typing import Any
 
 from beartype import beartype
 from minijinja import Environment
+from minijinja import TemplateError as MinijinjaTemplateError
 from typing_extensions import assert_never
 
 from radiant_harness.exceptions import TemplateError
+
+# Module-level environment with strict undefined behavior.
+# Re-used across all render calls to avoid per-call construction overhead.
+_env = Environment(undefined_behavior="strict")
 
 
 class AnalysisMode(str, Enum):
@@ -34,6 +43,9 @@ def load_template(
 ) -> str:
     """Load and render a Jinja template with the given context.
 
+    Uses strict undefined variable behavior: any variable referenced in the
+    template but missing from *context* will raise ``TemplateError``.
+
     Args:
         template_path: Path to the Jinja template file
         context: Dictionary of variables for template rendering
@@ -42,7 +54,8 @@ def load_template(
         Rendered template string
 
     Raises:
-        TemplateError: If template file doesn't exist or rendering fails
+        TemplateError: If template file doesn't exist, a required variable
+            is missing, or rendering fails for any other reason.
 
     Example:
         from pathlib import Path
@@ -70,10 +83,8 @@ def load_template(
         ) from e
 
     try:
-        env = Environment()
-        return env.render_str(template_content, **context)
-    except Exception as e:
-        # minijinja raises various exceptions for syntax/render errors
+        return _env.render_str(template_content, **context)
+    except (ValueError, TypeError, RuntimeError, MinijinjaTemplateError) as e:
         raise TemplateError(
             f"Failed to render template: {e}",
             template_path=template_path,
@@ -92,7 +103,7 @@ def load_prompt(
 
     Args:
         prompts_dir: Base directory containing mode subdirectories
-        template_name: Name of the template file (e.g., 'all_tasks.jinja')
+        template_name: Name of the template file (e.g., 'task.jinja')
         mode: Analysis mode ('agentic' or 'single_turn')
         context: Dictionary of variables for template rendering
 
@@ -100,8 +111,8 @@ def load_prompt(
         Rendered prompt string
 
     Raises:
-        FileNotFoundError: If template file doesn't exist
         ValueError: If mode directory doesn't exist
+        TemplateError: If template file doesn't exist or rendering fails
     """
     mode_dir = prompts_dir / mode
     if not mode_dir.exists():
@@ -170,7 +181,6 @@ def combine_prompts(
     Raises:
         ValueError: If mode is not a valid AnalysisMode
     """
-    # Convert string to enum
     try:
         mode_enum = AnalysisMode(mode)
     except ValueError:
@@ -192,7 +202,6 @@ def combine_prompts(
             f"Begin your agentic analysis process."
         )
 
-    # Exhaustiveness check - this will cause a type error if a new mode is added
     assert_never(mode_enum)
 
 
@@ -227,7 +236,6 @@ def create_prompt(
         from radiant_harness.prompts import create_prompt
         from radiant_harness.tools import ToolRegistry
 
-        # Create prompt with dynamic tool documentation
         registry = ToolRegistry(tools=my_tools)
         prompt = create_prompt(
             prompts_dir=Path("my_prompts"),

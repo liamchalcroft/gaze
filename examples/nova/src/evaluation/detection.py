@@ -13,9 +13,9 @@ from radiant_harness.utils.iou import compute_iou
 # NOVA benchmark IoU thresholds
 IOU_THRESHOLD_LOOSE = 0.3  # Permissive threshold for partial matches
 IOU_THRESHOLD_STANDARD = 0.5  # Standard COCO-style threshold
-IOU_THRESHOLD_RANGE_START = 50  # Start of mAP@[50:95] range (as percentage)
-IOU_THRESHOLD_RANGE_END = 100  # End of mAP@[50:95] range (as percentage)
-IOU_THRESHOLD_RANGE_STEP = 5  # Step size for mAP@[50:95] range
+
+# mAP@[50:95] range as floats — produces [0.5, 0.55, ..., 0.95] (10 thresholds)
+_MAP_RANGE_IOU_THRESHOLDS = [0.5 + 0.05 * i for i in range(10)]
 
 
 @beartype
@@ -207,13 +207,7 @@ def evaluate_detection(
     map50 = float(res50["map"])
 
     # mAP@[50:95] per NOVA protocol
-    ious = [
-        th / 100
-        for th in range(
-            IOU_THRESHOLD_RANGE_START, IOU_THRESHOLD_RANGE_END, IOU_THRESHOLD_RANGE_STEP
-        )
-    ]
-    m5095 = MeanAveragePrecision(iou_thresholds=ious)
+    m5095 = MeanAveragePrecision(iou_thresholds=_MAP_RANGE_IOU_THRESHOLDS)
     m5095.update(preds_tensors, refs_tensors)
     res5095 = m5095.compute()
     map50_95 = float(res5095["map"])

@@ -129,3 +129,23 @@ async def test_search_images_tool_error_propagates(monkeypatch: pytest.MonkeyPat
     assert result.metadata["query"] == "meningioma"
     assert result.metadata["modality"] == "MRI"
     assert result.metadata["body_part"] == "brain"
+
+
+def test_search_web_schema_enum_matches_backend() -> None:
+    """Schema search_type enum must include all types accepted by WebSearchManager."""
+    from radiant_harness.retrieval.web_search import WebSearchManager
+    from radiant_harness.tools.registry import ToolDocumenter
+
+    tools = create_search_tools()
+    doc = ToolDocumenter(tools)
+    schemas = doc.get_tool_schemas()
+
+    search_web_schema = next(s for s in schemas if s["function"]["name"] == "search_web")
+    schema_enum = set(
+        search_web_schema["function"]["parameters"]["properties"]["search_type"]["enum"]
+    )
+    backend_types = WebSearchManager.ALLOWED_SEARCH_TYPES
+
+    assert schema_enum == backend_types, (
+        f"Schema enum {sorted(schema_enum)} != backend types {sorted(backend_types)}"
+    )

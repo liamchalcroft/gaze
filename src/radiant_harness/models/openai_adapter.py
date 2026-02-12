@@ -8,6 +8,7 @@ from typing import Any
 
 from beartype import beartype
 from loguru import logger
+from openai import APIStatusError
 from openai import APITimeoutError
 from openai import AsyncOpenAI
 from openai import OpenAIError
@@ -81,7 +82,7 @@ class OpenAIAdapter(AdapterProtocol):
             kwargs: dict[str, Any] = {
                 "api_key": api_key,
                 "timeout": 60.0,
-                "max_retries": 3,
+                "max_retries": 0,
             }
             if base_url is not None:
                 kwargs["base_url"] = base_url
@@ -92,7 +93,7 @@ class OpenAIAdapter(AdapterProtocol):
     @beartype
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
+        wait=wait_exponential(multiplier=1, min=1, max=60),
         retry=retry_if_exception_type((APITimeoutError, RateLimitError)),
         before_sleep=lambda retry_state: logger.warning(
             f"Retry {retry_state.attempt_number}/5 for OpenAI API: {retry_state.outcome.exception()}"
@@ -141,17 +142,27 @@ class OpenAIAdapter(AdapterProtocol):
         # Handle streaming
         if stream:
             kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
             return self._stream_completion(**kwargs)
 
         try:
             completion = await self._create_completion_with_retry(**kwargs)
         except OpenAIError as e:  # pragma: no cover - dependency error surface
-            # If retries failed, raise APIError
+            status_code = e.status_code if isinstance(e, APIStatusError) else None
+            response_body = e.message if isinstance(e, APIStatusError) else None
             if isinstance(e, APITimeoutError | RateLimitError):
                 raise APIError(
-                    f"OpenAI API error after retries: {e}", model_name=self.model_name
+                    f"OpenAI API error after retries: {e}",
+                    model_name=self.model_name,
+                    status_code=status_code,
+                    response_body=response_body,
                 ) from e
-            raise APIError(f"OpenAI request failed: {e}", model_name=self.model_name) from e
+            raise APIError(
+                f"OpenAI request failed: {e}",
+                model_name=self.model_name,
+                status_code=status_code,
+                response_body=response_body,
+            ) from e
 
         if not completion.choices:
             raise ModelError("OpenAI returned no choices", model_name=self.model_name)
@@ -186,15 +197,39 @@ class OpenAIAdapter(AdapterProtocol):
 
     @beartype
     async def _stream_completion(self, **kwargs) -> AsyncIterator[str]:
-        """Stream completion with retry logic."""
+        """Stream completion with retry logic.
+
+        When stream_options={"include_usage": True} is set (the default for
+        this adapter), the final chunk carries a ``usage`` field with token
+        counts.  We log this as a DEBUG message so callers who need telemetry
+        can observe it.  The protocol ``AsyncIterator[str]`` return type does
+        not allow returning a ``GenerationLog`` directly.
+        """
         try:
             stream = await self._create_completion_with_retry(**kwargs)
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+                # The final chunk (with include_usage) has usage but empty choices
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    usage = chunk.usage
+                    logger.debug(
+                        f"OpenAI stream usage: prompt_tokens={usage.prompt_tokens}, "
+                        f"completion_tokens={usage.completion_tokens}"
+                    )
         except OpenAIError as e:
+            status_code = e.status_code if isinstance(e, APIStatusError) else None
+            response_body = e.message if isinstance(e, APIStatusError) else None
             if isinstance(e, APITimeoutError | RateLimitError):
                 raise APIError(
-                    f"OpenAI API streaming error after retries: {e}", model_name=self.model_name
+                    f"OpenAI API streaming error after retries: {e}",
+                    model_name=self.model_name,
+                    status_code=status_code,
+                    response_body=response_body,
                 ) from e
-            raise APIError(f"OpenAI streaming failed: {e}", model_name=self.model_name) from e
+            raise APIError(
+                f"OpenAI streaming failed: {e}",
+                model_name=self.model_name,
+                status_code=status_code,
+                response_body=response_body,
+            ) from e

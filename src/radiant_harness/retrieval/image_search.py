@@ -27,6 +27,7 @@ from radiant_harness.cache import TTLCache
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
+from radiant_harness.exceptions import HarnessError
 
 _MODALITY_KEYWORDS = {
     "mri": "MRI",
@@ -101,7 +102,7 @@ class ImageSearchResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class ImageSearchError(Exception):
+class ImageSearchError(HarnessError):
     """Raised when an image search operation fails."""
 
     def __init__(self, engine_name: str, message: str, original_error: Exception | None = None):
@@ -110,7 +111,7 @@ class ImageSearchError(Exception):
         super().__init__(f"{engine_name}: {message}")
 
 
-class ImageDownloadError(Exception):
+class ImageDownloadError(HarnessError):
     """Raised when an image download operation fails."""
 
     def __init__(self, url: str, message: str, original_error: Exception | None = None):
@@ -492,7 +493,8 @@ class MedicalImageSearchManager:
         if body_part:
             enhanced_query += f" {body_part}"
 
-        cache_key = f"img:{enhanced_query}|mod={modality}|part={body_part}"
+        query_hash = hashlib.sha256(enhanced_query.encode()).hexdigest()[:8]
+        cache_key = f"img:{query_hash}|mod={modality}|part={body_part}"
 
         # Check cache using TTLCache (handles expiration automatically)
         cached_results = self._cache.get(cache_key)

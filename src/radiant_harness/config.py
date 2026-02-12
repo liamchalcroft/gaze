@@ -7,8 +7,10 @@ All previously hardcoded values are now configurable via these dataclasses.
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
+from types import MappingProxyType
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,7 @@ class ImageProcessingConfig:
 
     Attributes:
         min_image_size: Minimum dimension for images and crops (pixels)
+        max_image_dimension: Maximum allowed width or height in pixels
         min_zoom_factor: Minimum allowed zoom factor
         max_zoom_factor: Maximum allowed zoom factor
         min_contrast_factor: Minimum allowed contrast factor
@@ -25,11 +28,36 @@ class ImageProcessingConfig:
     """
 
     min_image_size: int = 10
+    max_image_dimension: int = 16384
     min_zoom_factor: float = 0.5
     max_zoom_factor: float = 4.0
     min_contrast_factor: float = 0.5
     max_contrast_factor: float = 3.0
     default_jpeg_quality: int = 85
+
+    def __post_init__(self) -> None:
+        if self.min_image_size < 1:
+            raise ValueError(f"min_image_size must be >= 1, got {self.min_image_size}")
+        if self.max_image_dimension < self.min_image_size:
+            raise ValueError(
+                f"max_image_dimension ({self.max_image_dimension}) "
+                f"must be >= min_image_size ({self.min_image_size})"
+            )
+        if self.min_zoom_factor >= self.max_zoom_factor:
+            raise ValueError(
+                f"min_zoom_factor ({self.min_zoom_factor}) "
+                f"must be < max_zoom_factor ({self.max_zoom_factor})"
+            )
+        if self.min_contrast_factor >= self.max_contrast_factor:
+            raise ValueError(
+                f"min_contrast_factor ({self.min_contrast_factor}) "
+                f"must be < max_contrast_factor ({self.max_contrast_factor})"
+            )
+        if not 1 <= self.default_jpeg_quality <= 100:
+            raise ValueError(
+                f"default_jpeg_quality must be between 1 and 100, "
+                f"got {self.default_jpeg_quality}"
+            )
 
 
 @dataclass(frozen=True)
@@ -127,7 +155,7 @@ class RankingWeights:
     title_match_weight: float = 0.2
     content_match_weight: float = 0.05
     entity_match_weight: float = 0.1
-    content_type_boosts: dict[str, dict[str, float]] = field(
+    content_type_boosts: Mapping[str, Mapping[str, float]] = field(
         default_factory=lambda: {
             "diagnosis": {"case_report": 0.2, "article": 0.1},
             "guidelines": {"guidelines": 0.3, "review": 0.2},
@@ -135,6 +163,14 @@ class RankingWeights:
             "anatomy": {"review": 0.2, "article": 0.1},
         }
     )
+
+    def __post_init__(self) -> None:
+        # Deep-freeze the nested dict to enforce immutability
+        if not isinstance(self.content_type_boosts, MappingProxyType):
+            frozen = MappingProxyType(
+                {k: MappingProxyType(dict(v)) for k, v in self.content_type_boosts.items()}
+            )
+            object.__setattr__(self, "content_type_boosts", frozen)
 
 
 @dataclass(frozen=True)
@@ -152,6 +188,23 @@ class AgenticConfig:
     default_max_turns: int = 10
     default_max_tokens: int = 8192
     default_temperature: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_turns_limit < 1:
+            raise ValueError(f"max_turns_limit must be >= 1, got {self.max_turns_limit}")
+        if self.default_max_turns < 1:
+            raise ValueError(f"default_max_turns must be >= 1, got {self.default_max_turns}")
+        if self.default_max_turns > self.max_turns_limit:
+            raise ValueError(
+                f"default_max_turns ({self.default_max_turns}) "
+                f"must be <= max_turns_limit ({self.max_turns_limit})"
+            )
+        if self.default_max_tokens < 1:
+            raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
+        if self.default_temperature < 0:
+            raise ValueError(
+                f"default_temperature must be >= 0, got {self.default_temperature}"
+            )
 
 
 @dataclass(frozen=True)
@@ -195,9 +248,12 @@ class _ConfigHolder:
 
     @classmethod
     def get(cls) -> HarnessConfig:
-        """Get the current configuration."""
-        with cls._lock:
-            return cls._config
+        """Get the current configuration.
+
+        No lock needed: Python's GIL makes reference reads atomic.
+        The write-side lock on set() is sufficient for correctness.
+        """
+        return cls._config
 
     @classmethod
     def set(cls, config: HarnessConfig) -> None:

@@ -61,6 +61,30 @@ class TestZoomImage:
         assert result.size[0] >= _CFG.min_image_size
         assert result.size[1] >= _CFG.min_image_size
 
+    def test_zoom_preserves_aspect_ratio_at_min_size(self) -> None:
+        """Zoom must preserve aspect ratio even when clamping to min_image_size."""
+        img = _make_image(10, 20)
+        result = zoom_image(img, 0.5, config=_CFG)
+        # Both dims must meet min_image_size, and ratio must be preserved
+        assert result.size[0] >= _CFG.min_image_size
+        assert result.size[1] >= _CFG.min_image_size
+        # Original aspect ratio is 1:2, result must maintain it
+        original_ratio = 10 / 20
+        result_ratio = result.size[0] / result.size[1]
+        assert abs(original_ratio - result_ratio) < 0.15, (
+            f"Aspect ratio distorted: original={original_ratio:.2f}, result={result_ratio:.2f}"
+        )
+
+    def test_zoom_nonsquare_preserves_ratio(self) -> None:
+        """Non-square image zoomed down should keep proportions."""
+        img = _make_image(15, 30)
+        result = zoom_image(img, 0.5, config=_CFG)
+        assert result.size[0] >= _CFG.min_image_size
+        assert result.size[1] >= _CFG.min_image_size
+        original_ratio = 15 / 30
+        result_ratio = result.size[0] / result.size[1]
+        assert abs(original_ratio - result_ratio) < 0.15
+
     def test_zoom_factor_below_min_raises(self) -> None:
         img = _make_image()
         with pytest.raises(ValueError, match="factor must be in range"):
@@ -302,6 +326,15 @@ class TestToolExecutors:
             await registry.execute("crop", box=[0.0, 0.0, 1.0])
 
     @pytest.mark.asyncio
+    async def test_crop_non_numeric_box_raises(self, tmp_path: Path) -> None:
+        """Non-numeric box values must raise ToolExecutionError, not TypeError."""
+        tools = create_visual_tools()
+        image_path = _save_image(tmp_path)
+        registry = ToolRegistry(image_path=image_path, tools=tools)
+        with pytest.raises(ToolExecutionError, match="must be numbers"):
+            await registry.execute("crop", box=["a", "b", "c", "d"])
+
+    @pytest.mark.asyncio
     async def test_reset_without_path_raises(self) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(tools=tools)
@@ -370,3 +403,22 @@ class TestCreateVisualTools:
         tools = create_visual_tools()
         for tool in tools:
             assert tool.requires_image is True
+
+    def test_schema_ranges_derived_from_config(self) -> None:
+        """Schema min/max must reflect the config, not hardcoded values."""
+        custom_cfg = ImageProcessingConfig(
+            min_zoom_factor=1.0,
+            max_zoom_factor=2.0,
+            min_contrast_factor=0.8,
+            max_contrast_factor=1.5,
+        )
+        tools = create_visual_tools(config=custom_cfg)
+        tool_map = {t.name: t for t in tools}
+
+        zoom_params = tool_map["zoom"].parameters["factor"]
+        assert zoom_params["minimum"] == 1.0
+        assert zoom_params["maximum"] == 2.0
+
+        contrast_params = tool_map["adjust_contrast"].parameters["factor"]
+        assert contrast_params["minimum"] == 0.8
+        assert contrast_params["maximum"] == 1.5

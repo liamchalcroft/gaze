@@ -275,3 +275,164 @@ class TestGenerateChatKwargs:
 
         call_kwargs = adapter._create_completion_with_retry.call_args[1]
         assert "extra_body" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Parity: tool_call dict shape
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallParity:
+    """Verify OpenAI tool_call dicts match the expected parity shape."""
+
+    REQUIRED_KEYS = {"id", "name", "arguments"}
+
+    @pytest.mark.asyncio
+    async def test_tool_call_has_required_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        tc = _make_tool_call("call_abc", "zoom", '{"x": 100}')
+        mock_completion = _make_completion(content="", tool_calls=[tc])
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        _, tool_calls, _ = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+            tools=[{"type": "function", "function": {"name": "zoom"}}],
+        )
+
+        assert tool_calls is not None
+        for call in tool_calls:
+            assert set(call.keys()) == self.REQUIRED_KEYS
+
+    @pytest.mark.asyncio
+    async def test_arguments_is_json_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        tc = _make_tool_call("call_abc", "zoom", '{"x": 100}')
+        mock_completion = _make_completion(content="", tool_calls=[tc])
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        _, tool_calls, _ = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+            tools=[{"type": "function", "function": {"name": "zoom"}}],
+        )
+
+        assert tool_calls is not None
+        assert isinstance(tool_calls[0]["arguments"], str)
+
+    @pytest.mark.asyncio
+    async def test_id_is_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        tc = _make_tool_call("call_abc", "zoom", '{}')
+        mock_completion = _make_completion(content="", tool_calls=[tc])
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        _, tool_calls, _ = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+            tools=[{"type": "function", "function": {"name": "zoom"}}],
+        )
+
+        assert tool_calls is not None
+        assert isinstance(tool_calls[0]["id"], str)
+
+
+# ---------------------------------------------------------------------------
+# APIError status_code propagation
+# ---------------------------------------------------------------------------
+
+
+class TestAPIErrorStatusCode:
+    """Verify APIError includes status_code from OpenAI exceptions."""
+
+    @pytest.mark.asyncio
+    async def test_api_status_error_propagates_status_code(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from openai import APIStatusError
+
+        from radiant_harness.exceptions import APIError
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        # Create an APIStatusError with a status code
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.headers = {}
+        mock_response.json.return_value = {"error": {"message": "Internal error"}}
+
+        error = APIStatusError(
+            message="Internal error",
+            response=mock_response,
+            body={"error": {"message": "Internal error"}},
+        )
+        adapter._create_completion_with_retry = AsyncMock(side_effect=error)
+
+        with pytest.raises(APIError) as exc_info:
+            await adapter.generate_chat(
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=1,
+                temperature=0.0,
+            )
+
+        assert exc_info.value.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# Streaming: stream_options and usage logging
+# ---------------------------------------------------------------------------
+
+
+class TestStreamingKwargs:
+    """Verify streaming requests include stream_options for usage tracking."""
+
+    @pytest.mark.asyncio
+    async def test_stream_includes_stream_options(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        # Mock the retry method to capture kwargs
+        captured_kwargs: dict[str, Any] = {}
+
+        async def _fake_create(**kwargs):
+            captured_kwargs.update(kwargs)
+            # Return an async iterable that yields nothing
+            return EmptyAsyncIter()
+
+        adapter._create_completion_with_retry = _fake_create  # type: ignore[assignment]
+
+        result = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+            stream=True,
+        )
+
+        # Exhaust the iterator to trigger the call
+        async for _ in result:  # type: ignore[union-attr]
+            pass
+
+        assert captured_kwargs.get("stream") is True
+        assert captured_kwargs.get("stream_options") == {"include_usage": True}
+
+
+class EmptyAsyncIter:
+    """Minimal async iterator for testing streaming."""
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
