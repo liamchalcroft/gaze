@@ -375,6 +375,14 @@ class ToolRegistry:
                     f"Tool '{tool_name}' requires an image, but no image path was provided"
                 )
 
+        # Coerce int → float for parameters declared as "number" in the schema.
+        # JSON deserializes 2 as int, but beartype rejects int for float hints.
+        for param_name, param_info in tool.parameters.items():
+            if param_info.get("type") == "number" and param_name in kwargs:
+                val = kwargs[param_name]
+                if isinstance(val, int) and not isinstance(val, bool):
+                    kwargs[param_name] = float(val)
+
         try:
             result = await tool.execute(self, **kwargs)
         except TypeError as e:
