@@ -17,17 +17,21 @@ ANATOMICAL_SYNONYMS: dict[str, set[str]] = {
     "bilateral lung": {"both lungs", "bilateral lungs", "lungs bilaterally"},
     "right lung": {"right pulmonary", "r lung"},
     "left lung": {"left pulmonary", "l lung"},
-    "right upper lobe": {"rul", "right upper zone"},
+    "right upper lobe": {"rul", "right upper zone", "right apex", "right apical"},
     "right middle lobe": {"rml", "right mid zone"},
-    "right lower lobe": {"rll", "right lower zone", "right base"},
-    "left upper lobe": {"lul", "left upper zone"},
-    "left lower lobe": {"lll", "left lower zone", "left base"},
+    "right lower lobe": {"rll", "right lower zone", "right base", "right basilar"},
+    "left upper lobe": {"lul", "left upper zone", "left apex", "left apical"},
+    "left lower lobe": {"lll", "left lower zone", "left base", "left basilar"},
     "lingula": {"left middle lobe"},
+    # Hilum
+    "right hilum": {"right hilar", "right hilar region"},
+    "left hilum": {"left hilar", "left hilar region"},
+    "bilateral hilum": {"bilateral hilar", "perihilar", "parahilar"},
     # Mediastinum
     "mediastinum": {"mediastinal"},
     "heart": {"cardiac", "cardiac silhouette", "heart shadow"},
     "aorta": {"aortic", "aortic arch", "aortic knob"},
-    "trachea": {"tracheal"},
+    "trachea": {"tracheal", "paratracheal"},
     # Pleural
     "pleura": {"pleural", "pleural space"},
     "costophrenic angle": {"cp angle", "costophrenic recess"},
@@ -41,15 +45,29 @@ ANATOMICAL_SYNONYMS: dict[str, set[str]] = {
     "diaphragm": {"diaphragmatic", "hemidiaphragm"},
     "right hemidiaphragm": {"right diaphragm"},
     "left hemidiaphragm": {"left diaphragm"},
+    # Retrocardiac
+    "retrocardiac": {"retrocardiac region", "behind heart"},
+    # General lung apex region
+    "lung apex": {"apical", "apex", "apices"},
+    # Whole chest (top-level hierarchy node)
+    "chest": {"thorax", "thoracic", "chest wall"},
 }
 
 # Region hierarchy for partial matching
 REGION_HIERARCHY: dict[str, list[str]] = {
     "bilateral lung": ["right lung", "left lung"],
-    "right lung": ["right upper lobe", "right middle lobe", "right lower lobe"],
-    "left lung": ["left upper lobe", "lingula", "left lower lobe"],
-    "mediastinum": ["heart", "aorta", "trachea"],
-    "chest": ["bilateral lung", "mediastinum", "pleura", "diaphragm"],
+    "right lung": ["right upper lobe", "right middle lobe", "right lower lobe", "right hilum"],
+    "left lung": ["left upper lobe", "lingula", "left lower lobe", "left hilum"],
+    "bilateral hilum": ["right hilum", "left hilum"],
+    "mediastinum": ["heart", "aorta", "trachea", "retrocardiac"],
+    "chest": [
+        "bilateral lung",
+        "mediastinum",
+        "pleura",
+        "diaphragm",
+        "bilateral hilum",
+        "lung apex",
+    ],
 }
 
 
@@ -80,6 +98,13 @@ def normalize_location(location: str) -> str:
 def get_canonical_region(location: str) -> str | None:
     """Get canonical region name from location string.
 
+    Matching precedence (highest first):
+    1. Exact match on canonical name
+    2. Exact match on a synonym
+    3. Substring match — scored by the length of the matched term so
+       that more-specific regions win (e.g. "right lower lobe" beats
+       "right lung" when the input contains both substrings).
+
     Args:
         location: Normalized location string
 
@@ -88,22 +113,36 @@ def get_canonical_region(location: str) -> str | None:
     """
     location = normalize_location(location)
 
-    # Direct match
+    # 1. Direct match on canonical key
     if location in ANATOMICAL_SYNONYMS:
         return location
 
-    # Check synonyms
+    # 2. Exact synonym match
     for canonical, synonyms in ANATOMICAL_SYNONYMS.items():
         if location in synonyms:
             return canonical
-        # Check if location contains the canonical or vice versa
+
+    # 3. Substring match — collect all candidates, prefer longest match
+    best_canonical: str | None = None
+    best_match_len = 0
+
+    for canonical, synonyms in ANATOMICAL_SYNONYMS.items():
+        # Check canonical as substring (either direction)
         if canonical in location or location in canonical:
-            return canonical
+            match_len = len(canonical)
+            if match_len > best_match_len:
+                best_match_len = match_len
+                best_canonical = canonical
+
+        # Check each synonym as substring
         for syn in synonyms:
             if syn in location or location in syn:
-                return canonical
+                match_len = len(syn)
+                if match_len > best_match_len:
+                    best_match_len = match_len
+                    best_canonical = canonical
 
-    return None
+    return best_canonical
 
 
 @beartype
@@ -127,11 +166,35 @@ def compute_region_match(pred: str, ref: str) -> float:
     return 1.0 if pred_canonical == ref_canonical else 0.0
 
 
+def _is_ancestor(ancestor: str, descendant: str) -> int | None:
+    """Return the depth if *ancestor* is a (transitive) parent of *descendant*.
+
+    Depth 1 = direct parent, depth 2 = grandparent, etc.
+    Returns None if there is no ancestor relationship.
+    """
+    # BFS from ancestor downward
+    frontier = [(ancestor, 0)]
+    visited: set[str] = set()
+    while frontier:
+        node, depth = frontier.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        children = REGION_HIERARCHY.get(node, [])
+        for child in children:
+            if child == descendant:
+                return depth + 1
+            frontier.append((child, depth + 1))
+    return None
+
+
 @beartype
 def compute_hierarchy_match(pred: str, ref: str) -> float:
     """Compute hierarchical region match score.
 
-    Gives partial credit if prediction is parent/child of reference.
+    Gives partial credit when prediction and reference are related
+    through the anatomical hierarchy, including transitive (grandparent)
+    relationships.  Closer relationships score higher.
 
     Args:
         pred: Predicted location
@@ -150,18 +213,19 @@ def compute_hierarchy_match(pred: str, ref: str) -> float:
     if pred_canonical == ref_canonical:
         return 1.0
 
-    # Check if pred is parent of ref (too general)
-    if pred_canonical in REGION_HIERARCHY:
-        if ref_canonical in REGION_HIERARCHY[pred_canonical]:
-            return 0.5  # Prediction is too general
+    # Pred is ancestor of ref (prediction too general).
+    # Deeper distance → less credit: 0.5 for depth-1, 0.35 for depth-2, …
+    depth = _is_ancestor(pred_canonical, ref_canonical)
+    if depth is not None:
+        return max(0.1, 0.5 / depth)
 
-    # Check if ref is parent of pred (too specific but correct region)
-    if ref_canonical in REGION_HIERARCHY:
-        if pred_canonical in REGION_HIERARCHY[ref_canonical]:
-            return 0.7  # More specific than reference
+    # Ref is ancestor of pred (prediction more specific, usually fine).
+    depth = _is_ancestor(ref_canonical, pred_canonical)
+    if depth is not None:
+        return max(0.2, 0.7 / depth)
 
-    # Check if they share a common parent
-    for parent, children in REGION_HIERARCHY.items():
+    # Check if they share a common parent (siblings)
+    for children in REGION_HIERARCHY.values():
         if pred_canonical in children and ref_canonical in children:
             return 0.3  # Same general area
 

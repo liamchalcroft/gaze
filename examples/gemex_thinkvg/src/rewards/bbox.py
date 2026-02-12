@@ -257,17 +257,28 @@ def compute_bbox_reward(
     iou_50 = iou >= IOU_THRESHOLD_STRICT
     iou_30 = iou >= IOU_THRESHOLD_LOOSE
 
+    # Penalise degenerate "full-image" predictions.
+    # A box covering most of the image trivially overlaps everything,
+    # so we scale the reward toward 0 as the predicted area grows.
+    pred = clamp_bbox(prediction, image_size)
+    pred_area = (pred[2] - pred[0]) * (pred[3] - pred[1])
+    image_area = image_size * image_size
+    area_ratio = pred_area / image_area if image_area > 0 else 0.0
+    # Linear penalty: full credit at ≤50% coverage, zero at 100%.
+    area_penalty_start = 0.5
+    area_penalty = max(0.0, min(1.0, (1.0 - area_ratio) / (1.0 - area_penalty_start))) if area_ratio > area_penalty_start else 1.0
+
     # Weighted reward
     # Primary: IoU (most important)
     # Secondary: Center distance (for partial credit when IoU is 0)
     if iou >= IOU_THRESHOLD_MINIMAL:
         # Has some overlap - use IoU directly
-        reward = iou
+        reward = iou * area_penalty
     else:
         # No overlap - use center distance for partial credit
         # Closer = better, but cap the reward since no overlap
         proximity_reward = (1.0 - center_dist) * 0.2
-        reward = proximity_reward
+        reward = proximity_reward * area_penalty
 
     return {
         "iou": iou,

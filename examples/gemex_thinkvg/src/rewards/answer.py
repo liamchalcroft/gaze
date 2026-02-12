@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import Any
 
 from beartype import beartype
 
@@ -120,18 +121,29 @@ def compute_exact_match(pred: str, ref: str) -> float:
 def compute_contains_match(pred: str, ref: str) -> float:
     """Check if prediction contains or is contained by reference.
 
+    Returns a score discounted by the length ratio so that a model
+    cannot game the reward by dumping all possible answers into a
+    single long prediction string.
+
+    Score = containment_flag * min(len_short, len_long) / max(len_short, len_long)
+
     Args:
         pred: Predicted answer (normalized)
         ref: Reference answer (normalized)
 
     Returns:
-        1.0 if containment match, 0.0 otherwise
+        Score in [0.0, 1.0], discounted by length ratio
     """
     pred_norm = normalize_medical_text(pred)
     ref_norm = normalize_medical_text(ref)
 
+    if not pred_norm or not ref_norm:
+        return 1.0 if pred_norm == ref_norm else 0.0
+
     if pred_norm in ref_norm or ref_norm in pred_norm:
-        return 1.0
+        shorter = min(len(pred_norm), len(ref_norm))
+        longer = max(len(pred_norm), len(ref_norm))
+        return shorter / longer
 
     return 0.0
 
@@ -141,7 +153,7 @@ def compute_answer_reward(
     prediction: str,
     reference: str,
     question_type: str = "open_ended",
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Compute answer verification reward.
 
     Combines multiple matching strategies:
@@ -196,7 +208,7 @@ def compute_batch_answer_rewards(
     predictions: Sequence[str],
     references: Sequence[str],
     question_types: Sequence[str] | None = None,
-) -> list[dict[str, float]]:
+) -> list[dict[str, Any]]:
     """Compute answer rewards for a batch of samples.
 
     Args:

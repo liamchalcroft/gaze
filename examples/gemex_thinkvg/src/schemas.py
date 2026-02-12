@@ -61,7 +61,7 @@ GEMEX_SCHEMA: dict[str, Any] = {
                     "description": "true if more analysis needed, false when complete",
                 },
             },
-            "required": ["reasoning", "answer", "location", "confidence", "continue"],
+            "required": ["reasoning", "answer", "location", "confidence"],
             "additionalProperties": False,
         },
     },
@@ -77,7 +77,7 @@ def validate_gemex_response(response: dict[str, Any]) -> bool:
     Returns:
         True if all required fields present and valid
     """
-    required = ["reasoning", "answer", "location", "confidence", "continue"]
+    required = ["reasoning", "answer", "location", "confidence"]
     if not all(field in response for field in required):
         return False
 

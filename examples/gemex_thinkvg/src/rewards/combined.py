@@ -18,6 +18,7 @@ from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import extract_completion_text
 
+from ..schemas import validate_gemex_response
 from .answer import compute_answer_reward
 from .bbox import IMAGE_SIZE
 from .bbox import compute_bbox_reward
@@ -79,8 +80,8 @@ def compute_combined_reward(
     pred_loc_ref = pred_location.get("reference", "")
     ref_loc_ref = ref_location.get("reference", "")
 
-    pred_bbox = pred_location.get("bbox", [0, 0, 1, 1])
-    ref_bbox = ref_location.get("bbox", [0, 0, 1, 1])
+    pred_bbox = pred_location.get("bbox", [0, 0, 0, 0])
+    ref_bbox = ref_location.get("bbox", [0, 0, 0, 0])
 
     question_type = reference.get("question_type", "open_ended")
 
@@ -326,7 +327,7 @@ class GEMeXVerifiersReward(BaseRewardFunction):
 
         # Parse response from completion
         response = self._extract_json_response(comp_text)
-        if response is None:
+        if response is None or not validate_gemex_response(response):
             return 0.0
 
         # Build prediction dict from response
@@ -334,7 +335,7 @@ class GEMeXVerifiersReward(BaseRewardFunction):
             "answer": response.get("answer", ""),
             "location": {
                 "reference": response.get("location", {}).get("reference", ""),
-                "bbox": response.get("location", {}).get("bbox", [0, 0, 1, 1]),
+                "bbox": response.get("location", {}).get("bbox", [0, 0, 0, 0]),
             },
         }
 
@@ -343,7 +344,7 @@ class GEMeXVerifiersReward(BaseRewardFunction):
             "answer": info.get("gold_answer", info.get("answer", "")),
             "location": {
                 "reference": info.get("gold_location", info.get("location_reference", "")),
-                "bbox": info.get("gold_bbox", info.get("bbox", [0, 0, self.image_size, self.image_size])),
+                "bbox": info.get("gold_bbox", info.get("bbox", [0, 0, 0, 0])),
             },
             "question_type": info.get("question_type", "open_ended"),
         }
@@ -352,10 +353,17 @@ class GEMeXVerifiersReward(BaseRewardFunction):
         rewards = self._reward_fn([prediction], [reference])
         return rewards[0]
 
-    def _extract_text(self, completion: Any) -> str:
+    @staticmethod
+    def _extract_text(completion: Any) -> str:
         """Extract text from completion."""
         return extract_completion_text(completion)
 
-    def _extract_json_response(self, text: str) -> dict[str, Any] | None:
-        """Extract JSON response from text."""
-        return extract_json_from_text(text)
+    @staticmethod
+    def _extract_json_response(text: str) -> dict[str, Any] | None:
+        """Extract JSON response from text, with XML fallback."""
+        from ..schemas import parse_thinkvg_response
+
+        result = extract_json_from_text(text)
+        if result is not None:
+            return result
+        return parse_thinkvg_response(text)

@@ -12,12 +12,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, List
+from typing import Any
+from typing import List
 
 import verifiers as vf
 from datasets import Dataset
 
-from ..rewards import GEMeXRewardFunction
+from ..rewards import GEMeXVerifiersReward
 from ..rewards import RewardWeights
 from ..schemas import parse_thinkvg_response
 from ..schemas import validate_gemex_response
@@ -109,14 +110,6 @@ def _last_assistant_text(messages: vf.Messages) -> str:
     return ""
 
 
-def _to_text(completion: Any) -> str:
-    if isinstance(completion, list):
-        for msg in reversed(completion):
-            if isinstance(msg, dict) and msg.get("role") == "assistant":
-                return str(msg.get("content", ""))
-    return str(completion or "")
-
-
 def _extract_json_response(text: str) -> dict[str, Any] | None:
     """Extract JSON response from assistant message."""
     # Try to find JSON block
@@ -157,7 +150,7 @@ def _prepare_case(raw: dict[str, Any]) -> dict[str, Any]:
         "image_url": raw.get("image_url", ""),
         "gold_answer": raw.get("answer", ""),
         "gold_location": raw.get("location_reference", ""),
-        "gold_bbox": raw.get("bbox", [0, 0, 336, 336]),
+        "gold_bbox": raw.get("bbox", [0, 0, 0, 0]),
         "options": raw.get("options", []),
     }
 
@@ -193,45 +186,24 @@ def _build_prompt(case: dict[str, Any]) -> dict[str, str]:
 
 
 # ---------- Reward Function ----------
-def gemex_reward(prompt: str, completion: Any, info: dict[str, Any]) -> float:
-    """Compute combined GEMeX reward."""
-    comp_text = _to_text(completion)
-    response = _extract_json_response(comp_text)
+def _make_gemex_reward(weights: RewardWeights | None = None) -> Any:
+    """Create a reward closure that delegates to GEMeXVerifiersReward.
 
-    if response is None or not validate_gemex_response(response):
-        _log_debug(f"[reward] Invalid response format: {comp_text[:200]}")
-        return 0.0
+    This ensures a single canonical code path for extraction, validation,
+    and scoring — shared with the processor's reward function.
+    """
+    verifiers_reward = GEMeXVerifiersReward(weights=weights)
 
-    # Build prediction dict
-    prediction = {
-        "answer": response.get("answer", ""),
-        "location": {
-            "reference": response.get("location", {}).get("reference", ""),
-            "bbox": response.get("location", {}).get("bbox", [0, 0, 1, 1]),
-        },
-    }
+    def gemex_reward(prompt: str, completion: Any, info: dict[str, Any]) -> float:
+        """Compute combined GEMeX reward."""
+        reward = verifiers_reward(prompt, completion, info)
+        _log_debug(
+            f"[reward] gold_answer={info.get('gold_answer', '')[:50]} "
+            f"reward={reward:.3f}"
+        )
+        return reward
 
-    # Build reference dict
-    reference = {
-        "answer": info.get("gold_answer", ""),
-        "location": {
-            "reference": info.get("gold_location", ""),
-            "bbox": info.get("gold_bbox", [0, 0, 336, 336]),
-        },
-        "question_type": info.get("question_type", "open_ended"),
-    }
-
-    # Compute reward
-    reward_fn = GEMeXRewardFunction()
-    rewards = reward_fn([prediction], [reference])
-
-    _log_debug(
-        f"[reward] pred_answer={prediction['answer'][:50]} "
-        f"gold_answer={reference['answer'][:50]} "
-        f"reward={rewards[0]:.3f}"
-    )
-
-    return rewards[0]
+    return gemex_reward
 
 
 # ---------- Environment ----------
@@ -288,7 +260,7 @@ class GEMeXThinkVGToolEnv(vf.ToolEnv):
                 "case_index": idx,
                 "gold_answer": case.get("gold_answer", ""),
                 "gold_location": case.get("gold_location", ""),
-                "gold_bbox": case.get("gold_bbox", [0, 0, 336, 336]),
+                "gold_bbox": case.get("gold_bbox", [0, 0, 0, 0]),
                 "question_type": case.get("question_type", "open_ended"),
                 "image_path": case.get("image_path", ""),
                 "image_url": case.get("image_url", ""),
@@ -300,9 +272,9 @@ class GEMeXThinkVGToolEnv(vf.ToolEnv):
             "info": infos,
         })
 
-        # Set up rubric and tools
+        # Set up rubric and tools — capture weights in reward closure
         self.rubric = vf.Rubric(
-            funcs=[gemex_reward],
+            funcs=[_make_gemex_reward(reward_weights)],
             weights=[1.0],
         )
         tools: List[Any] = [zoom_tool, crop_tool, contrast_tool, threshold_tool, search_tool]
@@ -368,7 +340,8 @@ class GEMeXThinkVGToolEnv(vf.ToolEnv):
         # Check if assistant provided valid JSON response
         response = _extract_json_response(last_asst)
         if response and validate_gemex_response(response):
-            return True
+            # Respect explicit continue=true signal: the model wants another turn
+            return response.get("continue") is not True
 
         return False
 
