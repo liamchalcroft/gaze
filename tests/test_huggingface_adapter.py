@@ -218,8 +218,9 @@ class TestParseToolCalls:
         tool_calls, _ = self.adapter._parse_tool_calls(content)
         assert tool_calls is not None
         assert len(tool_calls) == 2
-        assert tool_calls[0]["id"] == "call_0"
-        assert tool_calls[1]["id"] == "call_1"
+        assert tool_calls[0]["id"].startswith("call_")
+        assert tool_calls[1]["id"].startswith("call_")
+        assert tool_calls[0]["id"] != tool_calls[1]["id"]
 
     def test_no_tool_calls(self) -> None:
         content = "Just some text without any tool calls."
@@ -358,3 +359,87 @@ class TestProtocolSignatureParity:
 
         assert "AsyncIterator" in hf_return, f"HF return {hf_return} missing AsyncIterator"
         assert "AsyncIterator" in vlm_return, f"VLM return {vlm_return} missing AsyncIterator"
+
+
+# ---------------------------------------------------------------------------
+# Patch Set #1 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallIdUniqueness:
+    """Verify tool-call IDs are globally unique across multiple parse calls."""
+
+    def test_ids_unique_across_two_parses(self) -> None:
+        """Two separate _parse_tool_calls invocations must never produce the same ID."""
+        adapter = HuggingFaceAdapter(model_name="dummy")
+
+        content_a = '```tool\n{"name": "zoom", "arguments": {"x": 1}}\n```'
+        content_b = '```tool\n{"name": "crop", "arguments": {"w": 50}}\n```'
+
+        calls_a, _ = adapter._parse_tool_calls(content_a)
+        calls_b, _ = adapter._parse_tool_calls(content_b)
+
+        assert calls_a is not None and calls_b is not None
+        all_ids = [tc["id"] for tc in calls_a] + [tc["id"] for tc in calls_b]
+        assert len(all_ids) == len(set(all_ids)), f"Duplicate IDs found: {all_ids}"
+
+    def test_ids_unique_across_many_parses(self) -> None:
+        """Stress test: 20 sequential parses should produce 20 unique IDs."""
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        all_ids: list[str] = []
+
+        for _ in range(20):
+            content = '```tool\n{"name": "zoom", "arguments": {}}\n```'
+            calls, _ = adapter._parse_tool_calls(content)
+            assert calls is not None
+            all_ids.append(calls[0]["id"])
+
+        assert len(all_ids) == len(set(all_ids)), f"Duplicate IDs in {all_ids}"
+
+
+class TestVLMGenKwargsParity:
+    """Verify VLM generate_chat gen_kwargs match base HuggingFaceAdapter.
+
+    These tests inspect the source code structure to confirm the VLM path
+    has the same optimizations as the base path (use_cache, non_blocking,
+    autocast). They do not require torch to be installed.
+    """
+
+    def test_vlm_generate_chat_has_use_cache(self) -> None:
+        """VLM gen_kwargs must include use_cache: True (parity with base)."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert '"use_cache"' in source or "'use_cache'" in source, (
+            "VLM generate_chat is missing 'use_cache' in gen_kwargs"
+        )
+
+    def test_vlm_uses_non_blocking_transfer(self) -> None:
+        """VLM input tensor transfer must use non_blocking=True."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert "non_blocking=True" in source, (
+            "VLM generate_chat is missing non_blocking=True in .to() call"
+        )
+
+    def test_vlm_uses_autocast(self) -> None:
+        """VLM _run_vlm_generate must use torch.amp.autocast."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert "torch.amp.autocast" in source, (
+            "VLM generate_chat is missing torch.amp.autocast"
+        )
+
+    def test_base_uses_non_deprecated_autocast(self) -> None:
+        """Base adapter must use torch.amp.autocast, not deprecated torch.cuda.amp.autocast."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceAdapter.generate_chat)
+        assert "torch.cuda.amp.autocast" not in source, (
+            "Base adapter still uses deprecated torch.cuda.amp.autocast"
+        )
+        assert "torch.amp.autocast" in source, (
+            "Base adapter is missing torch.amp.autocast"
+        )

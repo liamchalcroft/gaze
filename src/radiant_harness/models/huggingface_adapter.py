@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import itertools
 import json
 import re
 from collections.abc import AsyncIterator
@@ -32,6 +33,14 @@ if TYPE_CHECKING:
     from transformers import PreTrainedTokenizer  # pyright: ignore[reportMissingImports]
 
 _TOOL_CALL_BLOCK_RE = re.compile(r"```tool\s*(\{.*?\})\s*```", re.DOTALL)
+
+# Monotonic counter for generating unique tool-call IDs across turns.
+_tool_call_counter = itertools.count(1)
+
+
+def _next_tool_call_id() -> str:
+    """Return a globally unique tool-call ID."""
+    return f"call_{next(_tool_call_counter)}"
 
 _TOOL_SYSTEM_PREAMBLE = (
     "\n\n# Available Tools\n"
@@ -371,8 +380,8 @@ class HuggingFaceAdapter(AdapterProtocol):
 
         def _run_generate():
             with torch.inference_mode():
-                if hasattr(torch.cuda, "amp") and torch.cuda.is_available():
-                    with torch.cuda.amp.autocast(enabled=True):
+                if torch.cuda.is_available():
+                    with torch.amp.autocast("cuda"):
                         return self.model.generate(**gen_kwargs)
                 return self.model.generate(**gen_kwargs)
 
@@ -471,7 +480,7 @@ class HuggingFaceAdapter(AdapterProtocol):
                 call_data = json.loads(match.group(1))
                 tool_calls.append(
                     {
-                        "id": f"call_{i}",
+                        "id": _next_tool_call_id(),
                         "name": call_data.get("name", ""),
                         "arguments": json.dumps(call_data.get("arguments", {})),
                     }
@@ -643,7 +652,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                 padding=True,
             )
 
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
         input_ids = inputs.get("input_ids", inputs.get("inputs_embeds"))
         if input_ids is None:
             raise ModelError(
@@ -660,10 +669,14 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             "do_sample": temperature > 0,
             "pad_token_id": self.processor.tokenizer.pad_token_id,
             "eos_token_id": self.processor.tokenizer.eos_token_id,
+            "use_cache": True,
         }
 
         def _run_vlm_generate():
             with torch.inference_mode():
+                if torch.cuda.is_available():
+                    with torch.amp.autocast("cuda"):
+                        return self.model.generate(**gen_kwargs)
                 return self.model.generate(**gen_kwargs)
 
         try:
