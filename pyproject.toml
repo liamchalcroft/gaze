@@ -167,6 +167,7 @@ nova = [
     "torchvision",
     "torchmetrics",
     "pycocotools",
+    "pandas",
     "datasets",
     "sacrebleu",
     "bert-score",

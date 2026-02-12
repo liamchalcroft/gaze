@@ -1,6 +1,7 @@
 """NOVA dataset loader for brain MRI analysis.
 
-Provides the complete NOVA dataset combining HuggingFace images with CSV ground truth and metadata.
+Loads the complete NOVA dataset from HuggingFace, using the parquet file
+for metadata/ground truth and downloading images from the repo.
 """
 
 from __future__ import annotations
@@ -9,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from beartype import beartype
-from datasets import Dataset as HFDataset
-from datasets import load_dataset
+from huggingface_hub import snapshot_download
 from loguru import logger
 from PIL import Image
 from torch.utils.data import DataLoader
@@ -19,14 +20,15 @@ from torchvision.transforms import Compose
 from torchvision.transforms import Normalize
 from torchvision.transforms import ToTensor
 
-from .nova_ground_truth import NovaGroundTruth
+HF_REPO_ID = "c-i-ber/Nova"
 
 
 class NovaDataset:
     """Complete NOVA dataset with images, metadata, and ground truth.
 
-    Ground truth is loaded from local CSVs if ground_truth_dir is provided,
-    otherwise downloaded automatically from HuggingFace.
+    Downloads the entire c-i-ber/Nova repository from HuggingFace on first use
+    (cached for subsequent runs). The parquet file provides all metadata,
+    ground truth, and image paths.
     """
 
     @beartype
@@ -39,84 +41,104 @@ class NovaDataset:
         """Initialize complete NOVA dataset.
 
         Args:
-            data_dir: Deprecated local data directory (unused, images come from HF).
-                      Kept for backward compatibility.
-            ground_truth_dir: Local directory with ground truth CSVs. If None,
-                              CSVs are downloaded from HuggingFace automatically.
+            data_dir: Optional local directory override. If None, downloads
+                      from HuggingFace (recommended).
+            ground_truth_dir: Unused, kept for backward compatibility.
             transform: Optional torchvision transforms to apply to images.
         """
-        self.data_dir = data_dir
         self.transform = transform
 
-        hf_ds = load_dataset("c-i-ber/Nova", split="train")
-        if not isinstance(hf_ds, HFDataset):
-            raise TypeError(f"Expected Dataset, got {type(hf_ds).__name__}")
-        self.hf_dataset: HFDataset = hf_ds
-
-        if ground_truth_dir:
-            self.ground_truth = NovaGroundTruth(ground_truth_dir)
-        elif data_dir and Path(data_dir).expanduser().exists():
-            self.ground_truth = NovaGroundTruth(data_dir)
+        if data_dir and Path(data_dir).expanduser().exists():
+            self._repo_dir = Path(data_dir).expanduser()
+            logger.info(f"Using local NOVA data from {self._repo_dir}")
         else:
-            self.ground_truth = NovaGroundTruth.from_huggingface()
-        logger.info(f"Loaded {len(self.hf_dataset)} samples from NOVA complete dataset")
+            logger.info(f"Downloading NOVA dataset from {HF_REPO_ID}...")
+            self._repo_dir = Path(
+                snapshot_download(HF_REPO_ID, repo_type="dataset")
+            )
+            logger.info(f"NOVA dataset cached at {self._repo_dir}")
+
+        # Load the parquet which contains all metadata and ground truth
+        parquet_path = self._repo_dir / "data" / "nova-v1.parquet"
+        if not parquet_path.exists():
+            raise FileNotFoundError(
+                f"Parquet file not found at {parquet_path}. "
+                "Ensure the NOVA dataset was downloaded correctly."
+            )
+        self._df = pd.read_parquet(parquet_path)
+        logger.info(f"Loaded {len(self._df)} samples from NOVA dataset")
 
     @beartype
     def __len__(self) -> int:
-        return len(self.hf_dataset)
+        return len(self._df)
 
     @beartype
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Get complete sample with image, metadata, and ground truth."""
-        if idx < 0 or idx >= len(self.hf_dataset):
-            raise IndexError(f"Index {idx} out of range [0, {len(self.hf_dataset)})")
+        if idx < 0 or idx >= len(self._df):
+            raise IndexError(f"Index {idx} out of range [0, {len(self._df)})")
 
-        hf_item = self.hf_dataset[idx]
-        if "image" not in hf_item or hf_item["image"] is None:
-            raise ValueError(f"No image found for index {idx}")
+        row = self._df.iloc[idx]
 
-        img = hf_item["image"]
-        if not isinstance(img, Image.Image):
-            img = Image.fromarray(np.array(img))
+        # Load image from repo
+        image_path = self._repo_dir / row["image_path"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
 
-        # Safe filename extraction - check for None explicitly
-        filename_attr = getattr(img, "filename", None)
-        if not filename_attr:
-            raise ValueError(f"Image at index {idx} missing filename attribute")
-        filename = Path(filename_attr).name
-        image = img.convert("RGB")
+        image = Image.open(image_path).convert("RGB")
 
         if self.transform:
             image = self.transform(image)
 
-        gt_sample = self.ground_truth.get_ground_truth(filename)
-        if gt_sample:
-            return {
-                "image": image,
-                "metadata": {
-                    "image_id": idx,
-                    "filename": gt_sample.filename,
-                    "case_id": gt_sample.case_id,
-                    "scan_id": gt_sample.scan_id,
-                    "clinical_history": gt_sample.clinical_history,
-                    "final_diagnosis": gt_sample.final_diagnosis,
-                    "caption": gt_sample.caption,
-                    "localizations": [{"bbox": loc.bbox} for loc in gt_sample.localizations],
-                },
-                "ground_truth": {
-                    "filename": gt_sample.filename,
-                    "case_id": gt_sample.case_id,
-                    "scan_id": gt_sample.scan_id,
-                    "caption": gt_sample.caption,
-                    "clinical_history": gt_sample.clinical_history,
-                    "final_diagnosis": gt_sample.final_diagnosis,
-                    "localizations": [{"bbox": loc.bbox} for loc in gt_sample.localizations],
-                },
-                "hf_index": idx,
-                "has_ground_truth": True,
-            }
+        filename = row["filename"]
+        case_id = row["case_id"]
+        scan_id = row["scan_id"]
+        caption = row["caption_text"]
 
-        raise KeyError(f"No ground truth found for filename {filename} (HF index {idx})")
+        # Extract metadata from the 'meta' dict
+        meta = row["meta"] if isinstance(row["meta"], dict) else {}
+        clinical_history = meta.get("clinical_history", "")
+        final_diagnosis = meta.get("final_diagnosis", "")
+
+        # Extract gold-standard bounding boxes
+        bboxes_raw = row["bboxes"] if row["bboxes"] is not None else []
+        localizations = []
+        for bbox in bboxes_raw:
+            if not isinstance(bbox, dict):
+                continue
+            if bbox.get("source") != "gold":
+                continue
+            x = float(bbox["x"])
+            y = float(bbox["y"])
+            w = float(bbox["width"])
+            h = float(bbox["height"])
+            # Convert (x, y, width, height) to (x1, y1, x2, y2)
+            localizations.append({"bbox": (x, y, x + w, y + h)})
+
+        return {
+            "image": image,
+            "metadata": {
+                "image_id": idx,
+                "filename": filename,
+                "case_id": case_id,
+                "scan_id": scan_id,
+                "clinical_history": clinical_history,
+                "final_diagnosis": final_diagnosis,
+                "caption": caption,
+                "localizations": localizations,
+            },
+            "ground_truth": {
+                "filename": filename,
+                "case_id": case_id,
+                "scan_id": scan_id,
+                "caption": caption,
+                "clinical_history": clinical_history,
+                "final_diagnosis": final_diagnosis,
+                "localizations": localizations,
+            },
+            "hf_index": idx,
+            "has_ground_truth": True,
+        }
 
 
 @beartype
