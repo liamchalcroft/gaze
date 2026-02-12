@@ -1,47 +1,42 @@
 # Usage Guide
 
-## Setup
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.10+
 - uv package manager
-- OpenRouter and/or OpenAI API keys (required for hosted models)
+- OpenRouter and/or OpenAI API keys
 
-### Install Dependencies
+## Install
 
 ```bash
-# From repo root
 cd examples/nova
 uv sync
 ```
 
-### Environment
+## Environment
 
-Create a `.env` file in `examples/nova`:
+Create `.env` in `examples/nova/`:
 
 ```dotenv
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Optional defaults
+OPENROUTER_API_KEY=your_key
+OPENAI_API_KEY=your_key
 DATA_DIR=./data/nova
 OUTPUT_DIR=./runs
 ```
 
-## Data Requirements
+## Data
 
-- Images are loaded from the HuggingFace dataset `c-i-ber/Nova` at runtime.
+- Images load from the HuggingFace dataset `c-i-ber/Nova` at runtime.
 - Ground-truth CSVs must exist in `DATA_DIR`:
   - `captions.csv`
   - `case_metadata.csv`
   - `bboxes_gold.csv`
 
-If these files are missing, the CLI will fail fast when loading ground truth.
+The CLI fails fast if these files are missing.
 
-## CLI Usage
+## CLI
 
-### Basic Run
+### Basic run
 
 ```bash
 uv run python -m src.cli \
@@ -51,7 +46,7 @@ uv run python -m src.cli \
   --output-dir ./runs
 ```
 
-### Enable Tools + Web Search
+### With tools and search
 
 ```bash
 uv run python -m src.cli \
@@ -62,7 +57,7 @@ uv run python -m src.cli \
   --max-turns 5
 ```
 
-### Re-run Existing Samples
+### Re-run existing samples
 
 ```bash
 uv run python -m src.cli \
@@ -71,23 +66,15 @@ uv run python -m src.cli \
   --no-skip-existing
 ```
 
-### Verbose Logs
+### Verbose
 
 ```bash
 uv run python -m src.cli --task all --model openai/gpt-4o -v
 ```
 
-## Outputs
+## Output
 
-The CLI writes per-sample results and a summary:
-
-- `sample_<index>.json` for each processed sample
-- `summary.json` with aggregate metrics and configuration
-
-## Visualization (Optional)
-
-```bash
-uv run streamlit run src/visualization/gui.py
-```
+- `sample_<index>.json` -- per-sample result
+- `summary.json` -- aggregate metrics and configuration
 
 See [Agentic Workflow](./agentic_workflow.md) for the tool loop and prompt flow.

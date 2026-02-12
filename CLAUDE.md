@@ -1,195 +1,163 @@
 # Radiant Harness - Project Guide for Claude
 
 ## Project Overview
-Radiant Harness is a modular framework for building multi-turn agentic vision-language model systems for medical image analysis. It provides core infrastructure for tool-augmented reasoning over radiological images.
 
-The repository also includes `examples/nova/` - a complete example implementation for benchmarking VLMs on the NOVA brain-MRI dataset.
+Radiant Harness is a modular framework for building multi-turn agentic VLM systems for medical image analysis. It provides tool-augmented reasoning over radiological images.
 
-## Quick Reference
+The primary example implementation is `examples/nova/` -- a benchmark for VLMs on the NOVA brain-MRI dataset. Additional examples exist for GEMeX visual grounding, AgentClinic diagnostic reasoning, PubMedQA, and VQA-RAD (the latter two are verifiers environments only with no standalone CLI).
 
-### Project Structure
+## Project Structure
+
 ```
-radiant_harness/
-├── src/radiant_harness/        # Main Python package
-│   ├── __init__.py             # Public API exports
-│   ├── __main__.py             # CLI entry point
-│   ├── base.py                 # AgenticProcessorBase abstract class
-│   ├── config.py               # Configuration dataclasses
-│   ├── types.py                # Core types (ToolCall, ToolResult, Turn, AgenticResult)
-│   ├── exceptions.py           # Exception hierarchy
-│   ├── cache.py                # TTLCache implementation
-│   ├── models/                 # Model adapters
-│   │   ├── adapter_protocol.py # AdapterProtocol
-│   │   ├── openai_adapter.py   # OpenAI API adapter
-│   │   └── huggingface_adapter.py # HuggingFace adapter (optional)
-│   ├── tools/                  # Tool system
-│   │   ├── tool.py             # Tool class definition
-│   │   ├── registry.py         # ToolRegistry, EncodedImage
-│   │   ├── visual.py           # Visual tools (zoom, crop, contrast, etc.)
-│   │   ├── search.py           # Search tools (web, image)
-│   │   ├── image_manager.py    # Image loading and transformation
-│   │   └── image_ops.py        # Image operations
-│   ├── retrieval/              # External search integrations
-│   │   ├── web_search.py       # PubMed search
-│   │   └── image_search.py     # Open-i image search
-│   ├── prompts/                # Template loading utilities
-│   │   └── __init__.py         # Jinja template loading
-│   ├── verifiers/              # RL training integration
-│   │   ├── adapter.py          # RadiantHarnessAdapter
-│   │   ├── base.py             # BaseMultiTurnEnv
-│   │   ├── mixin.py            # VerifiableProcessorMixin
-│   │   └── rewards.py          # Reward functions
-│   └── utils/
-│       ├── iou.py              # IoU calculation
-│       └── json_extract.py     # JSON extraction
-├── examples/                   # Example implementations
-│   ├── nova/                   # NOVA brain-MRI benchmark
-│   ├── gemex_thinkvg/          # Visual grounding with RL
-│   ├── agentclinic_nejm/       # Diagnostic reasoning
-│   ├── pubmedqa/               # Medical Q&A
-│   └── vqa_rad/                # Radiology VQA
-├── tests/                      # Test suite
-├── docs/                       # Documentation
-├── pyproject.toml              # Project configuration
-├── AUDIT_LOG.md                # Audit tracking
-└── README.md
+src/radiant_harness/
+    __init__.py                 # Public API exports
+    __main__.py                 # CLI entry point (info only)
+    base.py                     # AgenticProcessorBase, ImageInput
+    config.py                   # HarnessConfig, AgenticConfig, SearchConfig, etc.
+    types.py                    # ToolCall, ToolResult, Turn, AgenticResult
+    exceptions.py               # HarnessError hierarchy
+    cache.py                    # TTLCache
+    models/
+        adapter_protocol.py     # AdapterProtocol, GenerationLog
+        openai_adapter.py       # OpenAIAdapter
+        huggingface_adapter.py  # HuggingFaceAdapter, HuggingFaceVLMAdapter (optional)
+    tools/
+        tool.py                 # Tool class
+        registry.py             # ToolRegistry, ToolDocumenter, EncodedImage
+        visual.py               # zoom, crop, contrast, threshold, flip, rotate, reset
+        search.py               # search_web (PubMed), search_images (Open-i)
+        image_manager.py        # Image loading and transformation state
+    retrieval/
+        web_search.py           # PubMed search via NCBI E-utilities
+        image_search.py         # NIH Open-i image search
+    prompts/
+        __init__.py             # Jinja2 template loading (minijinja)
+    verifiers/
+        adapter.py              # RadiantHarnessAdapter
+        base.py                 # BaseMultiTurnEnv
+        mixin.py                # VerifiableProcessorMixin
+        rewards.py              # ExactMatchReward, TokenF1Reward, IoUReward, CombinedReward
+    utils/
+        iou.py                  # compute_iou
+        json_extract.py         # extract_json_from_text
+examples/
+    nova/                       # NOVA brain-MRI benchmark (full CLI + evaluation)
+    gemex_thinkvg/              # GEMeX visual grounding with RL rewards
+    agentclinic_nejm/           # Multi-turn diagnostic reasoning
+    pubmedqa/                   # PubMedQA (verifiers env only)
+    vqa_rad/                    # VQA-RAD (verifiers env only)
+environments/
+    nova_brain_mri/             # MedMarks-compatible NOVA evaluation environment
+tests/
+docs/
+    verifiers_integration.md
+    MEDMARKS_INTEGRATION.md
+pyproject.toml
+AUDIT_REPORT.md
+Makefile
 ```
 
 ## Key Commands
 
-### Development Commands
 ```bash
-# Environment management (REQUIRED - use uv exclusively)
+# Install
 uv sync
-uv run python -m radiant_harness
 
-# Run all quality checks (recommended)
+# Run all quality checks
 make check
 
-# Run tests
+# Individual checks
+uv run ruff check .
+uv run ruff format .
+uv run pyright
+
+# Tests
 uv run pytest
 uv run pytest --cov=radiant_harness --cov-report=html
 
-# Code quality checks (individual)
-uv run ruff check .          # Linting
-uv run ruff format .         # Formatting
-uv run pyright               # Type checking
-
-# Pre-commit hooks
-pre-commit run --all-files
-```
-
-### Running NOVA Examples
-```bash
-# Run from examples/nova directory or use full paths
+# NOVA example
 cd examples/nova
-python -m src.cli task=localization model.name=openai/gpt-4o
+uv run python -m src.cli --task localization --model openai/gpt-4o --data-dir ./data/nova --output-dir ./runs
 ```
 
 ## Technology Stack
-- **Core**: Python 3.10+, asyncio
-- **Models**: OpenAI API compatible (OpenRouter, OpenAI)
-- **Web Search**: PubMed, Open-i integration
-- **Templating**: minijinja
-- **Type Safety**: beartype (runtime validation)
-- **Development**: uv, ruff, pyright
 
-## Important Files
-- `src/radiant_harness/__init__.py` - Public API
-- `src/radiant_harness/base.py` - AgenticProcessorBase abstract class
-- `src/radiant_harness/config.py` - Configuration dataclasses
-- `src/radiant_harness/types.py` - Core type definitions
-- `src/radiant_harness/tools/registry.py` - ToolRegistry
-- `src/radiant_harness/tools/visual.py` - Visual tool implementations
-- `src/radiant_harness/models/openai_adapter.py` - OpenAI API adapter
-- `src/radiant_harness/verifiers/` - RL training integration (verifiers package)
+- Python 3.10+, asyncio
+- OpenAI API (OpenRouter, OpenAI) via `openai` SDK
+- PubMed (NCBI E-utilities), Open-i image search
+- minijinja for templating
+- beartype for runtime type validation
+- uv, ruff, pyright for dev tooling
 
-## Architecture & Design Principles
+## Architecture
 
-### Core Pattern: AgenticProcessorBase
-The harness follows a dependency injection pattern where task-specific details (prompts, schemas, validation) are provided by subclasses while the core agentic loop, tool execution, and conversation management are handled by the base class.
+### AgenticProcessorBase
 
-```python
-from radiant_harness import AgenticProcessorBase, ToolRegistry
+Dependency injection pattern: subclasses provide task-specific prompts, schemas, and validation. The base class handles the agentic loop, tool execution, and conversation management.
 
-class MyProcessor(AgenticProcessorBase):
-    def get_system_prompt(self, images, metadata) -> str:
-        return "You are a medical imaging expert..."
+Abstract methods to implement:
+- `get_system_prompt(images: list[ImageInput], metadata: dict) -> str`
+- `get_user_message(images: list[ImageInput], metadata: dict) -> str`
+- `get_response_schema() -> dict | None`
+- `validate_response(response: dict) -> bool`
+- `calculate_confidence(response: dict) -> float` (optional, default returns 0.0)
 
-    def get_user_message(self, images, metadata) -> str:
-        return f"Analyze this scan. History: {metadata.get('history')}"
-
-    def get_response_schema(self) -> dict | None:
-        return {"type": "json_schema", ...}
-
-    def validate_response(self, response) -> bool:
-        return "findings" in response
-```
+Entry point: `await processor.analyze(images, metadata, image_labels)` returns `AgenticResult`.
 
 ### Tool System
-Tools are registered via ToolRegistry and can be:
-- **Visual tools**: zoom, crop, contrast, threshold, flip, rotate, reset
-- **Search tools**: search_web (PubMed), search_images (Open-i)
+
+Tools registered via `ToolRegistry`:
+- **Visual**: zoom, crop, contrast, threshold, flip, rotate, reset
+- **Search**: search_web (PubMed), search_images (Open-i)
 
 ### Response Format
-Models must return JSON with a `continue` field:
-- `continue: true` - Model needs another turn
-- `continue: false` - Model is done, response is final
 
-## Code Standards (ENFORCED)
+Models return JSON each turn with a `continue` boolean:
+- `true` -- model wants another turn
+- `false` -- final response
 
-### Required Practices
-1. **uv**: All dependency management via `uv sync`, `uv add`, `uv run`
-2. **ruff**: Linting and formatting
-3. **pyright**: Type checking
-4. **beartype**: Runtime validation with `@beartype` decorator
-5. **Fail fast**: Use proper exceptions instead of silent fallbacks
-6. **No AI slop**: No "robust" parsers, no overly defensive code
+## Code Standards
 
-### Exception Handling
-- Use specific exception types from `radiant_harness.exceptions`
-- Never use bare `except:` or broad `except Exception:`
-- Let exceptions propagate - don't swallow errors
+1. **uv** for all dependency management
+2. **ruff** for linting and formatting
+3. **pyright** for type checking
+4. **beartype** for runtime validation (`@beartype` decorator)
+5. **Fail fast** -- use specific exceptions from `radiant_harness.exceptions`, never bare `except:` or broad `except Exception:`
+6. **No slop** -- no overly defensive code, no silent fallbacks
 
-## Common Development Tasks
+## Common Tasks
 
-### Adding a New Task Processor
-1. Create processor subclassing `AgenticProcessorBase`
-2. Implement abstract methods: `get_system_prompt`, `get_user_message`, `get_response_schema`, `validate_response`
+### Adding a Task Processor
+
+1. Subclass `AgenticProcessorBase`
+2. Implement `get_system_prompt`, `get_user_message`, `get_response_schema`, `validate_response`
 3. Add `@beartype` decorators
-4. Create prompt templates if needed
+4. Optionally mix in `VerifiableProcessorMixin` for RL integration
 
-### Adding a New Tool
-1. Create async execute function: `async def _execute_my_tool(registry: ToolRegistry, **kwargs) -> ToolResult`
-2. Create Tool instance with parameters schema
-3. Register with ToolRegistry
+### Adding a Tool
 
-### Adding a New Model Adapter
+1. Write async execute function: `async def _execute_my_tool(registry: ToolRegistry, **kwargs) -> ToolResult`
+2. Create `Tool` instance with name, description, parameters schema, execute function
+3. Include in the tools list passed to `ToolRegistry`
+
+### Adding a Model Adapter
+
 1. Implement `AdapterProtocol` from `radiant_harness.models`
-2. Implement `generate_chat()` method
-3. Return `(content, tool_calls, GenerationLog)` tuple
+2. Implement `generate_chat()` returning `(content, tool_calls, GenerationLog)`
 
 ## Configuration
-Configuration uses frozen dataclasses in `config.py`:
-- `HarnessConfig` - Root configuration
-- `AgenticConfig` - Agentic processing settings
-- `SearchConfig` - Search operation settings
-- `CacheConfig` - Caching behavior
-- `ImageProcessingConfig` - Image operation limits
 
-Access via `get_config()` or create custom instances.
+Frozen dataclasses in `config.py`:
+- `HarnessConfig` -- root config
+- `AgenticConfig` -- turn limits, temperature, max tokens
+- `SearchConfig` -- timeouts, retries, rate limiting, NCBI/Open-i URLs
+- `CacheConfig` -- size, TTL, eviction
+- `ImageProcessingConfig` -- image dimension limits, zoom/contrast bounds
+
+Access via `get_config()` / `set_config()`.
 
 ## API Keys
-- `OPENROUTER_API_KEY` or `OPENAI_API_KEY` - For model API
-- `NCBI_API_KEY` (optional) - For PubMed search
-- `NCBI_EMAIL` (optional) - For PubMed API
 
-## Testing
-```bash
-uv run pytest tests/                    # Run all tests
-uv run pytest tests/test_tool_registry.py  # Specific test file
-uv run pytest -v --tb=short             # Verbose with short traceback
-```
-
----
-*This file documents the radiant_harness package structure for Claude Code assistance.*
+- `OPENROUTER_API_KEY` or `OPENAI_API_KEY` -- model API
+- `NCBI_API_KEY` (optional) -- PubMed search
+- `NCBI_EMAIL` (optional) -- PubMed API compliance

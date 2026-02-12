@@ -1,107 +1,28 @@
-"""Radiology VLM Agent Harness.
+"""Radiant Harness -- agentic tool harness for vision-language models.
 
-A modular framework for building multi-turn agentic vision-language model
-systems for medical image analysis. Provides the core infrastructure for
-tool-augmented reasoning over radiological images.
+Subclass ``AgenticProcessorBase``, implement four methods, and call
+``analyze()`` to run multi-turn agentic analysis with visual tools and
+web search.
 
-Key Features:
-    - Multi-turn agentic analysis with configurable turn limits
-    - Visual manipulation tools (zoom, crop, contrast, threshold, flip, rotate)
-    - Web search integration for evidence-based analysis (PubMed, Open-i)
-    - Structured JSON output with schema validation
-    - Prompt templating via Jinja2
-    - Extensible architecture via abstract base class
+Example::
 
-Quick Start:
-    1. Subclass AgenticProcessorBase
-    2. Implement the abstract methods for your task
-    3. Create your prompts in a prompts/ directory
-    4. Use the built-in tools or add custom ones
+    from radiant_harness import AgenticProcessorBase
 
-Example:
-    ```python
-    from harness import AgenticProcessorBase, ToolRegistry, create_visual_tools
+    class MyProcessor(AgenticProcessorBase):
+        def get_system_prompt(self, images, metadata):
+            return "You are a medical imaging expert."
 
-    class MyRadiologyProcessor(AgenticProcessorBase):
-        '''Custom processor for chest X-ray analysis.'''
-
-        def get_system_prompt(self, image_path, metadata, width, height):
-            return load_template(
-                PROMPTS_DIR / "system.jinja",
-                {"width": width, "height": height, **metadata}
-            )
-
-        def get_user_message(self, image_path, metadata):
-            return f"Analyze this chest X-ray. History: {metadata.get('history', 'None')}"
+        def get_user_message(self, images, metadata):
+            return f"Analyze this scan. History: {metadata.get('history', '')}"
 
         def get_response_schema(self):
-            return {
-                "type": "object",
-                "properties": {
-                    "findings": {"type": "array", "items": {"type": "string"}},
-                    "impression": {"type": "string"},
-                    "continue": {"type": "boolean"},
-                },
-                "required": ["findings", "impression", "continue"],
-            }
+            return None
 
         def validate_response(self, response):
-            return "findings" in response and "impression" in response
+            return "findings" in response
 
-    # Usage
-    processor = MyRadiologyProcessor(
-        model_name="openai/gpt-4o",
-        use_tools=True,
-        use_web_search=True,
-        max_turns=10,
-    )
-    result = await processor.analyze(image_path, {"history": "Cough for 2 weeks"})
-    print(result.final_response)
-    ```
-
-Architecture:
-    The harness follows a dependency injection pattern where task-specific
-    details (prompts, schemas, validation) are provided by subclasses while
-    the core agentic loop, tool execution, and conversation management are
-    handled by the base class.
-
-    ```
-    AgenticProcessorBase (abstract)
-        |
-        +-- get_system_prompt()      # Task-specific system prompt
-        +-- get_user_message()       # Task-specific user message
-        +-- get_response_schema()    # JSON schema for structured output
-        +-- validate_response()      # Response validation
-        +-- calculate_confidence()   # Optional: custom confidence scoring
-        |
-        +-- analyze()                # Main entry point (provided)
-            +-- _run_analysis()      # Core agentic loop (provided)
-            +-- _execute_tools()     # Tool execution (provided)
-    ```
-
-Tool System:
-    Tools are registered via ToolRegistry and can be visual (image manipulation)
-    or search-based (web/image search). The harness provides factory functions
-    to create standard tool sets:
-
-    - create_visual_tools(): zoom, crop, adjust_contrast, threshold, flip, rotate, reset
-    - create_search_tools(): search_web (PubMed), search_images (Open-i)
-
-    Custom tools can be added by creating Tool instances with an async execute function.
-
-Response Format:
-    The model's response must be valid JSON with a 'continue' field:
-    - continue: true  -> Model wants another turn (will receive tool results or continue)
-    - continue: false -> Model is done, response is final
-
-    The harness enforces max_turns and provides warnings on the penultimate turn.
-
-Modules:
-    - base: AgenticProcessorBase abstract class
-    - types: ToolCall, ToolResult, Turn, AgenticResult dataclasses
-    - tools: ToolRegistry, Tool, create_visual_tools, create_search_tools
-    - prompts: Jinja2 template loading utilities
-    - exceptions: Harness-specific exception hierarchy
+    processor = MyProcessor(model_name="openai/gpt-4o", use_tools=True)
+    result = await processor.analyze(images=Path("scan.jpg"), metadata={})
 """
 
 from __future__ import annotations

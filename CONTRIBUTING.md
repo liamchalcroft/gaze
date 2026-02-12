@@ -1,35 +1,29 @@
-# Contributing to NOVA Retrieval VLM
+# Contributing to Radiant Harness
 
-## Getting Started
+## Setup
 
-### Development Setup
-
-1. **Fork and clone the repository:**
+1. Fork and clone:
    ```bash
-   git clone https://github.com/your-username/nova_retrieval_vlm.git
-   cd nova_retrieval_vlm
+   git clone https://github.com/your-username/radiant_harness.git
+   cd radiant_harness
    ```
 
-2. **Set up development environment:**
+2. Install:
    ```bash
    uv sync
    pre-commit install
    ```
 
-3. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Add your API keys to .env (see README.md)
-   ```
+3. Configure API keys in `.env` (see README.md).
 
-### Development Workflow
+## Workflow
 
-1. **Create a feature branch:**
+1. Create a branch:
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
-2. **Make your changes and test:**
+2. Make changes, then check:
    ```bash
    uv run pytest
    uv run ruff check .
@@ -37,216 +31,70 @@
    uv run pyright src/
    ```
 
-3. **Commit your changes:**
+3. Commit (conventional commits):
    ```bash
-   git add .
-   git commit -m "feat: description of your changes"
+   git commit -m "feat: description of changes"
    ```
 
-## Types of Contributions
+## What to Contribute
 
-### 🐛 Bug Reports
+### Bug Reports
+- Steps to reproduce, system info, logs/error messages.
 
-- Use the GitHub issue template
-- Include steps to reproduce
-- Provide system information
-- Include relevant logs/error messages
+### New Model Adapters
+Implement `AdapterProtocol`:
+```python
+# src/radiant_harness/models/your_adapter.py
+from radiant_harness.models import AdapterProtocol, GenerationLog
 
-### ✨ Feature Requests
+class YourAdapter:
+    async def generate_chat(self, messages, max_tokens, temperature, tools, response_format, stream):
+        # ...
+        return content, tool_calls, GenerationLog(prompt_tokens, completion_tokens, finish_reason)
+```
 
-- Describe the problem you're solving
-- Explain your proposed solution
-- Consider backwards compatibility
-- Discuss performance implications
+### New Tools
+Create an async execute function and a `Tool` instance:
+```python
+from radiant_harness.tools import Tool, ToolRegistry
+from radiant_harness.types import ToolResult
 
-### 📝 Documentation
+async def _execute_my_tool(registry: ToolRegistry, **kwargs) -> ToolResult:
+    # ...
+    return ToolResult(tool_name="my_tool", description="Did something")
 
-- Fix typos or unclear explanations
-- Add examples and tutorials
-- Improve API documentation
-- Update README or guides
+my_tool = Tool(
+    name="my_tool",
+    description="Does something useful",
+    parameters={"type": "object", "properties": {...}},
+    execute=_execute_my_tool,
+)
+```
 
-### 🧪 Adding New Models
-
-We welcome contributions of new model adapters! To add support for a new model:
-
-1. **Create model adapter:**
-   ```python
-   # src/nova_retrieval_vlm/models/your_model_adapter.py
-   from .base import BaseAdapter
-   
-   class YourModelAdapter(BaseAdapter):
-       # Implement required methods
-       pass
-   ```
-
-2. **Add configuration:**
-   - Update `ModelConfig` if needed
-   - Add model to supported models list
-   - Update documentation
-
-3. **Add tests:**
-   ```python
-   # tests/test_your_model.py
-   def test_your_model_adapter():
-       # Test implementation
-       pass
-   ```
-
-### 🔧 Evaluation Metrics
-
-To add new evaluation metrics:
-
-1. **Implement metric:**
-   ```python
-   # src/nova_retrieval_vlm/evaluation/your_metric.py
-   def your_metric(predictions, references):
-       # Implement metric calculation
-       return score
-   ```
-
-2. **Update evaluator:**
-   - Add to evaluation pipeline
-   - Include in configuration options
-   - Add tests and documentation
-
-### 📊 Retrieval Methods
-
-To add new retrieval methods:
-
-1. **Implement retriever:**
-   ```python
-   # src/nova_retrieval_vlm/retrieval/your_retriever.py
-   from .base import BaseRetriever
-   
-   class YourRetriever(BaseRetriever):
-       # Implement retrieval logic
-       pass
-   ```
-
-2. **Update configuration:**
-   - Add to `RetrievalConfig`
-   - Update CLI options
-   - Add documentation
+### Evaluation Metrics
+Add to the relevant example's `evaluation/` directory. Follow the existing pattern in `examples/nova/src/evaluation/`.
 
 ## Code Standards
 
-### Python Style
+- **Style**: ruff handles formatting (line length 100). Use type hints.
+- **Runtime validation**: `@beartype` decorator on public functions.
+- **Exceptions**: use specific types from `radiant_harness.exceptions`. Never bare `except:`.
+- **Commits**: conventional format (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`).
+- **Tests**: pytest, >60% coverage target, mock external API calls.
 
-- Follow PEP 8
-- Use type hints
-- Write docstrings for all public functions
-- Maximum line length: 88 characters
+## Pull Requests
 
-### Commit Messages
-
-Use conventional commit format:
-- `feat:` new features
-- `fix:` bug fixes
-- `docs:` documentation changes
-- `test:` test additions/changes
-- `refactor:` code refactoring
-- `perf:` performance improvements
-
-### Testing
-
-- Write tests for new functionality
-- Maintain >80% code coverage
-- Use pytest fixtures for common setups
-- Mock external API calls
-
-### Documentation
-
-- Update README.md for user-facing changes
-- Add docstrings with examples
-- Update type hints
-- Include references to papers/methods
+- Clear title and description
+- All CI checks pass
+- New tests for new functionality
+- Squash and merge for feature branches
 
 ## Research Contributions
 
-### Experimental Results
-
-When contributing experimental results:
-
-1. **Include methodology:**
-   - Dataset splits used
-   - Model configurations
-   - Evaluation metrics
-   - Hardware specifications
-
-2. **Provide reproducibility:**
-   - Configuration files
-   - Random seeds
-   - Dependency versions
-   - Results logs
-
-3. **Statistical significance:**
-   - Multiple runs
-   - Confidence intervals
-   - Statistical tests
-
-### Benchmarking
-
-For benchmark contributions:
-
-1. **Fair comparison:**
-   - Same evaluation protocol
-   - Consistent preprocessing
-   - Proper baselines
-
-2. **Comprehensive evaluation:**
-   - Multiple metrics
-   - Error analysis
-   - Ablation studies
-
-## Review Process
-
-### Pull Request Guidelines
-
-1. **Description:**
-   - Clear title and description
-   - Link related issues
-   - List changes made
-   - Include testing information
-
-2. **Code Review:**
-   - All CI checks must pass
-   - At least one approving review
-   - Address reviewer feedback
-   - Maintain clean commit history
-
-3. **Testing:**
-   - All tests pass
-   - New tests for new functionality
-   - No decrease in coverage
-
-### Merging
-
-- Use squash and merge for feature branches
-- Maintain linear history on main branch
-- Delete merged branches
-
-## Community Guidelines
-
-### Code of Conduct
-
-- Be respectful and inclusive
-- Welcome newcomers
-- Provide constructive feedback
-- Focus on technical merit
-
-### Communication
-
-- Use GitHub issues for bugs/features
-- Discussions for questions/ideas
-- Be patient and helpful
-- Share knowledge and resources
-
-## Getting Help
-
-- Check the [Documentation](./docs/)
-- Search [GitHub Issues](https://github.com/your-org/nova_retrieval_vlm/issues)
-- Ask in GitHub Discussions
+When contributing experimental results, include:
+- Dataset splits, model configurations, evaluation metrics
+- Configuration files, random seeds, dependency versions
+- Multiple runs with confidence intervals where possible
 
 ## License
 

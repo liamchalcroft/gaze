@@ -3,35 +3,31 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A production-ready, modular framework for building multi-turn agentic vision-language model systems. Built for medical image analysis but versatile enough for any visual reasoning task.
+A modular framework for building multi-turn agentic vision-language model systems. Built for medical image analysis but usable for any visual reasoning task.
 
-## ✨ Features
+## Features
 
-- **🛠️ Tool System**: Extensible registry with built-in visual and search tools
-- **🔄 Multi-turn Conversations**: Full agentic loop with tool calling support
-- **🎯 Task-Specific Processors**: Easy dependency injection for custom workflows
-- **📦 Multiple Model Adapters**: OpenAI, OpenRouter, and local HuggingFace models
-- **🔍 Integrated Search**: PubMed literature and medical image search
-- **⚡ Production Ready**: Retry logic, error handling, resource management
-- **🧪 Verifiers Integration**: Reward functions for RL training
+- **Tool system** -- extensible registry with visual manipulation (zoom, crop, contrast, threshold, flip, rotate) and search tools (PubMed, Open-i)
+- **Multi-turn agentic loop** -- full tool-calling support with configurable turn limits and JSON-structured output
+- **Task processors** -- abstract base class with dependency injection for prompts, schemas, and validation
+- **Model adapters** -- OpenAI API (including OpenRouter), plus optional HuggingFace local models
+- **Verifiers integration** -- reward functions and multi-turn environments for RL training
 
-## 🚀 Quick Start
+## Installation
 
-### Installation
 ```bash
-# Clone and install
 git clone https://github.com/liamchalcroft/radiant_harness.git
 cd radiant_harness
-uv sync  # or pip install -e .
+uv sync
 ```
 
-### Basic Usage
-```python
-from pathlib import Path
-from radiant_harness import AgenticProcessorBase, ImageInput, ToolRegistry
-from radiant_harness import create_visual_tools, create_search_tools
+## Usage
 
-# Define your task-specific processor
+Subclass `AgenticProcessorBase` and implement four methods:
+
+```python
+from radiant_harness import AgenticProcessorBase
+
 class MyProcessor(AgenticProcessorBase):
     def get_system_prompt(self, images, metadata):
         return "You are a medical imaging expert. Analyze the provided images."
@@ -54,91 +50,72 @@ class MyProcessor(AgenticProcessorBase):
     def validate_response(self, response):
         return "findings" in response
 
-# Run analysis
 processor = MyProcessor(model_name="openai/gpt-4o", use_tools=True)
 result = await processor.analyze(
     images=Path("scan.jpg"),
     metadata={"modality": "MRI", "history": "Patient presents with..."}
 )
-
-print(f"Findings: {result.final_response.get('findings')}")
-print(f"Confidence: {result.confidence:.2f}")
 ```
 
-## 📁 Project Structure
+The model returns JSON each turn with `"continue": true` to keep reasoning or `"continue": false` when done.
+
+## Project Structure
 
 ```
-radiant_harness/
-├── src/radiant_harness/         # Core framework
-│   ├── tools/                   # Tool system (visual, search)
-│   ├── models/                  # Model adapters (OpenAI, HuggingFace)
-│   ├── retrieval/               # Search integration (PubMed, Open-i)
-│   ├── prompts/                 # Template loading (Jinja)
-│   └── verifiers/               # RL training integration
-├── examples/                    # Example implementations
-│   ├── nova/                    # NOVA brain-MRI benchmark
-│   ├── gemex_thinkvg/           # Visual grounding with RL
-│   ├── agentclinic_nejm/        # Diagnostic reasoning
-│   ├── pubmedqa/                # Medical Q&A
-│   └── vqa_rad/                 # Radiology VQA
-├── tests/                       # Test suite
-└── docs/                        # Documentation
+src/radiant_harness/
+    base.py                 # AgenticProcessorBase abstract class
+    types.py                # ToolCall, ToolResult, Turn, AgenticResult
+    config.py               # Configuration dataclasses
+    exceptions.py           # Exception hierarchy
+    cache.py                # TTLCache
+    models/                 # AdapterProtocol, OpenAIAdapter, HuggingFaceAdapter
+    tools/                  # Tool, ToolRegistry, visual tools, search tools
+    retrieval/              # PubMed search, Open-i image search
+    prompts/                # Jinja2 template loading
+    verifiers/              # BaseMultiTurnEnv, reward functions, adapter
+examples/
+    nova/                   # NOVA brain-MRI benchmark (fully implemented)
+    gemex_thinkvg/          # GEMeX visual grounding with RL rewards
+    agentclinic_nejm/       # Multi-turn diagnostic reasoning
+    pubmedqa/               # Medical Q&A (verifiers env only)
+    vqa_rad/                # Radiology VQA (verifiers env only)
+environments/
+    nova_brain_mri/         # MedMarks-compatible NOVA environment
+tests/
+docs/
 ```
 
-## 🧪 Running Tests
+## Tests
 
 ```bash
-# Core framework tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=radiant_harness --cov-report=html
-
-# Run specific test suites
-uv run pytest tests/test_tool_registry.py
-uv run pytest tests/test_base_processor.py
+uv run pytest                                    # all tests
+uv run pytest --cov=radiant_harness --cov-report=html  # with coverage
+uv run pytest tests/test_tool_registry.py        # specific file
 ```
 
-## 📚 Documentation
-
-- [Verifiers Integration Guide](docs/verifiers_integration.md)
-- [MedMarks Integration Guide](docs/MEDMARKS_INTEGRATION.md)
-- [Example: NOVA Benchmark](examples/nova/README.md)
-- [Contributing Guide](CONTRIBUTING.md)
-- [CLAUDE.md](CLAUDE.md) - Project guide for AI assistants
-
-## 🔧 Development
+## Development
 
 ```bash
-# Install dev dependencies
-uv sync --group dev
-
-# Code quality checks
-uv run ruff check .
-uv run ruff format .
-uv run pyright
-
-# Pre-commit hooks
-pre-commit install
-pre-commit run --all-files
+uv sync --group dev        # install dev dependencies
+uv run ruff check .        # lint
+uv run ruff format .       # format
+uv run pyright             # type check
+make check                 # all of the above + tests
 ```
 
-## 🤝 Contributing
+## Documentation
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+- [Verifiers Integration](docs/verifiers_integration.md)
+- [MedMarks Integration](docs/MEDMARKS_INTEGRATION.md)
+- [NOVA Example](examples/nova/README.md)
+- [Contributing](CONTRIBUTING.md)
 
-### Areas for Contribution
+## API Keys
 
-- 🛠️ New tools (segmentation, measurement, etc.)
-- 🤖 Additional model adapters
-- 📊 Evaluation metrics
-- 📚 Documentation improvements
-- 🐛 Bug fixes and performance optimization
+- `OPENROUTER_API_KEY` or `OPENAI_API_KEY` -- for model API access
+- `NCBI_API_KEY` (optional) -- for PubMed search
+- `NCBI_EMAIL` (optional) -- for PubMed API compliance
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-Built with inspiration from the medical AI community and designed to accelerate research in vision-language models for healthcare.
+MIT License. See [LICENSE](LICENSE).
