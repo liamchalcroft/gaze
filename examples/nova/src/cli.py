@@ -39,12 +39,13 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     Returns:
         Dictionary of evaluation results
     """
-    # Load NOVA dataset
-    gt_dir = config.ground_truth_dir or config.data_dir
-    logger.info(f"Loading NOVA dataset from {config.data_dir}")
+    # Load NOVA dataset (images + ground truth from HuggingFace by default)
+    gt_dir_str = str(config.ground_truth_dir) if config.ground_truth_dir else None
+    data_dir_str = str(config.data_dir) if config.data_dir else None
+    logger.info(f"Loading NOVA dataset (data_dir={data_dir_str}, gt_dir={gt_dir_str})")
     dataset = NovaDataset(
-        data_dir=str(config.data_dir),
-        ground_truth_dir=str(gt_dir),
+        data_dir=data_dir_str,
+        ground_truth_dir=gt_dir_str,
     )
 
     # Create NOVA processor using radiant_harness
@@ -311,8 +312,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("./data/nova"),
-        help="Path to NOVA data directory",
+        default=None,
+        help="Path to local NOVA CSV directory (default: load from HuggingFace)",
     )
     parser.add_argument(
         "--ground-truth-dir",

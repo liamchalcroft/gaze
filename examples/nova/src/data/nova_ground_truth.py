@@ -1,7 +1,8 @@
 """NOVA ground truth loader for proper evaluation.
 
 This module provides access to NOVA dataset ground truth annotations
-from the CSV files in the NOVA repository.
+from the CSV files in the NOVA repository. Supports both local CSV
+directories and automatic download from HuggingFace.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from beartype import beartype
 from loguru import logger
+
+HF_REPO_ID = "c-i-ber/Nova"
 
 
 @dataclass
@@ -39,7 +42,7 @@ class NovaGroundTruth:
 
     @beartype
     def __init__(self, nova_dir: str = "~/Nova") -> None:
-        """Initialize ground truth loader.
+        """Initialize ground truth loader from a local directory.
 
         Args:
             nova_dir: Path to NOVA dataset directory containing CSV files
@@ -48,21 +51,48 @@ class NovaGroundTruth:
         self._ground_truth: dict[str, GroundTruth] = {}
         self._load_data()
 
+    @classmethod
+    def from_huggingface(cls, repo_id: str = HF_REPO_ID) -> NovaGroundTruth:
+        """Download ground truth CSVs from HuggingFace and load them.
+
+        Args:
+            repo_id: HuggingFace dataset repository ID
+
+        Returns:
+            Populated NovaGroundTruth instance
+        """
+        from huggingface_hub import hf_hub_download
+
+        logger.info(f"Downloading ground truth CSVs from {repo_id}")
+        instance = object.__new__(cls)
+        instance._ground_truth = {}
+
+        # Download CSVs to HF cache (cached after first download)
+        captions_path = hf_hub_download(repo_id, "captions.csv", repo_type="dataset")
+        metadata_path = hf_hub_download(repo_id, "case_metadata.csv", repo_type="dataset")
+        bboxes_path = hf_hub_download(repo_id, "bboxes_gold.csv", repo_type="dataset")
+
+        instance.nova_dir = Path(captions_path).parent
+        instance._load_captions_from(Path(captions_path))
+        instance._load_case_metadata_from(Path(metadata_path))
+        instance._load_bboxes_from(Path(bboxes_path))
+
+        logger.info(f"Loaded {len(instance._ground_truth)} ground truth samples from HuggingFace")
+        return instance
+
     def _load_data(self) -> None:
-        """Load all ground truth data from CSV files."""
+        """Load all ground truth data from CSV files in nova_dir."""
         if not self.nova_dir.exists():
             raise FileNotFoundError(f"NOVA directory not found: {self.nova_dir}")
 
-        # Load captions and case metadata
-        self._load_captions()
-        self._load_case_metadata()
-        self._load_bboxes()
+        self._load_captions_from(self.nova_dir / "captions.csv")
+        self._load_case_metadata_from(self.nova_dir / "case_metadata.csv")
+        self._load_bboxes_from(self.nova_dir / "bboxes_gold.csv")
 
         logger.info(f"Loaded {len(self._ground_truth)} ground truth samples")
 
-    def _load_captions(self) -> None:
-        """Load caption data from captions.csv."""
-        captions_file = self.nova_dir / "captions.csv"
+    def _load_captions_from(self, captions_file: Path) -> None:
+        """Load caption data from a captions CSV file."""
         if not captions_file.exists():
             raise FileNotFoundError(f"Captions file not found: {captions_file}")
 
@@ -83,9 +113,8 @@ class NovaGroundTruth:
                 else:
                     self._ground_truth[filename].caption = row["caption"]
 
-    def _load_case_metadata(self) -> None:
-        """Load case metadata including diagnosis from case_metadata.csv."""
-        metadata_file = self.nova_dir / "case_metadata.csv"
+    def _load_case_metadata_from(self, metadata_file: Path) -> None:
+        """Load case metadata including diagnosis from a CSV file."""
         if not metadata_file.exists():
             raise FileNotFoundError(f"Case metadata file not found: {metadata_file}")
 
@@ -106,9 +135,8 @@ class NovaGroundTruth:
                 gt.clinical_history = metadata["clinical_history"]
                 gt.final_diagnosis = metadata["final_diagnosis"]
 
-    def _load_bboxes(self) -> None:
-        """Load bounding box data from bboxes_gold.csv."""
-        bboxes_file = self.nova_dir / "bboxes_gold.csv"
+    def _load_bboxes_from(self, bboxes_file: Path) -> None:
+        """Load bounding box data from a CSV file."""
         if not bboxes_file.exists():
             raise FileNotFoundError(f"Bounding boxes file not found: {bboxes_file}")
 

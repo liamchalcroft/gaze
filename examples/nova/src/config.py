@@ -43,8 +43,8 @@ class NOVAConfig:
 
     # NOVA-specific settings
     task: TaskType = TaskType.ALL
-    data_dir: Path = field(default_factory=lambda: Path("./data/nova"))
-    ground_truth_dir: Path | None = None  # Defaults to data_dir if not set
+    data_dir: Path | None = None  # Local CSV dir; None = load from HuggingFace
+    ground_truth_dir: Path | None = None  # Separate GT dir; None = use data_dir or HF
     output_dir: Path = field(default_factory=lambda: Path("./runs"))
     batch_size: int = 4
     skip_existing: bool = True

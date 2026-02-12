@@ -23,16 +23,28 @@ from .nova_ground_truth import NovaGroundTruth
 
 
 class NovaDataset:
-    """Complete NOVA dataset with images, metadata, and ground truth."""
+    """Complete NOVA dataset with images, metadata, and ground truth.
+
+    Ground truth is loaded from local CSVs if ground_truth_dir is provided,
+    otherwise downloaded automatically from HuggingFace.
+    """
 
     @beartype
     def __init__(
         self,
-        data_dir: str = "./data/nova",
+        data_dir: str | None = None,
         ground_truth_dir: str | None = None,
         transform: Compose | None = None,
     ) -> None:
-        """Initialize complete NOVA dataset."""
+        """Initialize complete NOVA dataset.
+
+        Args:
+            data_dir: Deprecated local data directory (unused, images come from HF).
+                      Kept for backward compatibility.
+            ground_truth_dir: Local directory with ground truth CSVs. If None,
+                              CSVs are downloaded from HuggingFace automatically.
+            transform: Optional torchvision transforms to apply to images.
+        """
         self.data_dir = data_dir
         self.transform = transform
 
@@ -41,8 +53,12 @@ class NovaDataset:
             raise TypeError(f"Expected Dataset, got {type(hf_ds).__name__}")
         self.hf_dataset: HFDataset = hf_ds
 
-        gt_path = ground_truth_dir if ground_truth_dir else data_dir
-        self.ground_truth = NovaGroundTruth(gt_path)
+        if ground_truth_dir:
+            self.ground_truth = NovaGroundTruth(ground_truth_dir)
+        elif data_dir and Path(data_dir).expanduser().exists():
+            self.ground_truth = NovaGroundTruth(data_dir)
+        else:
+            self.ground_truth = NovaGroundTruth.from_huggingface()
         logger.info(f"Loaded {len(self.hf_dataset)} samples from NOVA complete dataset")
 
     @beartype

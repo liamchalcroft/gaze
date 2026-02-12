@@ -165,7 +165,13 @@ readme = "README.md"
 nova = [
     "torch",
     "torchvision",
+    "torchmetrics",
+    "pycocotools",
     "datasets",
+    "sacrebleu",
+    "bert-score",
+    "nltk",
+    "huggingface-hub",
 ]
 medmarks = [
     "verifiers>=0.1.6",
