@@ -62,14 +62,10 @@ class ImageManager:
         # Block paths that contain '..' components before resolution
         # (e.g. symlink tricks where resolved path looks safe but intent is malicious)
         if ".." in image_path.parts:
-            raise ToolExecutionError(
-                f"Path traversal detected: {image_path}"
-            )
+            raise ToolExecutionError(f"Path traversal detected: {image_path}")
         # Block device files and other non-regular files (if they already exist)
         if resolved.exists() and not resolved.is_file():
-            raise ToolExecutionError(
-                f"Path is not a regular file: {image_path}"
-            )
+            raise ToolExecutionError(f"Path is not a regular file: {image_path}")
         return resolved
 
     @beartype

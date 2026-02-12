@@ -842,12 +842,8 @@ class WebSearchManager:
             title_lower = result.title.lower()
             content_lower = result.content.lower()
 
-            title_matches = sum(
-                1 for pat in query_term_patterns if pat.search(title_lower)
-            )
-            content_matches = sum(
-                1 for pat in query_term_patterns if pat.search(content_lower)
-            )
+            title_matches = sum(1 for pat in query_term_patterns if pat.search(title_lower))
+            content_matches = sum(1 for pat in query_term_patterns if pat.search(content_lower))
 
             score += (title_matches * weights.title_match_weight) + (
                 content_matches * weights.content_match_weight

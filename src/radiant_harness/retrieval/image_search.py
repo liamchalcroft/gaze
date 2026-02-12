@@ -606,7 +606,7 @@ class MedicalImageSearchManager:
             ImageDownloadError: If the content doesn't match any known format.
         """
         for magic, _fmt in MedicalImageSearchManager._IMAGE_MAGIC:
-            if content[:len(magic)] == magic:
+            if content[: len(magic)] == magic:
                 return
         raise ImageDownloadError(url, "Downloaded content does not match any known image format")
 
@@ -649,8 +649,7 @@ class MedicalImageSearchManager:
             if declared_size > self._MAX_DOWNLOAD_BYTES:
                 raise ImageDownloadError(
                     result.image_url,
-                    f"Image too large: {declared_size} bytes "
-                    f"(max {self._MAX_DOWNLOAD_BYTES})",
+                    f"Image too large: {declared_size} bytes (max {self._MAX_DOWNLOAD_BYTES})",
                 )
 
             content = await response.read()
@@ -658,8 +657,7 @@ class MedicalImageSearchManager:
             if len(content) > self._MAX_DOWNLOAD_BYTES:
                 raise ImageDownloadError(
                     result.image_url,
-                    f"Image too large: {len(content)} bytes "
-                    f"(max {self._MAX_DOWNLOAD_BYTES})",
+                    f"Image too large: {len(content)} bytes (max {self._MAX_DOWNLOAD_BYTES})",
                 )
 
             # Validate actual file content matches an image format.

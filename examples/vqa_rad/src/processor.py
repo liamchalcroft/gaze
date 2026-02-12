@@ -203,8 +203,15 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
                 "You have access to visual tools to examine the image more closely:",
                 "- Use 'zoom' to magnify regions of interest",
                 "- Use 'crop' to focus on specific areas",
-                "- Use 'adjust_contrast' to enhance visibility of structures",
+                "- Use 'adjust_brightness'/'adjust_contrast' for window level/width control",
+                "- Use 'adjust_sharpness' for edge enhancement",
+                "- Use 'window_level' with clinical presets (brain, bone, soft_tissue, etc.)",
                 "- Use 'threshold' to highlight intensity ranges",
+                "- Use 'equalize_histogram'/'adaptive_equalize' for contrast equalization",
+                "- Use 'detect_edges' for lesion boundary detection",
+                "- Use 'get_intensity_stats' for quantitative analysis",
+                "- Use 'measure' to measure distances between points",
+                "- Use 'show_grid' for spatial reference",
                 "",
             ])
 
@@ -266,7 +273,14 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         base_confidence = response.get("confidence", 0.5)
 
         # Bonus for using visual tools (shows thorough examination)
-        visual_tools = {"zoom", "crop", "adjust_contrast", "threshold"}
+        visual_tools = {
+            "zoom", "crop", "adjust_contrast", "adjust_brightness",
+            "adjust_sharpness", "threshold", "window_level",
+            "equalize_histogram", "adaptive_equalize", "detect_edges",
+            "get_intensity_stats", "measure", "show_grid",
+            "symmetry_diff", "annotate_region", "intensity_profile",
+            "denoise", "morphological", "invert",
+        }
         tool_turns = sum(
             1 for t in turns
             if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)

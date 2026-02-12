@@ -765,9 +765,7 @@ class AgenticProcessorBase(ABC):
                 partial_response={"error": "unknown_tool", "tool": tool_call.name},
             ) from e
         except ToolExecutionError as e:
-            logger.warning(
-                f"Tool '{tool_call.name}' failed on turn {turn_idx + 1}: {e}"
-            )
+            logger.warning(f"Tool '{tool_call.name}' failed on turn {turn_idx + 1}: {e}")
             return ToolResult(
                 tool_name=tool_call.name,
                 description=f"Tool '{tool_call.name}' failed",
@@ -823,9 +821,7 @@ class AgenticProcessorBase(ABC):
         async def _run_image_tools() -> None:
             """Run image-mutating tools sequentially."""
             for i in image_indices:
-                results[i] = await self._run_single_tool(
-                    tool_calls[i], tool_registry, turn_idx
-                )
+                results[i] = await self._run_single_tool(tool_calls[i], tool_registry, turn_idx)
 
         async def _run_other_tools() -> None:
             """Run independent tools concurrently."""
@@ -837,7 +833,7 @@ class AgenticProcessorBase(ABC):
                     for i in other_indices
                 )
             )
-            for i, result in zip(other_indices, other_results):
+            for i, result in zip(other_indices, other_results, strict=True):
                 results[i] = result
 
         # Run both groups in parallel — image tools are sequential within
@@ -900,9 +896,7 @@ class AgenticProcessorBase(ABC):
             new_content: list[dict[str, Any]] = []
             for part in content:
                 if part.get("type") == "image_url":
-                    new_content.append(
-                        {"type": "text", "text": "[previous tool image omitted]"}
-                    )
+                    new_content.append({"type": "text", "text": "[previous tool image omitted]"})
                 else:
                     new_content.append(part)
             msg["content"] = new_content

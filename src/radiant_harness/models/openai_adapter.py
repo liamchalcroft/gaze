@@ -51,10 +51,12 @@ def _safe_error_summary(e: Exception) -> str:
 class OpenAIAdapter(AdapterProtocol):
     """Adapter around OpenAI's Chat Completions API (text + vision)."""
 
-    _ALLOWED_BASE_URLS: frozenset[str] = frozenset({
-        OPENROUTER_BASE_URL,
-        "https://api.openai.com/v1",
-    })
+    _ALLOWED_BASE_URLS: frozenset[str] = frozenset(
+        {
+            OPENROUTER_BASE_URL,
+            "https://api.openai.com/v1",
+        }
+    )
 
     @staticmethod
     def _validate_base_url(url: str) -> None:

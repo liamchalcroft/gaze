@@ -42,6 +42,7 @@ def _next_tool_call_id() -> str:
     """Return a globally unique tool-call ID."""
     return f"call_{next(_tool_call_counter)}"
 
+
 _TOOL_SYSTEM_PREAMBLE = (
     "\n\n# Available Tools\n"
     "You may call tools by emitting a fenced code block with the `tool` tag. "

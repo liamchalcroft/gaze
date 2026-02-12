@@ -40,6 +40,16 @@ class ImageProcessingConfig:
     max_contrast_factor: float = 3.0
     min_threshold_window: int = 30
     default_jpeg_quality: int = 85
+    min_brightness_factor: float = 0.5
+    max_brightness_factor: float = 3.0
+    min_sharpness_factor: float = 0.0
+    max_sharpness_factor: float = 3.0
+    max_grid_divisions: int = 8
+    min_gaussian_sigma: float = 0.5
+    max_gaussian_sigma: float = 5.0
+    max_morphological_iterations: int = 5
+    min_clahe_clip_limit: float = 1.0
+    max_clahe_clip_limit: float = 10.0
 
     def __post_init__(self) -> None:
         if self.min_image_size < 1:
@@ -61,13 +71,44 @@ class ImageProcessingConfig:
             )
         if not 1 <= self.min_threshold_window <= 255:
             raise ValueError(
-                f"min_threshold_window must be between 1 and 255, "
-                f"got {self.min_threshold_window}"
+                f"min_threshold_window must be between 1 and 255, got {self.min_threshold_window}"
             )
         if not 1 <= self.default_jpeg_quality <= 100:
             raise ValueError(
-                f"default_jpeg_quality must be between 1 and 100, "
-                f"got {self.default_jpeg_quality}"
+                f"default_jpeg_quality must be between 1 and 100, got {self.default_jpeg_quality}"
+            )
+        if self.min_brightness_factor >= self.max_brightness_factor:
+            raise ValueError(
+                f"min_brightness_factor ({self.min_brightness_factor}) "
+                f"must be < max_brightness_factor ({self.max_brightness_factor})"
+            )
+        if self.min_sharpness_factor < 0:
+            raise ValueError(f"min_sharpness_factor must be >= 0, got {self.min_sharpness_factor}")
+        if self.min_sharpness_factor >= self.max_sharpness_factor:
+            raise ValueError(
+                f"min_sharpness_factor ({self.min_sharpness_factor}) "
+                f"must be < max_sharpness_factor ({self.max_sharpness_factor})"
+            )
+        if not 2 <= self.max_grid_divisions <= 20:
+            raise ValueError(
+                f"max_grid_divisions must be between 2 and 20, got {self.max_grid_divisions}"
+            )
+        if self.min_gaussian_sigma <= 0:
+            raise ValueError(f"min_gaussian_sigma must be > 0, got {self.min_gaussian_sigma}")
+        if self.min_gaussian_sigma >= self.max_gaussian_sigma:
+            raise ValueError(
+                f"min_gaussian_sigma ({self.min_gaussian_sigma}) "
+                f"must be < max_gaussian_sigma ({self.max_gaussian_sigma})"
+            )
+        if not 1 <= self.max_morphological_iterations <= 20:
+            raise ValueError(
+                f"max_morphological_iterations must be between 1 and 20, "
+                f"got {self.max_morphological_iterations}"
+            )
+        if self.min_clahe_clip_limit >= self.max_clahe_clip_limit:
+            raise ValueError(
+                f"min_clahe_clip_limit ({self.min_clahe_clip_limit}) "
+                f"must be < max_clahe_clip_limit ({self.max_clahe_clip_limit})"
             )
 
 
@@ -105,9 +146,7 @@ def _validate_base_url(url: str, field_name: str) -> None:
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(
-            f"{field_name} must use HTTPS scheme, got {parsed.scheme!r} in {url!r}"
-        )
+        raise ValueError(f"{field_name} must use HTTPS scheme, got {parsed.scheme!r} in {url!r}")
     hostname = parsed.hostname
     if not hostname:
         raise ValueError(f"{field_name} has no hostname: {url!r}")
@@ -129,8 +168,7 @@ def _validate_base_url(url: str, field_name: str) -> None:
                 addr = ipaddress.ip_address(sockaddr[0])
                 if addr.is_private or addr.is_loopback or addr.is_link_local:
                     raise ValueError(
-                        f"{field_name} hostname {hostname!r} resolves to "
-                        f"private address {addr}"
+                        f"{field_name} hostname {hostname!r} resolves to private address {addr}"
                     )
         except socket.gaierror:
             pass  # DNS failure is not a security issue here
@@ -255,9 +293,7 @@ class AgenticConfig:
         if self.default_max_tokens < 1:
             raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
         if self.default_temperature < 0:
-            raise ValueError(
-                f"default_temperature must be >= 0, got {self.default_temperature}"
-            )
+            raise ValueError(f"default_temperature must be >= 0, got {self.default_temperature}")
 
 
 @dataclass(frozen=True)

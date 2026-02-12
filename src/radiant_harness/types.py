@@ -54,9 +54,7 @@ class ToolResult:
 
     def __post_init__(self) -> None:
         if bool(self.image_base64) != bool(self.image_mime_type):
-            raise ValueError(
-                "image_base64 and image_mime_type must both be set or both be None"
-            )
+            raise ValueError("image_base64 and image_mime_type must both be set or both be None")
         # Freeze the metadata dict to enforce immutability contract
         if isinstance(self.metadata, MappingProxyType):
             return

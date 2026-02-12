@@ -407,9 +407,7 @@ class ToolRegistry:
         try:
             result = await tool.execute(self, **kwargs)
         except (TypeError, BeartypeException) as e:
-            raise ToolExecutionError(
-                f"Tool '{tool_name}' received invalid arguments: {e}"
-            ) from e
+            raise ToolExecutionError(f"Tool '{tool_name}' received invalid arguments: {e}") from e
 
         self._tool_history.append(result)
         return result

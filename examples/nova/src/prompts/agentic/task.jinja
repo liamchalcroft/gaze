@@ -33,14 +33,50 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
 
 {% if enable_visual_tools is defined and enable_visual_tools %}
 **Visual Tools Available:**
+
+*Viewing & Navigation:*
 - `zoom(factor)`: 2.0-3.0x for boundary refinement
 - `crop(box)`: Isolate regions with [x1, y1, x2, y2] normalized 0-1
-- `adjust_contrast(factor)`: 1.5-2.0 for tissue differentiation
-- `threshold(lower, upper)`: Sequence-specific intensity windowing
+- `show_grid(divisions)`: Overlay labeled grid (A1, B2, etc.) for spatial reference
 - `flip_horizontal/flip_vertical`: Symmetry assessment
+- `rotate(clockwise?)`: Rotate 90 degrees
 - `reset()`: Return to original image
 
-Use multiple tools per finding for precise localization.
+*Enhancement & Windowing:*
+- `adjust_brightness(factor)`: Window level control (0.5-3.0, 1.0=unchanged)
+- `adjust_contrast(factor)`: Window width control (0.5-3.0, 1.0=unchanged)
+- `adjust_sharpness(factor)`: Edge enhancement (0.0=blur, 1.0=original, >1.0=sharpen)
+- `window_level(center?, width?, preset?)`: Clinical windowing with presets: brain, subdural, bone, soft_tissue, stroke, posterior_fossa
+- `threshold(lower, upper)`: Sequence-specific intensity windowing
+- `equalize_histogram()`: Automatic contrast equalization (grayscale)
+- `adaptive_equalize(clip_limit?, tile_size?)`: CLAHE with configurable clip limit (1.0-10.0) and tile size
+
+*Edge & Structure Detection:*
+- `detect_edges(method?)`: Edge detection via "sobel" (default) or "laplacian"
+- `denoise(sigma)`: Gaussian denoising (sigma 0.5-5.0)
+- `morphological(operation, iterations?, threshold_value?)`: Morphological ops: erode, dilate, open, close
+- `invert()`: Invert image intensities
+
+*Quantitative Analysis:*
+- `get_intensity_stats(box?)`: Intensity statistics (mean, std, min, max, median, histogram). Optional sub-region [x1,y1,x2,y2] 0-1.
+- `intensity_profile(point1, point2)`: Sample intensity values along a line between two [x,y] points (0-1)
+- `measure(point1, point2)`: Measure distance in pixels between two [x,y] points (0-1)
+- `symmetry_diff()`: Compute left-right difference map to highlight asymmetries
+
+*Annotation:*
+- `annotate_region(box, color?, label?)`: Draw bounding box overlay with optional label. Box as [x1,y1,x2,y2] 0-1.
+
+**Tool Usage Strategy:**
+- Use `get_intensity_stats()` BEFORE contrast/threshold for informed decisions
+- Use `show_grid(4)` early to establish spatial reference for localization
+- Use `window_level(preset="brain")` for standard brain tissue windowing
+- Combine `adjust_brightness` + `adjust_contrast` for independent window level/width control
+- Use `detect_edges()` to highlight lesion boundaries for measurement
+- Use `symmetry_diff()` to identify lateralized abnormalities
+- Use `intensity_profile()` to characterize signal transitions across lesion margins
+- Use `measure()` to quantify lesion dimensions before reporting bounding boxes
+- Use `annotate_region()` to mark and label regions of interest
+- Use `adaptive_equalize()` when standard equalization over-enhances noise
 {% endif %}
 
 {% if enable_web_search is defined and enable_web_search %}

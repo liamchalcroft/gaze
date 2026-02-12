@@ -164,8 +164,17 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
                 "Use visual tools to examine the image more closely:",
                 "- `zoom`: Magnify regions of interest for detail",
                 "- `crop`: Focus on specific anatomical areas",
-                "- `adjust_contrast`: Enhance visibility of subtle findings",
+                "- `adjust_brightness`/`adjust_contrast`: Independent window level/width control",
+                "- `adjust_sharpness`: Edge enhancement for boundary definition",
+                "- `window_level`: Clinical windowing with presets (brain, bone, soft_tissue, etc.)",
                 "- `threshold`: Highlight specific intensity ranges",
+                "- `equalize_histogram`/`adaptive_equalize`: Contrast equalization",
+                "- `detect_edges`: Edge detection (Sobel/Laplacian) for lesion boundaries",
+                "- `get_intensity_stats`: Quantitative intensity analysis",
+                "- `measure`: Measure distances between points",
+                "- `show_grid`: Overlay spatial reference grid",
+                "- `symmetry_diff`: Left-right difference map for asymmetries",
+                "- `annotate_region`: Draw bounding box overlay with label",
                 "",
             ])
 
@@ -248,7 +257,14 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_bonus += 0.05
 
         # Bonus for using visual tools
-        visual_tools = {"zoom", "crop", "adjust_contrast", "threshold"}
+        visual_tools = {
+            "zoom", "crop", "adjust_contrast", "adjust_brightness",
+            "adjust_sharpness", "threshold", "window_level",
+            "equalize_histogram", "adaptive_equalize", "detect_edges",
+            "get_intensity_stats", "measure", "show_grid",
+            "symmetry_diff", "annotate_region", "intensity_profile",
+            "denoise", "morphological", "invert",
+        }
         tool_turns = sum(
             1 for t in turns
             if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
