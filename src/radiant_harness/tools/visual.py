@@ -12,6 +12,7 @@ This module combines:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,6 +23,7 @@ from PIL import ImageEnhance
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import ToolExecutionError
+from radiant_harness.tools.registry import EncodedImage
 from radiant_harness.tools.registry import encode_image
 from radiant_harness.tools.tool import Tool
 from radiant_harness.types import ToolResult
@@ -179,19 +181,25 @@ def adjust_contrast(
 
 
 @beartype
-def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Image.Image:
+def apply_intensity_threshold(
+    image: Image.Image,
+    lower: int,
+    upper: int,
+    config: ImageProcessingConfig | None = None,
+) -> Image.Image:
     """Apply intensity threshold to grayscale image and rescale to 0-255.
 
     Args:
         image: Input PIL Image
         lower: Lower intensity bound (0-254)
         upper: Upper intensity bound (must be > lower, max 255)
+        config: Optional config for min_threshold_window. Uses global default if None.
 
     Returns:
         Thresholded grayscale image with intensities rescaled to 0-255
 
     Raises:
-        ValueError: If bounds are invalid (lower < 0, upper > 255, or upper <= lower)
+        ValueError: If bounds are invalid or window width is below minimum
     """
     if lower < 0:
         raise ValueError(f"lower must be >= 0, got {lower}")
@@ -199,6 +207,15 @@ def apply_intensity_threshold(image: Image.Image, lower: int, upper: int) -> Ima
         raise ValueError(f"upper must be <= 255, got {upper}")
     if upper <= lower:
         raise ValueError(f"upper must be > lower, got lower={lower}, upper={upper}")
+
+    cfg = config or get_config().image
+    window_width = upper - lower
+    if window_width < cfg.min_threshold_window:
+        raise ValueError(
+            f"Threshold window width {window_width} (upper={upper} - lower={lower}) "
+            f"is below minimum {cfg.min_threshold_window}. "
+            f"Narrow windows destroy diagnostic information."
+        )
 
     gray = image.convert("L")
     arr = np.array(gray)
@@ -258,21 +275,43 @@ def _get_current_image(registry: ToolRegistry) -> Image.Image:
     return img
 
 
+async def _transform_and_encode(
+    registry: ToolRegistry,
+    operation: Callable[[Image.Image], Image.Image],
+) -> tuple[Image.Image, EncodedImage]:
+    """Apply *operation* to the registry's image and encode the result.
+
+    Both the PIL transform and the JPEG encoding are offloaded to a worker
+    thread so the async event loop is never blocked by CPU-intensive work.
+    """
+    from radiant_harness.tools.image_manager import ImageManager
+
+    image_manager = registry.get_image_manager()
+
+    def _work(mgr: ImageManager) -> tuple[Image.Image, EncodedImage]:
+        mgr.transform_image(operation)
+        current = mgr.current_image
+        if current is None:
+            raise ToolExecutionError("Image unexpectedly None after transform")
+        encoded = encode_image(current)
+        return current, encoded
+
+    return await asyncio.to_thread(_work, image_manager)
+
+
 async def _execute_zoom(registry: ToolRegistry, factor: float) -> ToolResult:
     """Execute zoom tool."""
     image = _require_image(registry)
     original_size = image.size
-    image_manager = registry.get_image_manager()
 
     try:
-        image_manager.transform_image(lambda img: zoom_image(img, factor))
+        current, encoded = await _transform_and_encode(
+            registry, lambda img: zoom_image(img, factor)
+        )
     except ValueError as e:
         raise ToolExecutionError(f"Invalid zoom factor: {e}") from e
 
-    current = _get_current_image(registry)
     new_size = current.size
-    encoded = await asyncio.to_thread(encode_image, current)
-
     return ToolResult(
         tool_name="zoom",
         description=f"Zoomed {factor:.1f}x: {original_size} -> {new_size} px",
@@ -307,17 +346,16 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     image = _require_image(registry)
     x1, y1, x2, y2 = box
     original_size = image.size
-    image_manager = registry.get_image_manager()
 
     try:
-        image_manager.transform_image(lambda img: crop_image(img, (x1, y1, x2, y2)))
+        current, encoded = await _transform_and_encode(
+            registry, lambda img: crop_image(img, (x1, y1, x2, y2))
+        )
     except ValueError as e:
         raise ToolExecutionError(f"Invalid crop region: {e}") from e
 
-    current = _get_current_image(registry)
     new_size = current.size
     area_percentage = (x2 - x1) * (y2 - y1) * 100
-    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="crop",
@@ -337,15 +375,13 @@ async def _execute_contrast(registry: ToolRegistry, factor: float) -> ToolResult
     """Execute contrast adjustment tool."""
     image = _require_image(registry)
     original_size = image.size
-    image_manager = registry.get_image_manager()
 
     try:
-        image_manager.transform_image(lambda img: adjust_contrast(img, factor))
+        _, encoded = await _transform_and_encode(
+            registry, lambda img: adjust_contrast(img, factor)
+        )
     except ValueError as e:
         raise ToolExecutionError(f"Invalid contrast factor: {e}") from e
-
-    current = _get_current_image(registry)
-    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="adjust_contrast",
@@ -360,15 +396,13 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
     """Execute intensity threshold tool."""
     image = _require_image(registry)
     original_size = image.size
-    image_manager = registry.get_image_manager()
 
     try:
-        image_manager.transform_image(lambda img: apply_intensity_threshold(img, lower, upper))
+        _, encoded = await _transform_and_encode(
+            registry, lambda img: apply_intensity_threshold(img, lower, upper)
+        )
     except ValueError as e:
         raise ToolExecutionError(f"Invalid threshold bounds: {e}") from e
-
-    current = _get_current_image(registry)
-    encoded = await asyncio.to_thread(encode_image, current)
 
     return ToolResult(
         tool_name="threshold",
@@ -382,11 +416,8 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
 async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
     """Execute horizontal flip tool."""
     _require_image(registry)
-    image_manager = registry.get_image_manager()
-    image_manager.transform_image(flip_horizontal)
 
-    current = _get_current_image(registry)
-    encoded = await asyncio.to_thread(encode_image, current)
+    current, encoded = await _transform_and_encode(registry, flip_horizontal)
 
     return ToolResult(
         tool_name="flip_horizontal",
@@ -400,11 +431,8 @@ async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
 async def _execute_flip_vertical(registry: ToolRegistry) -> ToolResult:
     """Execute vertical flip tool."""
     _require_image(registry)
-    image_manager = registry.get_image_manager()
-    image_manager.transform_image(flip_vertical)
 
-    current = _get_current_image(registry)
-    encoded = await asyncio.to_thread(encode_image, current)
+    current, encoded = await _transform_and_encode(registry, flip_vertical)
 
     return ToolResult(
         tool_name="flip_vertical",
@@ -419,14 +447,12 @@ async def _execute_rotate(registry: ToolRegistry, clockwise: bool = True) -> Too
     """Execute rotation tool."""
     image = _require_image(registry)
     original_size = image.size
-    image_manager = registry.get_image_manager()
 
-    image_manager.transform_image(lambda img: rotate_90(img, clockwise=clockwise))
+    current, encoded = await _transform_and_encode(
+        registry, lambda img: rotate_90(img, clockwise=clockwise)
+    )
 
-    current = _get_current_image(registry)
     direction = "clockwise" if clockwise else "counter-clockwise"
-    encoded = await asyncio.to_thread(encode_image, current)
-
     return ToolResult(
         tool_name="rotate",
         description=f"Rotated 90° {direction}",

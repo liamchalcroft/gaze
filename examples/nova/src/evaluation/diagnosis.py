@@ -91,56 +91,42 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
     if pred_norm == ref_norm:
         return True
 
-    # Semantic equivalence patterns for medical terminology
-    semantic_patterns = [
-        # Tumor equivalents
+    # Bidirectional synonym pairs: (term_a, term_b) where both terms refer
+    # to the *same* clinical entity.  Each pair is checked in both directions
+    # so order within a tuple does not matter.
+    #
+    # IMPORTANT — only truly synonymous terms belong here.  Broader-to-
+    # narrower mappings (e.g. "cyst" ↔ "arachnoid cyst") must NOT be
+    # included because they conflate distinct diagnoses.
+    synonym_pairs: list[tuple[str, str]] = [
+        # Tumor synonyms
         (r"\bglioblastoma\b", r"\bglioblastoma multiforme\b"),
-        (r"\bmedulloblastoma\b", r"\bpnet\b"),  # Primitive neuroectodermal tumor
         (r"\bacoustic neuroma\b", r"\bvestibular schwannoma\b"),
         (r"\bcavernoma\b", r"\bcavernous malformation\b"),
-        (r"\bcavernous malformation\b", r"\bcavernoma\b"),
-        # Hydrocephalus patterns
-        (r"\bhydrocephalus\b.*\babnormalities\b", r"\bhydrocephalus\b"),
-        (r"\babnormal.*hydrocephalus\b", r"\bhydrocephalus\b"),
-        (r"\bcommunicating hydrocephalus\b", r"\bhydrocephalus\b"),
-        (r"\bobstructive hydrocephalus\b", r"\bhydrocephalus\b"),
-        # Developmental anomalies
+        # Developmental anomalies — true abbreviation synonyms
         (r"\bagenesis.*corpus callosum\b", r"\bacc\b"),
         (r"\bcorpus callosum.*agenesis\b", r"\bacc\b"),
         (r"\bsepto-optic dysplasia\b", r"\bsod\b"),
-        # Vascular conditions
-        (r"\bcerebral infarction\b", r"\bstroke\b"),
-        (r"\bischemic stroke\b", r"\bcerebral infarction\b"),
+        # Vascular — true synonyms only
+        (r"\bcerebral infarction\b", r"\bischemic stroke\b"),
         (r"\bbrain hemorrhage\b", r"\bintracerebral hemorrhage\b"),
         (r"\bsubarachnoid hemorrhage\b", r"\bsah\b"),
-        # Cyst patterns
-        (r"\barachnoid cyst\b", r"\bcyst\b"),
+        # Cyst synonyms (same entity, different phrasing)
         (r"\bepidermoid\b.*\bcyst\b", r"\bepidermoid cyst\b"),
         (r"\bdermoid\b.*\bcyst\b", r"\bdermoid cyst\b"),
-        # Inflammation/infection
-        (r"\bencephalitis\b", r"\bbrain inflammation\b"),
-        (r"\bmeningitis\b", r"\bbrain inflammation\b"),
         # Trauma
-        (r"\bcontusion\b", r"\bbrain injury\b"),
         (r"\bshearing injury\b", r"\bdiffuse axonal injury\b"),
     ]
 
-    # Check semantic patterns
-    for pred_pattern, ref_pattern in semantic_patterns:
-        if re.search(pred_pattern, pred_norm, re.IGNORECASE) and re.search(
-            ref_pattern, ref_norm, re.IGNORECASE
+    # Check synonym pairs (bidirectional)
+    for pattern_a, pattern_b in synonym_pairs:
+        if re.search(pattern_a, pred_norm, re.IGNORECASE) and re.search(
+            pattern_b, ref_norm, re.IGNORECASE
         ):
             return True
-        if re.search(ref_pattern, pred_norm, re.IGNORECASE) and re.search(
-            pred_pattern, ref_norm, re.IGNORECASE
+        if re.search(pattern_b, pred_norm, re.IGNORECASE) and re.search(
+            pattern_a, ref_norm, re.IGNORECASE
         ):
-            return True
-
-    # Check if one contains the other (subset relationship)
-    if pred_norm in ref_norm or ref_norm in pred_norm:
-        # Only count as match if the shorter term is at least 3 words long
-        shorter = pred_norm if len(pred_norm) < len(ref_norm) else ref_norm
-        if len(shorter.split()) >= 3:
             return True
 
     return False

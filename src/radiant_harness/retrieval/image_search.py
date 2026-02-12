@@ -580,6 +580,31 @@ class MedicalImageSearchManager:
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             raise ImageDownloadError(result.image_url, str(e), e) from e
 
+    # Magic byte signatures for common image formats.
+    _IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+        (b"\x89PNG\r\n\x1a\n", "PNG"),
+        (b"\xff\xd8\xff", "JPEG"),
+        (b"GIF87a", "GIF"),
+        (b"GIF89a", "GIF"),
+        (b"RIFF", "WEBP"),  # WEBP starts with RIFF....WEBP
+        (b"BM", "BMP"),
+    )
+
+    # Maximum download size (10 MB) to prevent resource exhaustion.
+    _MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
+
+    @staticmethod
+    def _validate_image_magic(content: bytes, url: str) -> None:
+        """Verify that *content* starts with a known image magic signature.
+
+        Raises:
+            ImageDownloadError: If the content doesn't match any known format.
+        """
+        for magic, _fmt in MedicalImageSearchManager._IMAGE_MAGIC:
+            if content[:len(magic)] == magic:
+                return
+        raise ImageDownloadError(url, "Downloaded content does not match any known image format")
+
     async def _do_download(
         self,
         session: aiohttp.ClientSession,
@@ -590,7 +615,8 @@ class MedicalImageSearchManager:
         """Perform the actual image download using the provided session.
 
         Raises:
-            ImageDownloadError: If download fails due to HTTP error or invalid content type
+            ImageDownloadError: If download fails due to HTTP error, invalid
+                content type, failed magic-byte check, or oversized response.
         """
         async with session.get(
             result.image_url,
@@ -609,7 +635,26 @@ class MedicalImageSearchManager:
                     f"Response is not an image: {content_type}",
                 )
 
+            # Enforce size limit before reading the full body.
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > self._MAX_DOWNLOAD_BYTES:
+                raise ImageDownloadError(
+                    result.image_url,
+                    f"Image too large: {content_length} bytes "
+                    f"(max {self._MAX_DOWNLOAD_BYTES})",
+                )
+
             content = await response.read()
+
+            if len(content) > self._MAX_DOWNLOAD_BYTES:
+                raise ImageDownloadError(
+                    result.image_url,
+                    f"Image too large: {len(content)} bytes "
+                    f"(max {self._MAX_DOWNLOAD_BYTES})",
+                )
+
+            # Validate actual file content matches an image format.
+            self._validate_image_magic(content, result.image_url)
 
             if extension is None:
                 extension = self._get_extension_from_content_type(content_type)

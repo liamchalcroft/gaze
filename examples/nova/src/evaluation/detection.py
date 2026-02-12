@@ -93,8 +93,8 @@ def _compute_acc_and_counts(
     preds_tensors: list[dict[str, torch.Tensor]],
     refs_tensors: list[dict[str, torch.Tensor]],
     iou_threshold: float,
-) -> tuple[float, int, int]:
-    """Compute detection accuracy and TP/FP counts at given IoU threshold.
+) -> tuple[float, int, int, int]:
+    """Compute detection accuracy and TP/FP/FN counts at given IoU threshold.
 
     Args:
         preds_tensors: List of prediction dicts with 'boxes' tensor
@@ -102,19 +102,20 @@ def _compute_acc_and_counts(
         iou_threshold: IoU threshold for matching (e.g., 0.3 or 0.5)
 
     Returns:
-        Tuple of (accuracy, true_positives, false_positives)
+        Tuple of (accuracy, true_positives, false_positives, false_negatives)
     """
     hits = 0
     total = len(refs_tensors)
     tp = 0  # True positives: predictions matched to ground truth
     fp = 0  # False positives: predictions not matched to ground truth
+    fn = 0  # False negatives: ground truth boxes not matched by predictions
 
     for pred, ref in zip(preds_tensors, refs_tensors, strict=True):
         pred_boxes = pred["boxes"]
         ref_boxes = ref["boxes"]
 
         # Track which ground truth boxes have been matched
-        matched_refs = set()
+        matched_refs: set[int] = set()
 
         # If no ground truth boxes, count as hit if no predictions
         if len(ref_boxes) == 0:
@@ -144,11 +145,14 @@ def _compute_acc_and_counts(
             else:
                 fp += 1
 
+        # Unmatched ground truth boxes are false negatives
+        fn += len(ref_boxes) - len(matched_refs)
+
         if sample_hit:
             hits += 1
 
     accuracy = hits / total if total > 0 else 0.0
-    return accuracy, tp, fp
+    return accuracy, tp, fp, fn
 
 
 @beartype
@@ -164,6 +168,8 @@ def evaluate_detection(
     - mAP@0.5: Mean Average Precision at IoU threshold 0.5
     - mAP@[50:95]: Mean AP averaged across IoU thresholds 0.5 to 0.95 (step 0.05)
     - ACC50: Detection accuracy at IoU 0.5 (proportion of samples with at least one hit)
+    - recall50: Box-level recall at IoU 0.5 (fraction of GT boxes matched)
+    - precision50: Box-level precision at IoU 0.5 (fraction of predictions matched)
     - TP30/FP30: True positive and false positive counts at IoU 0.3
 
     Args:
@@ -171,7 +177,8 @@ def evaluate_detection(
         refs: List of reference dicts with 'boxes', 'scores', 'labels', or raw box lists
 
     Returns:
-        Dictionary with keys 'map30', 'map50', 'map50_95', 'acc50', 'tp30', 'fp30'.
+        Dictionary with keys 'map30', 'map50', 'map50_95', 'acc50', 'recall50',
+        'precision50', 'tp30', 'fp30'.
 
     Raises:
         ValueError: If preds and refs have different lengths or are empty.
@@ -188,11 +195,17 @@ def evaluate_detection(
     preds_tensors = [_convert_to_tensors(pred) for pred in preds]
     refs_tensors = [_convert_to_tensors(ref) for ref in refs]
 
-    # ACC50 and counts at standard threshold
-    acc50, _, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_STANDARD)
+    # ACC50 and box-level counts at standard threshold
+    acc50, tp50, fp50, fn50 = _compute_acc_and_counts(
+        preds_tensors, refs_tensors, IOU_THRESHOLD_STANDARD
+    )
+
+    # Box-level recall and precision at standard threshold
+    recall50 = tp50 / (tp50 + fn50) if (tp50 + fn50) > 0 else 0.0
+    precision50 = tp50 / (tp50 + fp50) if (tp50 + fp50) > 0 else 0.0
 
     # TP30/FP30 at loose threshold (per NOVA protocol)
-    _, tp30, fp30 = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_LOOSE)
+    _, tp30, fp30, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_LOOSE)
 
     # mAP at loose threshold
     m30 = MeanAveragePrecision(iou_thresholds=[IOU_THRESHOLD_LOOSE])
@@ -217,6 +230,8 @@ def evaluate_detection(
         "map50": map50,
         "map50_95": map50_95,
         "acc50": acc50,
+        "recall50": recall50,
+        "precision50": precision50,
         "tp30": tp30,
         "fp30": fp30,
     }

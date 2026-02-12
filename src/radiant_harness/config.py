@@ -6,11 +6,14 @@ All previously hardcoded values are now configurable via these dataclasses.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
 from types import MappingProxyType
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,8 @@ class ImageProcessingConfig:
         max_zoom_factor: Maximum allowed zoom factor
         min_contrast_factor: Minimum allowed contrast factor
         max_contrast_factor: Maximum allowed contrast factor
+        min_threshold_window: Minimum intensity window width for threshold tool.
+            Prevents destructive narrow windowing that destroys diagnostic info.
         default_jpeg_quality: Default JPEG quality for encoding (1-100)
     """
 
@@ -33,6 +38,7 @@ class ImageProcessingConfig:
     max_zoom_factor: float = 4.0
     min_contrast_factor: float = 0.5
     max_contrast_factor: float = 3.0
+    min_threshold_window: int = 30
     default_jpeg_quality: int = 85
 
     def __post_init__(self) -> None:
@@ -52,6 +58,11 @@ class ImageProcessingConfig:
             raise ValueError(
                 f"min_contrast_factor ({self.min_contrast_factor}) "
                 f"must be < max_contrast_factor ({self.max_contrast_factor})"
+            )
+        if not 1 <= self.min_threshold_window <= 255:
+            raise ValueError(
+                f"min_threshold_window must be between 1 and 255, "
+                f"got {self.min_threshold_window}"
             )
         if not 1 <= self.default_jpeg_quality <= 100:
             raise ValueError(
@@ -83,6 +94,44 @@ class CacheConfig:
             )
         if not 0.0 <= self.evict_ratio <= 1.0:
             raise ValueError(f"evict_ratio must be between 0.0 and 1.0, got {self.evict_ratio}")
+
+
+def _validate_base_url(url: str, field_name: str) -> None:
+    """Validate a base URL for SSRF protection.
+
+    Enforces HTTPS and rejects private/loopback addresses.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"{field_name} must use HTTPS scheme, got {parsed.scheme!r} in {url!r}"
+        )
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"{field_name} has no hostname: {url!r}")
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            raise ValueError(
+                f"{field_name} must not point to a private/loopback address: {hostname}"
+            )
+    except ValueError:
+        # hostname is not a bare IP — try resolving it
+        if hostname in ("127.0.0.1", "localhost", "0.0.0.0"):  # noqa: S104
+            raise ValueError(
+                f"{field_name} must not point to a loopback address: {hostname}"
+            ) from None
+        try:
+            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _, _, _, _, sockaddr in resolved:
+                addr = ipaddress.ip_address(sockaddr[0])
+                if addr.is_private or addr.is_loopback or addr.is_link_local:
+                    raise ValueError(
+                        f"{field_name} hostname {hostname!r} resolves to "
+                        f"private address {addr}"
+                    )
+        except socket.gaierror:
+            pass  # DNS failure is not a security issue here
 
 
 @dataclass(frozen=True)
@@ -128,6 +177,8 @@ class SearchConfig:
             )
         if self.max_total_results < 1:
             raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
+        for attr in ("ncbi_base_url", "openi_base_url"):
+            _validate_base_url(getattr(self, attr), attr)
 
 
 @dataclass(frozen=True)

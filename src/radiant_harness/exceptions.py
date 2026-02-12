@@ -113,15 +113,18 @@ class ModelError(HarnessError):
 
 
 class APIError(ModelError):
-    """Raised when API calls fail."""
+    """Raised when API calls fail.
+
+    Note: This exception deliberately does NOT store the raw API response
+    body.  OpenAI/OpenRouter error responses may echo back request headers
+    or URLs that contain API keys.
+    """
 
     def __init__(
         self,
         message: str,
         model_name: str | None = None,
         status_code: int | None = None,
-        response_body: str | None = None,
     ) -> None:
         super().__init__(message, model_name)
         self.status_code = status_code
-        self.response_body = response_body

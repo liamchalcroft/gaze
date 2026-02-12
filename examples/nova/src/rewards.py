@@ -11,6 +11,7 @@ Also provides combined reward for multi-task training.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 from typing import Literal
@@ -61,15 +62,19 @@ def compute_caption_reward(prediction: str, reference: str) -> float:
     if not prediction or not reference:
         return 0.0
 
-    pred_tokens = set(prediction.lower().split())
-    ref_tokens = set(reference.lower().split())
+    pred_tokens = Counter(prediction.lower().split())
+    ref_tokens = Counter(reference.lower().split())
 
     if not ref_tokens:
         return 0.0
 
-    intersection = pred_tokens & ref_tokens
-    precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
-    recall = len(intersection) / len(ref_tokens)
+    # Multiset intersection: min count for each shared token preserves frequency
+    intersection = sum((pred_tokens & ref_tokens).values())
+    pred_total = sum(pred_tokens.values())
+    ref_total = sum(ref_tokens.values())
+
+    precision = intersection / pred_total if pred_total else 0.0
+    recall = intersection / ref_total
 
     if precision + recall == 0:
         return 0.0

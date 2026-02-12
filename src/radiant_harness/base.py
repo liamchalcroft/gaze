@@ -7,6 +7,7 @@ Task-specific details are provided via dependency injection.
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncIterator
@@ -25,7 +26,6 @@ from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import OpenAIAdapter
 from radiant_harness.tools import EncodedImage
 from radiant_harness.tools import Tool
 from radiant_harness.tools import ToolRegistry
@@ -37,6 +37,27 @@ from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
 from radiant_harness.utils.json_extract import extract_json_from_text
+
+# Maximum characters allowed in a single tool result message.
+# Limits prompt-injection surface from external data (PubMed abstracts, etc.).
+_MAX_TOOL_CONTENT_CHARS = 8_000
+
+# Regex for ASCII/Unicode control characters (except newline/tab).
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
+    """Sanitize tool result text before injecting into the LLM conversation.
+
+    1. Strip control characters that could confuse tokenizers.
+    2. Truncate to *max_chars* to limit prompt-injection surface.
+    3. Wrap in an untrusted-content marker so the model can distinguish
+       tool output from system/user instructions.
+    """
+    text = _CONTROL_CHAR_RE.sub("", text)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n[...truncated]"
+    return f"[Tool Result - External Data]\n{text}\n[End Tool Result]"
 
 
 @dataclass
@@ -59,9 +80,47 @@ class ImageInput:
     encoded: EncodedImage | None = None
     pil_image: Image.Image | None = None
 
+    @staticmethod
+    @beartype
+    def from_pil(
+        image: Image.Image,
+        *,
+        label: str | None = None,
+        path: Path | None = None,
+    ) -> ImageInput:
+        """Create an ImageInput directly from a PIL Image, skipping disk I/O.
+
+        Args:
+            image: PIL Image with pixel data already in memory.
+            label: Optional label for the image.
+            path: Optional source path (for logging only). Defaults to
+                  a synthetic ``<in-memory>`` path.
+        """
+        max_dim = get_config().image.max_image_dimension
+        if image.width > max_dim or image.height > max_dim:
+            raise ValueError(
+                f"Image dimensions {image.width}x{image.height} exceed "
+                f"maximum allowed dimension of {max_dim}px"
+            )
+        inp = ImageInput(
+            path=path or Path("<in-memory>"),
+            label=label,
+            width=image.width,
+            height=image.height,
+            encoded=encode_image(image),
+            pil_image=image,
+        )
+        return inp
+
     @beartype
     def load(self) -> None:
-        """Load image and populate dimensions, encoding, and PIL reference."""
+        """Load image and populate dimensions, encoding, and PIL reference.
+
+        No-op if the image was already loaded (e.g. via ``from_pil``).
+        """
+        if self.pil_image is not None:
+            return
+
         img = Image.open(self.path)
         img.load()  # Force full pixel decode into memory
         max_dim = get_config().image.max_image_dimension
@@ -154,6 +213,9 @@ class AgenticProcessorBase(ABC):
             if self._adapter_factory:
                 self._model_adapter = self._adapter_factory()
             else:
+                # Import here to avoid coupling the abstract base to a concrete adapter
+                from radiant_harness.models import OpenAIAdapter
+
                 self._model_adapter = OpenAIAdapter(
                     model_name=self.model_name,
                     reasoning_enabled=self.reasoning_enabled,
@@ -295,14 +357,16 @@ class AgenticProcessorBase(ABC):
     @beartype
     async def analyze(
         self,
-        images: list[Path] | Path | None = None,
+        images: list[Path] | list[Image.Image] | Path | Image.Image | None = None,
         metadata: dict[str, Any] | None = None,
         image_labels: list[str] | None = None,
     ) -> AgenticResult:
         """Run agentic analysis on images and/or text.
 
         Args:
-            images: Image path(s) - None for text-only, Path for single, list for multi
+            images: Image input(s). Accepts ``Path``, ``PIL.Image.Image``,
+                    lists of either, or ``None`` for text-only analysis.
+                    Passing PIL Images directly avoids a temp-file round-trip.
             metadata: Context metadata (clinical history, patient info, etc.)
             image_labels: Optional labels for each image (e.g., ["T1", "T2-FLAIR"])
 
@@ -333,45 +397,53 @@ class AgenticProcessorBase(ABC):
     @beartype
     def _normalize_image_inputs(
         self,
-        images: list[Path] | Path | None,
+        images: list[Path] | list[Image.Image] | Path | Image.Image | None,
         labels: list[str] | None,
     ) -> list[ImageInput]:
         """Normalize image input formats to list of ImageInput."""
         if images is None:
             return []
 
-        # Validate inputs
-        if isinstance(images, list) and labels is not None and len(images) != len(labels):
-            raise ValueError(
-                f"Number of labels ({len(labels)}) must match number of images ({len(images)})"
-            )
+        # --- Single PIL Image ---
+        if isinstance(images, Image.Image):
+            if labels is not None and len(labels) != 1:
+                raise ValueError(
+                    f"Number of labels ({len(labels)}) must match number of images (1)"
+                )
+            label = labels[0] if labels else None
+            return [ImageInput.from_pil(images, label=label)]
 
+        # --- Single Path ---
         if isinstance(images, Path):
             if labels is not None and len(labels) != 1:
                 raise ValueError(
                     f"Number of labels ({len(labels)}) must match number of images (1)"
                 )
-            # Validate single image exists
             if not images.exists():
                 raise FileNotFoundError(f"Image file not found: {images}")
-            # Validate file extension
             if images.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
                 raise ValueError(f"Unsupported image format: {images.suffix}")
             label = labels[0] if labels else None
             return [ImageInput(path=images, label=label)]
 
-        # List of paths
-        result: list[ImageInput] = []
-        for i, path in enumerate(images):
-            # Validate each image exists
-            if not path.exists():
-                raise FileNotFoundError(f"Image file not found: {path}")
-            # Validate file extension
-            if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
-                raise ValueError(f"Unsupported image format: {path.suffix}")
+        # --- List inputs ---
+        if labels is not None and len(images) != len(labels):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of images ({len(images)})"
+            )
 
+        result: list[ImageInput] = []
+        for i, item in enumerate(images):
             label = labels[i] if labels and i < len(labels) else None
-            result.append(ImageInput(path=path, label=label))
+            if isinstance(item, Image.Image):
+                result.append(ImageInput.from_pil(item, label=label))
+            else:
+                # Path
+                if not item.exists():
+                    raise FileNotFoundError(f"Image file not found: {item}")
+                if item.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
+                    raise ValueError(f"Unsupported image format: {item.suffix}")
+                result.append(ImageInput(path=item, label=label))
         return result
 
     @beartype
@@ -427,6 +499,11 @@ class AgenticProcessorBase(ABC):
             is_last_turn = turn_idx == self.max_turns - 1
             current_tools = None if is_last_turn else tool_schemas
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
+
+            # Strip stale base64 images from earlier tool rounds to reduce
+            # payload size on subsequent API calls.
+            if turn_idx > 0:
+                self._strip_stale_tool_images(messages)
 
             chat_result = await model_adapter.generate_chat(
                 messages=messages,
@@ -512,15 +589,19 @@ class AgenticProcessorBase(ABC):
                     tool_content: str | list[dict[str, Any]]
                     if image_data_url:
                         tool_content = [
-                            {"type": "text", "text": result.description},
+                            {
+                                "type": "text",
+                                "text": _sanitize_tool_content(result.description),
+                            },
                             {"type": "image_url", "image_url": {"url": image_data_url}},
                         ]
                     else:
-                        tool_content = result.description
+                        raw = result.description
                         if result.error:
-                            tool_content = f"{tool_content}\nError: {result.error}"
+                            raw = f"{raw}\nError: {result.error}"
                         if formatted := result.formatted_results:
-                            tool_content = f"{tool_content}\n{formatted}"
+                            raw = f"{raw}\n{formatted}"
+                        tool_content = _sanitize_tool_content(raw)
 
                     messages.append(
                         {
@@ -731,7 +812,18 @@ class AgenticProcessorBase(ABC):
             for i, result in zip(other_indices, other_results):
                 results[i] = result
 
-        # All slots filled — assert and return in original order
+        # All slots must be filled — a None here means a tool silently
+        # returned nothing, which should never happen.
+        for i, r in enumerate(results):
+            if r is None:
+                tc_name = tool_calls[i].name
+                raise AgenticProcessingError(
+                    f"Tool '{tc_name}' produced no result (slot {i} is None)",
+                    turns_completed=turn_idx + 1,
+                    partial_response={"error": "tool_no_result", "tool": tc_name},
+                )
+
+        # mypy/pyright: after the None check above, all elements are ToolResult
         return [r for r in results if r is not None]
 
     @beartype
@@ -749,3 +841,36 @@ class AgenticProcessorBase(ABC):
             result_strings.append(result_str)
 
         return "\n".join(result_strings)
+
+    @staticmethod
+    @beartype
+    def _strip_stale_tool_images(messages: list[dict[str, Any]]) -> None:
+        """Replace base64 image data URLs in older tool messages with text placeholders.
+
+        Keeps images only in tool messages that follow the *last* assistant
+        message (i.e. the most recent tool-call round).  Earlier rounds have
+        their ``image_url`` parts replaced with a short text placeholder,
+        dramatically reducing the payload sent on subsequent API calls.
+        """
+        last_assistant_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "assistant":
+                last_assistant_idx = i
+                break
+
+        for i in range(last_assistant_idx):
+            msg = messages[i]
+            if msg.get("role") != "tool":
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            new_content: list[dict[str, Any]] = []
+            for part in content:
+                if part.get("type") == "image_url":
+                    new_content.append(
+                        {"type": "text", "text": "[previous tool image omitted]"}
+                    )
+                else:
+                    new_content.append(part)
+            msg["content"] = new_content

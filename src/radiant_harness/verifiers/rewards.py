@@ -225,21 +225,27 @@ class IoUReward(BaseRewardFunction):
     """Intersection over Union (IoU) reward for bounding boxes.
 
     Rewards based on spatial overlap between predicted and reference boxes.
+    Uses continuous IoU values by default to provide smooth gradient signal
+    for RL training. A step-function mode is available for binary rewards.
     """
 
     def __init__(
         self,
         iou_threshold: float = 0.5,
         normalized: bool = True,
+        continuous: bool = True,
     ) -> None:
         """Initialize IoU reward.
 
         Args:
-            iou_threshold: Minimum IoU for reward
+            iou_threshold: IoU threshold used only in step mode
             normalized: Whether coordinates are normalized [0,1]
+            continuous: If True (default), return raw IoU for smooth gradients.
+                If False, return 1.0 when IoU >= threshold, else 0.0.
         """
         self.iou_threshold = iou_threshold
         self.normalized = normalized
+        self.continuous = continuous
 
     def __call__(
         self,
@@ -258,7 +264,10 @@ class IoUReward(BaseRewardFunction):
         pred_floats = [float(x) for x in pred_box[:4]]
         ref_floats = [float(x) for x in ref_box[:4]]
         iou = compute_iou(pred_floats, ref_floats)
-        return 1.0 if iou >= self.iou_threshold else iou
+
+        if self.continuous:
+            return iou
+        return 1.0 if iou >= self.iou_threshold else 0.0
 
     def _extract_bbox(self, completion: Any) -> list[float]:
         """Extract bounding box from completion."""

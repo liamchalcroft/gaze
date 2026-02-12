@@ -141,18 +141,18 @@ authors = [
 license = {text = "MIT"}
 requires-python = ">=3.10,<4.0"
 dependencies = [
-    # Core runtime
-    "loguru",
-    "beartype",
-    "pillow",
-    "numpy",
-    "openai",
-    "httpx",
-    "requests",
-    "aiohttp",
-    "minijinja>=2.12.0",
-    "verifiers",
-    "tenacity>=9.1.2",
+    # Core runtime — upper bounds prevent silent breaking changes
+    "loguru>=0.7,<1",
+    "beartype>=0.18,<1",
+    "pillow>=10,<12",
+    "numpy>=1.24,<3",
+    "openai>=1.0,<3",
+    "httpx>=0.25,<1",
+    "requests>=2.31,<3",
+    "aiohttp>=3.9,<4",
+    "minijinja>=2.12.0,<3",
+    "verifiers>=0.1,<1",
+    "tenacity>=9.1.2,<10",
 ]
 name = "radiant-harness"
 version = "0.1.0"

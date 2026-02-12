@@ -26,8 +26,52 @@ from radiant_harness.models.adapter_protocol import GenerationLog
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
+def _safe_error_summary(e: Exception) -> str:
+    """Build a safe, bounded error summary that never leaks credentials.
+
+    OpenAI SDK exceptions can contain request headers (including
+    ``Authorization: Bearer sk-...``) in their ``__str__`` output.  This
+    helper extracts only the class name, status code, and a truncated
+    ``message`` attribute (if present) to avoid leaking secrets into logs
+    or re-raised exception messages.
+    """
+    cls_name = type(e).__name__
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "message", "")
+    if isinstance(body, str) and len(body) > 200:
+        body = body[:200] + "..."
+    parts = [cls_name]
+    if status is not None:
+        parts.append(f"status={status}")
+    if body:
+        parts.append(body)
+    return ": ".join(parts)
+
+
 class OpenAIAdapter(AdapterProtocol):
     """Adapter around OpenAI's Chat Completions API (text + vision)."""
+
+    _ALLOWED_BASE_URLS: frozenset[str] = frozenset({
+        OPENROUTER_BASE_URL,
+        "https://api.openai.com/v1",
+    })
+
+    @staticmethod
+    def _validate_base_url(url: str) -> None:
+        """Validate *url* is HTTPS and warn if not on the built-in allowlist."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            raise ModelError(
+                f"base_url must use HTTPS scheme, got {parsed.scheme!r}",
+                model_name=None,
+            )
+        if url.rstrip("/") not in {u.rstrip("/") for u in OpenAIAdapter._ALLOWED_BASE_URLS}:
+            logger.warning(
+                f"Custom base_url {parsed.netloc!r} is not on the built-in allowlist. "
+                "API key will be sent to this host."
+            )
 
     @beartype
     def __init__(
@@ -38,6 +82,8 @@ class OpenAIAdapter(AdapterProtocol):
         enable_caching: bool = True,
         base_url: str | None = None,
     ) -> None:
+        if base_url is not None:
+            self._validate_base_url(base_url)
         self.model_name = model_name
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
@@ -96,7 +142,8 @@ class OpenAIAdapter(AdapterProtocol):
         wait=wait_exponential(multiplier=1, min=1, max=60),
         retry=retry_if_exception_type((APITimeoutError, RateLimitError)),
         before_sleep=lambda retry_state: logger.warning(
-            f"Retry {retry_state.attempt_number}/5 for OpenAI API: {retry_state.outcome.exception()}"
+            f"Retry {retry_state.attempt_number}/5 for OpenAI API: "
+            f"{type(retry_state.outcome.exception()).__name__}"
         ),
     )
     async def _create_completion_with_retry(self, **kwargs):
@@ -149,19 +196,17 @@ class OpenAIAdapter(AdapterProtocol):
             completion = await self._create_completion_with_retry(**kwargs)
         except OpenAIError as e:  # pragma: no cover - dependency error surface
             status_code = e.status_code if isinstance(e, APIStatusError) else None
-            response_body = e.message if isinstance(e, APIStatusError) else None
+            safe_msg = _safe_error_summary(e)
             if isinstance(e, APITimeoutError | RateLimitError):
                 raise APIError(
-                    f"OpenAI API error after retries: {e}",
+                    f"OpenAI API error after retries: {safe_msg}",
                     model_name=self.model_name,
                     status_code=status_code,
-                    response_body=response_body,
                 ) from e
             raise APIError(
-                f"OpenAI request failed: {e}",
+                f"OpenAI request failed: {safe_msg}",
                 model_name=self.model_name,
                 status_code=status_code,
-                response_body=response_body,
             ) from e
 
         if not completion.choices:
@@ -219,17 +264,15 @@ class OpenAIAdapter(AdapterProtocol):
                     )
         except OpenAIError as e:
             status_code = e.status_code if isinstance(e, APIStatusError) else None
-            response_body = e.message if isinstance(e, APIStatusError) else None
+            safe_msg = _safe_error_summary(e)
             if isinstance(e, APITimeoutError | RateLimitError):
                 raise APIError(
-                    f"OpenAI API streaming error after retries: {e}",
+                    f"OpenAI API streaming error after retries: {safe_msg}",
                     model_name=self.model_name,
                     status_code=status_code,
-                    response_body=response_body,
                 ) from e
             raise APIError(
-                f"OpenAI streaming failed: {e}",
+                f"OpenAI streaming failed: {safe_msg}",
                 model_name=self.model_name,
                 status_code=status_code,
-                response_body=response_body,
             ) from e

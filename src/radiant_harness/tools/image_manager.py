@@ -48,6 +48,30 @@ class ImageManager:
         """Check if an image is currently loaded."""
         return self._current_image is not None
 
+    @staticmethod
+    def _validate_image_path(image_path: Path) -> Path:
+        """Resolve and validate an image path against traversal attacks.
+
+        Returns the resolved (absolute, symlink-free) path.
+
+        Raises:
+            ToolExecutionError: If the path escapes allowed directories or
+                uses dangerous patterns like ``..``.
+        """
+        resolved = image_path.resolve()
+        # Block paths that contain '..' components before resolution
+        # (e.g. symlink tricks where resolved path looks safe but intent is malicious)
+        if ".." in image_path.parts:
+            raise ToolExecutionError(
+                f"Path traversal detected: {image_path}"
+            )
+        # Block device files and other non-regular files (if they already exist)
+        if resolved.exists() and not resolved.is_file():
+            raise ToolExecutionError(
+                f"Path is not a regular file: {image_path}"
+            )
+        return resolved
+
     @beartype
     def set_image(self, image_path: Path) -> None:
         """Set the source image for operations.
@@ -56,12 +80,13 @@ class ImageManager:
             image_path: Path to the image file
 
         Raises:
-            ToolExecutionError: If image cannot be loaded
+            ToolExecutionError: If image cannot be loaded or path is invalid
         """
+        resolved = self._validate_image_path(image_path)
         self.close()
 
         try:
-            with Image.open(image_path) as img:
+            with Image.open(resolved) as img:
                 self._original_image = img.copy()
                 self._current_image = img.copy()
         except FileNotFoundError as e:
@@ -71,8 +96,8 @@ class ImageManager:
         except OSError as e:
             raise ToolExecutionError(f"Failed to read image file {image_path}: {e}") from e
 
-        self._image_path = image_path
-        logger.debug(f"Loaded image: {image_path} ({self._current_image.size})")
+        self._image_path = resolved
+        logger.debug(f"Loaded image: {resolved} ({self._current_image.size})")
 
     @beartype
     async def ensure_loaded(self) -> None:
@@ -96,7 +121,8 @@ class ImageManager:
             if self._image_path is None:
                 raise ToolExecutionError("No image path set - call set_image() first")
 
-            image_path = self._image_path  # capture for thread closure
+            # Re-validate in case the path was set before validation was added
+            image_path = self._validate_image_path(self._image_path)
 
             def _load_image() -> tuple[Image.Image, Image.Image]:
                 with Image.open(image_path) as img:
@@ -153,11 +179,15 @@ class ImageManager:
         Args:
             image: Already-loaded PIL Image (must have pixel data in memory).
             image_path: Path to the source file (stored for reset/logging).
+
+        Raises:
+            ToolExecutionError: If image_path contains traversal patterns.
         """
+        resolved = self._validate_image_path(image_path)
         self.close()
         self._original_image = image
         self._current_image = image.copy()
-        self._image_path = image_path
+        self._image_path = resolved
 
     @beartype
     def reset_to_original(self) -> None:

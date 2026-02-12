@@ -178,13 +178,45 @@ def get_required_fields() -> list[str]:
 
 
 def validate_nova_response(response: dict[str, Any]) -> bool:
-    """Validate that a response has required NOVA fields.
+    """Validate that a response has required NOVA fields with correct types.
+
+    Checks both top-level field presence and basic nested structure to catch
+    malformed outputs that would silently produce garbage evaluation scores.
 
     Args:
         response: Parsed JSON response
 
     Returns:
-        True if all required fields present
+        True if all required fields present with correct types
     """
     required = get_required_fields()
-    return all(field in response for field in required)
+    if not all(field in response for field in required):
+        return False
+
+    # Validate nested structure — each section must be a dict
+    caption = response.get("caption")
+    if not isinstance(caption, dict):
+        return False
+    # caption.description is required for evaluation
+    if not isinstance(caption.get("description"), str):
+        return False
+
+    diagnosis = response.get("diagnosis")
+    if not isinstance(diagnosis, dict):
+        return False
+    # diagnosis.primary_diagnosis is required for evaluation
+    if not isinstance(diagnosis.get("primary_diagnosis"), str):
+        return False
+
+    localization = response.get("localization")
+    if not isinstance(localization, dict):
+        return False
+    # localization.localizations must be a list
+    if not isinstance(localization.get("localizations"), list):
+        return False
+
+    # continue must be bool
+    if not isinstance(response.get("continue"), bool):
+        return False
+
+    return True
