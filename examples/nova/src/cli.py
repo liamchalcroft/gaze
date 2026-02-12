@@ -68,8 +68,6 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     )
 
     # Process samples concurrently using batch_size as concurrency limit
-    import tempfile
-
     semaphore = asyncio.Semaphore(config.batch_size)
     results: list[AgenticResult] = []
     ground_truth: list[dict[str, Any]] = []
@@ -100,48 +98,34 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             metadata.setdefault("modality", "MRI")
             metadata.setdefault("image_id", f"sample_{idx}")
 
-            with tempfile.NamedTemporaryFile(
-                suffix=".png",
-                prefix="nova_temp_",
-                dir=config.output_dir,
-                delete=False,
-            ) as tmp:
-                image.save(tmp.name, format="PNG", optimize=True)
-                temp_image_path = Path(tmp.name)
+            # Pass PIL Image directly — avoids temp-file PNG save + re-read
+            result = await processor.analyze(
+                images=image,
+                metadata=metadata,
+            )
 
-            try:
-                result = await processor.analyze(
-                    images=temp_image_path,
-                    metadata=metadata,
+            result_file = config.output_dir / f"sample_{idx}.json"
+            with result_file.open("w") as f:
+                json.dump(
+                    {
+                        "sample_id": idx,
+                        "response": result.final_response,
+                        "num_turns": result.num_turns,
+                        "tools_used": list(result.get_tools_used()),
+                        "confidence": result.confidence,
+                        "total_tokens": result.total_tokens,
+                    },
+                    f,
+                    indent=2,
                 )
 
-                result_file = config.output_dir / f"sample_{idx}.json"
-                with result_file.open("w") as f:
-                    json.dump(
-                        {
-                            "sample_id": idx,
-                            "response": result.final_response,
-                            "num_turns": result.num_turns,
-                            "tools_used": list(result.get_tools_used()),
-                            "confidence": result.confidence,
-                            "total_tokens": result.total_tokens,
-                        },
-                        f,
-                        indent=2,
-                    )
+            logger.info(
+                f"Sample {idx}: {result.num_turns} turns, "
+                f"{result.tool_call_count} tool calls, "
+                f"confidence: {result.confidence:.2f}"
+            )
 
-                logger.info(
-                    f"Sample {idx}: {result.num_turns} turns, "
-                    f"{result.tool_call_count} tool calls, "
-                    f"confidence: {result.confidence:.2f}"
-                )
-
-                return idx, result, sample["ground_truth"]
-            finally:
-                try:
-                    temp_image_path.unlink(missing_ok=True)
-                except Exception as e:
-                    logger.warning(f"Failed to clean up temporary file {temp_image_path}: {e}")
+            return idx, result, sample["ground_truth"]
 
     if work_items:
         completed = await asyncio.gather(
