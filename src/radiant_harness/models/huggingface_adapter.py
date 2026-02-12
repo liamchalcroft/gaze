@@ -99,6 +99,35 @@ def _inject_tool_docs(
     return messages
 
 
+_JSON_MODE_INSTRUCTION = (
+    "\n\nIMPORTANT: You must respond with a valid JSON object. "
+    "Do not include any text before or after the JSON. "
+    "Your entire response must be parseable as JSON."
+)
+
+
+def _inject_json_mode(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Append a JSON-mode instruction to the system message.
+
+    Used when ``response_format={"type": "json_object"}`` is requested but the
+    model doesn't natively support structured output. The instruction nudges the
+    model to return valid JSON.
+
+    The original list is never mutated.
+    """
+    messages = [dict(m) for m in messages]
+
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                msg["content"] = content + _JSON_MODE_INSTRUCTION
+            return messages
+
+    messages.insert(0, {"role": "system", "content": _JSON_MODE_INSTRUCTION.strip()})
+    return messages
+
+
 def _require_torch():
     """Import torch, raising ImportError with helpful message if unavailable."""
     try:
@@ -303,14 +332,16 @@ class HuggingFaceAdapter(AdapterProtocol):
                 model_name=self.model_name,
             )
 
-        if response_format is not None:
-            logger.warning("response_format is not supported for HuggingFace adapters; ignoring")
-
         torch = self.torch
 
         # Inject tool schemas into messages so the model knows what's available
         if tools:
             messages = _inject_tool_docs(messages, tools)
+
+        # HF models don't support response_format natively; emulate via prompt
+        if response_format is not None:
+            logger.debug("Emulating response_format via JSON-mode system instruction")
+            messages = _inject_json_mode(messages)
 
         # Convert messages to prompt
         prompt = self._format_messages(messages)
@@ -580,14 +611,16 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                 model_name=self.model_name,
             )
 
-        if response_format is not None:
-            logger.warning("response_format is not supported for HuggingFace adapters; ignoring")
-
         torch = self.torch
 
         # Inject tool schemas into messages so the model knows what's available
         if tools:
             messages = _inject_tool_docs(messages, tools)
+
+        # HF models don't support response_format natively; emulate via prompt
+        if response_format is not None:
+            logger.debug("Emulating response_format via JSON-mode system instruction")
+            messages = _inject_json_mode(messages)
 
         # Extract images from messages
         images = self._extract_images(messages)

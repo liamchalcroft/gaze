@@ -6,108 +6,38 @@ Provides verifiers-compatible reward functions for:
 - Localization: IoU-based detection reward
 
 These can be used individually or combined for multi-task evaluation.
+
+All shared utilities (IoU, JSON extraction, completion text extraction) are
+imported from radiant_harness to maintain parity with the examples/ rewards.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Literal
 
 import verifiers as vf
 
+from radiant_harness.utils.iou import compute_iou
+from radiant_harness.utils.json_extract import extract_json_from_text
+from radiant_harness.verifiers.rewards import extract_completion_text
+
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
 
-def extract_completion_text(completion: Any) -> str:
-    """Extract text content from a verifiers completion.
+def _normalize_diagnosis(diagnosis: str) -> str:
+    """Normalize diagnosis text for comparison.
 
-    Handles multiple formats:
-    - Plain string
-    - Message list with assistant role
-    - Multimodal content lists
-
-    Args:
-        completion: Model completion in any supported format
-
-    Returns:
-        Extracted text content
+    Strips hedging modifiers (possible, probable, likely, suspected) that
+    indicate uncertainty but NOT severity qualifiers (mild, moderate, severe)
+    which are clinically meaningful and change the diagnosis.
     """
-    if isinstance(completion, str):
-        return completion
-
-    if isinstance(completion, list):
-        for msg in reversed(completion):
-            if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                continue
-
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        return item.get("text", "")
-
-    return str(completion or "")
-
-
-def extract_json_response(text: str) -> dict[str, Any] | None:
-    """Extract JSON object from text using robust parsing.
-
-    Uses JSONDecoder.raw_decode() to correctly handle JSON strings
-    that may contain braces, avoiding fragile brace-matching.
-
-    Args:
-        text: Text that may contain JSON
-
-    Returns:
-        Parsed JSON dict or None
-    """
-    decoder = json.JSONDecoder()
-
-    for i, c in enumerate(text):
-        if c != "{":
-            continue
-        try:
-            result, _ = decoder.raw_decode(text, i)
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            continue
-
-    return None
-
-
-def compute_iou(box1: list[float], box2: list[float]) -> float:
-    """Compute Intersection over Union for two bounding boxes.
-
-    Args:
-        box1: First box [x1, y1, x2, y2]
-        box2: Second box [x1, y1, x2, y2]
-
-    Returns:
-        IoU value in [0.0, 1.0]
-    """
-    if len(box1) < 4 or len(box2) < 4:
-        return 0.0
-
-    x1 = max(box1[0], box2[0])
-    y1 = max(box1[1], box2[1])
-    x2 = min(box1[2], box2[2])
-    y2 = min(box1[3], box2[3])
-
-    intersection = max(0, x2 - x1) * max(0, y2 - y1)
-
-    area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-    area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-    union = area1 + area2 - intersection
-
-    if union <= 0:
-        return 0.0
-
-    return intersection / union
+    normalized = diagnosis.lower()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    # Remove hedging modifiers only — severity qualifiers are clinically meaningful
+    for modifier in ["possible", "probable", "likely", "suspected"]:
+        normalized = normalized.replace(modifier, "")
+    return " ".join(normalized.split())
 
 
 def caption_reward(
@@ -126,7 +56,7 @@ def caption_reward(
         Token F1 score in [0.0, 1.0]
     """
     text = extract_completion_text(completion)
-    response = extract_json_response(text)
+    response = extract_json_from_text(text)
 
     if response is None:
         return 0.0
@@ -158,17 +88,6 @@ def caption_reward(
     return 2 * precision * recall / (precision + recall)
 
 
-def _normalize_diagnosis(diagnosis: str) -> str:
-    """Normalize diagnosis text for comparison."""
-    normalized = diagnosis.lower()
-    normalized = re.sub(r"[^\w\s]", " ", normalized)
-
-    for modifier in ["possible", "probable", "likely", "suspected", "mild", "moderate", "severe"]:
-        normalized = normalized.replace(modifier, "")
-
-    return " ".join(normalized.split())
-
-
 def diagnosis_reward(
     prompt: str,  # noqa: ARG001 - Required by verifiers interface
     completion: Any,
@@ -185,7 +104,7 @@ def diagnosis_reward(
         Accuracy score in [0.0, 1.0]
     """
     text = extract_completion_text(completion)
-    response = extract_json_response(text)
+    response = extract_json_from_text(text)
 
     if response is None:
         return 0.0
@@ -227,11 +146,14 @@ def diagnosis_reward(
     return 0.6 * float(top1_match) + 0.4 * coverage
 
 
-def localization_reward_factory(iou_threshold: float = 0.3):
+def localization_reward_factory(iou_threshold: float = 0.5):
     """Create localization reward function with configurable IoU threshold.
 
+    Default threshold is 0.5 to align with NOVA evaluation metric
+    (ACC50 / mAP@0.5), preventing reward-eval misalignment.
+
     Args:
-        iou_threshold: Minimum IoU for positive match
+        iou_threshold: Minimum IoU for positive match (default 0.5 per NOVA eval)
 
     Returns:
         Reward function
@@ -253,7 +175,7 @@ def localization_reward_factory(iou_threshold: float = 0.3):
             Detection F1 score in [0.0, 1.0]
         """
         text = extract_completion_text(completion)
-        response = extract_json_response(text)
+        response = extract_json_from_text(text)
 
         if response is None:
             return 0.0
@@ -296,7 +218,10 @@ def localization_reward_factory(iou_threshold: float = 0.3):
             for ref_idx, ref_box in enumerate(ref_boxes):
                 if ref_idx in matched_refs:
                     continue
-                iou = compute_iou(pred_box, ref_box)
+                # Convert to float for compute_iou (handles int coords from JSON)
+                pred_floats = [float(c) for c in pred_box[:4]]
+                ref_floats = [float(c) for c in ref_box[:4]]
+                iou = compute_iou(pred_floats, ref_floats)
                 if iou > best_iou:
                     best_iou = iou
                     best_ref_idx = ref_idx
@@ -320,7 +245,7 @@ def combined_reward_factory(
     caption_weight: float = 0.33,
     diagnosis_weight: float = 0.34,
     localization_weight: float = 0.33,
-    iou_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
 ):
     """Create combined reward function for all NOVA tasks.
 
@@ -328,7 +253,7 @@ def combined_reward_factory(
         caption_weight: Weight for caption reward
         diagnosis_weight: Weight for diagnosis reward
         localization_weight: Weight for localization reward
-        iou_threshold: IoU threshold for localization
+        iou_threshold: IoU threshold for localization (default 0.5 per NOVA eval)
 
     Returns:
         Combined reward function
@@ -365,13 +290,13 @@ def combined_reward_factory(
 
 def create_nova_rubric(
     task: NOVATask = "all",
-    iou_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
 ) -> vf.Rubric:
     """Create verifiers rubric for NOVA evaluation.
 
     Args:
         task: Which task(s) to evaluate
-        iou_threshold: IoU threshold for localization
+        iou_threshold: IoU threshold for localization (default 0.5 per NOVA eval)
 
     Returns:
         Configured rubric

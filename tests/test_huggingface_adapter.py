@@ -16,6 +16,7 @@ from radiant_harness.exceptions import ModelError
 from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
 from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
 from radiant_harness.models.huggingface_adapter import _format_tools_for_prompt
+from radiant_harness.models.huggingface_adapter import _inject_json_mode
 from radiant_harness.models.huggingface_adapter import _inject_tool_docs
 
 # ---------------------------------------------------------------------------
@@ -54,16 +55,16 @@ async def test_huggingface_vlm_adapter_rejects_streaming() -> None:
 
 @pytest.mark.asyncio
 async def test_huggingface_adapter_warns_on_response_format() -> None:
-    """response_format should not raise; it should warn and proceed.
+    """response_format should not raise ModelError; it should warn and proceed.
 
     The base agentic loop always passes response_format, so raising breaks
-    all HF adapter usage. We verify it no longer raises ModelError, then
-    expect ImportError (no torch in CI) from the rest of generate_chat.
+    all HF adapter usage. We verify it does NOT raise ModelError, then
+    expect either ImportError (no torch in CI) or OSError (torch installed
+    but model "dummy" not found) from the rest of generate_chat.
     """
     adapter = HuggingFaceAdapter(model_name="dummy")
     # Should NOT raise ModelError for response_format.
-    # It will raise ImportError because torch isn't installed in test env.
-    with pytest.raises(ImportError, match="torch"):
+    with pytest.raises((ImportError, OSError)):
         await adapter.generate_chat(
             messages=[{"role": "user", "content": "hello"}],
             max_tokens=1,
@@ -74,8 +75,9 @@ async def test_huggingface_adapter_warns_on_response_format() -> None:
 
 @pytest.mark.asyncio
 async def test_huggingface_vlm_adapter_warns_on_response_format() -> None:
+    """response_format should not raise ModelError for VLM adapter either."""
     adapter = HuggingFaceVLMAdapter(model_name="dummy")
-    with pytest.raises(ImportError, match="torch"):
+    with pytest.raises((ImportError, OSError)):
         await adapter.generate_chat(
             messages=[{"role": "user", "content": "hello"}],
             max_tokens=1,
@@ -297,6 +299,31 @@ class TestToolCallParity:
 # ---------------------------------------------------------------------------
 # Protocol signature parity
 # ---------------------------------------------------------------------------
+
+
+class TestInjectJsonMode:
+    """Tests for _inject_json_mode prompt emulation."""
+
+    def test_appends_to_existing_system_message(self) -> None:
+        messages = [
+            {"role": "system", "content": "You are a radiologist."},
+            {"role": "user", "content": "Analyze this."},
+        ]
+        result = _inject_json_mode(messages)
+        assert "valid JSON" in result[0]["content"]
+        assert result[0]["content"].startswith("You are a radiologist.")
+
+    def test_inserts_system_message_when_missing(self) -> None:
+        messages = [{"role": "user", "content": "Hello"}]
+        result = _inject_json_mode(messages)
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert "valid JSON" in result[0]["content"]
+
+    def test_does_not_mutate_original(self) -> None:
+        messages = [{"role": "system", "content": "Original."}]
+        _inject_json_mode(messages)
+        assert messages[0]["content"] == "Original."
 
 
 class TestProtocolSignatureParity:
