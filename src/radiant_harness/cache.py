@@ -133,9 +133,9 @@ class TTLCache(Generic[T]):
             value: Value to store
         """
         with self._lock:
-            self._cache[key] = (time.time(), value)
-            # Enforce size limit after insert
+            # Evict before insert so the cache never exceeds max_cache_size
             self._evict_stale()
+            self._cache[key] = (time.time(), value)
 
     @beartype
     def delete(self, key: str) -> bool:
@@ -190,7 +190,8 @@ class TTLCache(Generic[T]):
     def _evict_stale(self) -> None:
         """Evict expired entries and enforce size limit.
 
-        Called automatically before adding new entries.
+        Called automatically before adding new entries.  Uses ``>=`` so
+        that there is room for the upcoming insert.
         """
         current_time = time.time()
 
@@ -205,8 +206,8 @@ class TTLCache(Generic[T]):
             self._close_value(key, value, "expired")
             del self._cache[key]
 
-        # If still over limit, evict oldest entries
-        if len(self._cache) > self._config.max_cache_size:
+        # If at or over limit, evict oldest entries to make room
+        if len(self._cache) >= self._config.max_cache_size:
             # Sort by timestamp (oldest first)
             sorted_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][0])
 
