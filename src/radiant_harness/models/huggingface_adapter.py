@@ -31,6 +31,71 @@ if TYPE_CHECKING:
 
 _TOOL_CALL_BLOCK_RE = re.compile(r"```tool\s*(\{.*?\})\s*```", re.DOTALL)
 
+_TOOL_SYSTEM_PREAMBLE = (
+    "\n\n# Available Tools\n"
+    "You may call tools by emitting a fenced code block with the `tool` tag. "
+    "Each block must contain a JSON object with `name` (string) and `arguments` (object).\n\n"
+    "Example:\n"
+    "```tool\n"
+    '{"name": "zoom", "arguments": {"x": 100, "y": 200, "level": 2}}\n'
+    "```\n\n"
+    "Available tools:\n"
+)
+
+
+def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
+    """Format OpenAI-style tool schemas into text for prompt injection.
+
+    Args:
+        tools: List of tool schemas in OpenAI function-calling format.
+
+    Returns:
+        Formatted string describing available tools.
+    """
+    parts: list[str] = [_TOOL_SYSTEM_PREAMBLE]
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "unknown")
+        desc = func.get("description", "")
+        params = func.get("parameters", {})
+        props = params.get("properties", {})
+        required = set(params.get("required", []))
+
+        parts.append(f"- **{name}**: {desc}")
+        if props:
+            param_strs: list[str] = []
+            for pname, pdef in props.items():
+                ptype = pdef.get("type", "any")
+                pdesc = pdef.get("description", "")
+                req_marker = " (required)" if pname in required else ""
+                param_strs.append(f"    - `{pname}` ({ptype}{req_marker}): {pdesc}")
+            parts.append("\n".join(param_strs))
+
+    return "\n".join(parts) + "\n"
+
+
+def _inject_tool_docs(
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return a copy of *messages* with tool documentation prepended to the system message.
+
+    If no system message exists, one is inserted at the front. The original
+    list is never mutated.
+    """
+    tool_text = _format_tools_for_prompt(tools)
+    messages = [dict(m) for m in messages]  # shallow copy each dict
+
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                msg["content"] = content + tool_text
+            return messages
+
+    # No system message found — insert one
+    messages.insert(0, {"role": "system", "content": tool_text.strip()})
+    return messages
+
 
 def _require_torch():
     """Import torch, raising ImportError with helpful message if unavailable."""
@@ -232,11 +297,13 @@ class HuggingFaceAdapter(AdapterProtocol):
             )
 
         if response_format is not None:
-            raise ModelError(
-                "response_format is not supported for HuggingFace adapters",
-                model_name=self.model_name,
-            )
+            logger.warning("response_format is not supported for HuggingFace adapters; ignoring")
+
         torch = self.torch
+
+        # Inject tool schemas into messages so the model knows what's available
+        if tools:
+            messages = _inject_tool_docs(messages, tools)
 
         # Convert messages to prompt
         prompt = self._format_messages(messages)
@@ -496,11 +563,13 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             )
 
         if response_format is not None:
-            raise ModelError(
-                "response_format is not supported for HuggingFace adapters",
-                model_name=self.model_name,
-            )
+            logger.warning("response_format is not supported for HuggingFace adapters; ignoring")
+
         torch = self.torch
+
+        # Inject tool schemas into messages so the model knows what's available
+        if tools:
+            messages = _inject_tool_docs(messages, tools)
 
         # Extract images from messages
         images = self._extract_images(messages)

@@ -335,11 +335,7 @@ class CombinedReward(BaseRewardFunction):
         completion: Any,
         info: dict[str, Any],
     ) -> float:
-        """Compute combined reward.
-
-        Note: Stores reward details in info["_reward_details"] for logging.
-        This mutation is intentional to allow callers to inspect per-reward scores.
-        """
+        """Compute combined reward."""
         total_reward = 0.0
         details: dict[str, float] = {}
 
@@ -348,7 +344,6 @@ class CombinedReward(BaseRewardFunction):
             total_reward += weight * r
             details[name] = r
 
-        # Store details in info for logging (intentional mutation for debugging/logging)
-        info["_reward_details"] = details
+        logger.debug(f"CombinedReward details: {details}, total={total_reward:.4f}")
 
         return total_reward

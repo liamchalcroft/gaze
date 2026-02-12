@@ -81,3 +81,25 @@ class TestIoU:
 
         iou = compute_iou(box1, box2)
         assert abs(iou - 0.142857142857) < 1e-10  # Same ratio as smaller test
+
+    def test_inverted_box_normalized(self):
+        """Test that inverted coordinates (x2<x1) are auto-normalized."""
+        # [100,100,50,50] should be treated as [50,50,100,100]
+        box_normal = [50.0, 50.0, 100.0, 100.0]
+        box_inverted = [100.0, 100.0, 50.0, 50.0]
+
+        assert compute_iou(box_normal, box_inverted) == 1.0
+
+    def test_inverted_box_partial_overlap(self):
+        """Inverted coords with partial overlap compute correctly."""
+        # Normal: [0,0,10,10] vs [5,5,15,15] → IoU ≈ 0.1429
+        iou_normal = compute_iou([0.0, 0.0, 10.0, 10.0], [5.0, 5.0, 15.0, 15.0])
+        # Same with first box inverted
+        iou_inverted = compute_iou([10.0, 10.0, 0.0, 0.0], [5.0, 5.0, 15.0, 15.0])
+        assert abs(iou_normal - iou_inverted) < 1e-10
+
+    def test_both_boxes_inverted(self):
+        """Both boxes inverted still produces correct IoU."""
+        iou = compute_iou([10.0, 10.0, 0.0, 0.0], [15.0, 15.0, 5.0, 5.0])
+        expected = compute_iou([0.0, 0.0, 10.0, 10.0], [5.0, 5.0, 15.0, 15.0])
+        assert abs(iou - expected) < 1e-10

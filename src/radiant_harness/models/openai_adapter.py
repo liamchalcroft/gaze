@@ -22,6 +22,8 @@ from radiant_harness.exceptions import ModelError
 from radiant_harness.models.adapter_protocol import AdapterProtocol
 from radiant_harness.models.adapter_protocol import GenerationLog
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 class OpenAIAdapter(AdapterProtocol):
     """Adapter around OpenAI's Chat Completions API (text + vision)."""
@@ -33,11 +35,13 @@ class OpenAIAdapter(AdapterProtocol):
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
         enable_caching: bool = True,
+        base_url: str | None = None,
     ) -> None:
         self.model_name = model_name
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
         self.enable_caching = enable_caching
+        self._base_url = base_url
         self._client: AsyncOpenAI | None = None
 
     @property
@@ -45,7 +49,9 @@ class OpenAIAdapter(AdapterProtocol):
         """Get or create the AsyncOpenAI client.
 
         The client is lazily initialized to avoid unnecessary API key
-        validation at module import time.
+        validation at module import time. When OPENROUTER_API_KEY is used
+        (without OPENAI_API_KEY), base_url is automatically set to the
+        OpenRouter endpoint.
 
         Returns:
             Configured AsyncOpenAI client instance
@@ -54,22 +60,33 @@ class OpenAIAdapter(AdapterProtocol):
             ModelError: If no API key is configured
         """
         if self._client is None:
-            # Validate API key exists
             import os
 
-            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+            openai_key = os.getenv("OPENAI_API_KEY")
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+            api_key = openai_key or openrouter_key
             if not api_key:
                 raise ModelError(
                     "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY environment variable",
                     model_name=self.model_name,
                 )
 
-            # Configure timeout and retry settings
-            self._client = AsyncOpenAI(
-                api_key=api_key,
-                timeout=60.0,  # Default timeout
-                max_retries=3,  # Default retry count
-            )
+            # Resolve base_url: explicit > auto-detect OpenRouter > default (OpenAI)
+            base_url = self._base_url
+            if base_url is None and not openai_key and openrouter_key:
+                base_url = OPENROUTER_BASE_URL
+                logger.info("Using OpenRouter base URL (OPENROUTER_API_KEY detected)")
+
+            kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "timeout": 60.0,
+                "max_retries": 3,
+            }
+            if base_url is not None:
+                kwargs["base_url"] = base_url
+
+            self._client = AsyncOpenAI(**kwargs)
         return self._client
 
     @beartype

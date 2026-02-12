@@ -169,6 +169,19 @@ class TestCombinedReward:
 
         assert combined.weights == [0.6, 0.4]
 
+    def test_combined_reward_does_not_mutate_info(self) -> None:
+        """CombinedReward must not mutate the caller's info dict."""
+        exact = ExactMatchReward()
+        f1 = TokenF1Reward()
+        combined = CombinedReward(rewards=[exact, f1], weights=[0.5, 0.5])
+
+        info = {"answer": "Hello"}
+        original_keys = set(info.keys())
+
+        combined("", "Hello", info)
+
+        assert set(info.keys()) == original_keys
+
 
 def test_verifiers_optional() -> None:
     """Test that verifiers integration handles missing import gracefully."""

@@ -16,7 +16,6 @@ radiant_harness/
 │   ├── base.py                 # AgenticProcessorBase abstract class
 │   ├── config.py               # Configuration dataclasses
 │   ├── types.py                # Core types (ToolCall, ToolResult, Turn, AgenticResult)
-│   ├── protocols.py            # Protocol definitions
 │   ├── exceptions.py           # Exception hierarchy
 │   ├── cache.py                # TTLCache implementation
 │   ├── models/                 # Model adapters
@@ -29,8 +28,7 @@ radiant_harness/
 │   │   ├── visual.py           # Visual tools (zoom, crop, contrast, etc.)
 │   │   ├── search.py           # Search tools (web, image)
 │   │   ├── image_manager.py    # Image loading and transformation
-│   │   ├── image_ops.py        # Image operations
-│   │   └── tool_documenter.py  # Schema generation
+│   │   └── image_ops.py        # Image operations
 │   ├── retrieval/              # External search integrations
 │   │   ├── web_search.py       # PubMed search
 │   │   └── image_search.py     # Open-i image search

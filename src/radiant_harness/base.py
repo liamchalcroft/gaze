@@ -181,6 +181,11 @@ class AgenticProcessorBase(ABC):
         if not tools:
             return None
 
+        if len(images) > 1:
+            logger.warning(
+                f"Tool registry only supports a single active image; "
+                f"using first of {len(images)} images, rest will be ignored"
+            )
         active_image = images[0]
         return ToolRegistry(image_path=active_image.path, tools=tools)
 

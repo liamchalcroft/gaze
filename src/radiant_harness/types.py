@@ -30,7 +30,7 @@ class ToolCall:
     arguments: dict[str, Any] | str
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToolResult:
     """Result of executing a tool.
 

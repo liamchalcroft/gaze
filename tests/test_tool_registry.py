@@ -154,3 +154,17 @@ def test_sync_context_manager_without_image() -> None:
 
     # Should not raise even without image
     assert registry.get_image_manager().current_image is None
+
+
+def test_tool_result_is_frozen() -> None:
+    """ToolResult must be frozen to preserve audit integrity in history."""
+    result = ToolResult(tool_name="test", description="desc")
+
+    with pytest.raises(AttributeError):
+        result.output = "mutated"  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        result.description = "mutated"  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        result.error = "mutated"  # type: ignore[misc]
