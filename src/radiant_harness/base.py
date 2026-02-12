@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from beartype import beartype
+from beartype.roar import BeartypeException
 from loguru import logger
 from PIL import Image
 
@@ -467,6 +468,15 @@ class AgenticProcessorBase(ABC):
             tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
             if tool_docs:
                 system_prompt = f"{system_prompt}\n\nAvailable tools:\n{tool_docs}"
+            if len(images) > 1:
+                first_label = images[0].label or images[0].path.name
+                system_prompt = (
+                    f"{system_prompt}\n\nIMPORTANT: Visual tools (zoom, crop, "
+                    f"contrast, etc.) operate only on the first image "
+                    f"({first_label}). All images are visible in the "
+                    f"conversation, but tool manipulations apply to the first "
+                    f"image only."
+                )
         user_message = self.get_user_message(images=images, metadata=metadata)
 
         turns: list[Turn] = []
@@ -538,9 +548,14 @@ class AgenticProcessorBase(ABC):
                         )
                     )
 
-            if typed_tool_calls and tool_registry is None:
+            if typed_tool_calls and (tool_registry is None or is_last_turn):
+                reason = (
+                    "tools were withheld on final turn"
+                    if is_last_turn
+                    else "tools are disabled or unavailable"
+                )
                 raise AgenticProcessingError(
-                    "Model requested tool calls but tools are disabled or unavailable",
+                    f"Model requested tool calls but {reason}",
                     turns_completed=turn_idx + 1,
                     partial_response={
                         "error": "tools_unavailable",
@@ -730,13 +745,19 @@ class AgenticProcessorBase(ABC):
         tool_registry: ToolRegistry,
         turn_idx: int,
     ) -> ToolResult:
-        """Execute a single tool call with error handling."""
+        """Execute a single tool call with error handling.
+
+        Recoverable errors (tool execution failures, unexpected crashes)
+        return a ``ToolResult`` with an error description so the model can
+        adapt.  Only structural errors (unknown tool name) are fatal.
+        """
         tool_args = self._parse_tool_args(tool_call, turn_idx)
         logger.debug(f"Executing: {tool_call.name}({tool_args})")
 
         try:
             return await tool_registry.execute(tool_call.name, **tool_args)
         except UnknownToolError as e:
+            # Structural error: model hallucinated a tool name — fatal.
             logger.error(f"Unknown tool requested on turn {turn_idx + 1}: {tool_call.name}")
             raise AgenticProcessingError(
                 f"Tool '{tool_call.name}' is not registered",
@@ -744,14 +765,14 @@ class AgenticProcessorBase(ABC):
                 partial_response={"error": "unknown_tool", "tool": tool_call.name},
             ) from e
         except ToolExecutionError as e:
-            logger.error(
-                f"Tool '{tool_call.name}' failed during execution on turn {turn_idx + 1}: {e}"
+            logger.warning(
+                f"Tool '{tool_call.name}' failed on turn {turn_idx + 1}: {e}"
             )
-            raise AgenticProcessingError(
-                f"Tool '{tool_call.name}' failed during execution: {e}",
-                turns_completed=turn_idx + 1,
-                partial_response={"error": "tool_execution_failed", "tool": tool_call.name},
-            ) from e
+            return ToolResult(
+                tool_name=tool_call.name,
+                description=f"Tool '{tool_call.name}' failed",
+                error=str(e),
+            )
         except (
             ValueError,
             TypeError,
@@ -759,15 +780,16 @@ class AgenticProcessorBase(ABC):
             AttributeError,
             OSError,
             RuntimeError,
+            BeartypeException,
         ) as e:
-            logger.error(
+            logger.warning(
                 f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",
             )
-            raise AgenticProcessingError(
-                f"Tool '{tool_call.name}' raised unexpected error: {e}",
-                turns_completed=turn_idx + 1,
-                partial_response={"error": "tool_unexpected_error", "tool": tool_call.name},
-            ) from e
+            return ToolResult(
+                tool_name=tool_call.name,
+                description=f"Tool '{tool_call.name}' encountered an error",
+                error=str(e),
+            )
 
     @beartype
     async def _execute_tools(
@@ -780,7 +802,8 @@ class AgenticProcessorBase(ABC):
 
         Image-mutating tools (requires_image=True) run sequentially to
         preserve shared ImageManager state.  Independent tools (search, etc.)
-        run concurrently via asyncio.gather when possible.
+        run concurrently *alongside* the sequential image tools so that
+        e.g. a PubMed search overlaps with zoom/crop operations.
         """
         import asyncio
 
@@ -797,12 +820,17 @@ class AgenticProcessorBase(ABC):
 
         results: list[ToolResult | None] = [None] * len(tool_calls)
 
-        # Run image tools sequentially to preserve shared ImageManager state
-        for i in image_indices:
-            results[i] = await self._run_single_tool(tool_calls[i], tool_registry, turn_idx)
+        async def _run_image_tools() -> None:
+            """Run image-mutating tools sequentially."""
+            for i in image_indices:
+                results[i] = await self._run_single_tool(
+                    tool_calls[i], tool_registry, turn_idx
+                )
 
-        # Run non-image tools concurrently
-        if other_indices:
+        async def _run_other_tools() -> None:
+            """Run independent tools concurrently."""
+            if not other_indices:
+                return
             other_results = await asyncio.gather(
                 *(
                     self._run_single_tool(tool_calls[i], tool_registry, turn_idx)
@@ -811,6 +839,10 @@ class AgenticProcessorBase(ABC):
             )
             for i, result in zip(other_indices, other_results):
                 results[i] = result
+
+        # Run both groups in parallel — image tools are sequential within
+        # their group, but the group itself overlaps with independent tools.
+        await asyncio.gather(_run_image_tools(), _run_other_tools())
 
         # All slots must be filled — a None here means a tool silently
         # returned nothing, which should never happen.

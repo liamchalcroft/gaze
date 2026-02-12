@@ -73,6 +73,14 @@ def zoom_image(
     new_w = int(width * factor)
     new_h = int(height * factor)
 
+    # Reject zooms that would exceed the maximum allowed dimension.
+    max_dim = cfg.max_image_dimension
+    if new_w > max_dim or new_h > max_dim:
+        raise ValueError(
+            f"Zoom would produce {new_w}x{new_h} which exceeds "
+            f"max_image_dimension={max_dim}. Use a smaller factor or crop first."
+        )
+
     # Ensure minimum size while preserving aspect ratio.
     # Per-axis clamping would distort the image, which is unacceptable
     # for diagnostic medical imaging where geometry must be faithful.
@@ -333,7 +341,7 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     # Validate types and range before arithmetic
     coord_names = ["x1", "y1", "x2", "y2"]
     for i, value in enumerate(box):
-        if not isinstance(value, int | float):
+        if isinstance(value, bool) or not isinstance(value, int | float):
             raise ToolExecutionError(
                 f"Crop coordinates must be numbers, got {coord_names[i]}={value!r} "
                 f"(type {type(value).__name__})"

@@ -338,6 +338,108 @@ def test_set_preloaded_image_reset_works(tmp_path: Path) -> None:
     assert manager.current_image.size == original_size
 
 
+# ── Type coercion and beartype defense tests ─────────────────────
+
+
+def _create_large_temp_image(tmp_path: Path) -> Path:
+    """Create a test image large enough for crop operations (min_image_size=10)."""
+    path = tmp_path / "test_large.png"
+    Image.new("RGB", (64, 64), color=(128, 128, 128)).save(path)
+    return path
+
+
+@pytest.mark.asyncio
+async def test_crop_with_int_coords_from_json(tmp_path: Path) -> None:
+    """Crop box with integer elements (common JSON output) must not crash."""
+    from radiant_harness.tools.visual import create_visual_tools
+
+    image_path = _create_large_temp_image(tmp_path)
+    tools = create_visual_tools()
+    registry = ToolRegistry(image_path=image_path, tools=tools)
+
+    # JSON typically sends [0, 0, 1, 1] as ints, not floats
+    result = await registry.execute("crop", box=[0, 0, 1, 1])
+    assert result.success
+    assert result.image_base64
+
+
+@pytest.mark.asyncio
+async def test_threshold_with_float_bounds_from_json(tmp_path: Path) -> None:
+    """Threshold with float bounds (e.g. 50.0) must coerce to int."""
+    from radiant_harness.tools.visual import create_visual_tools
+
+    image_path = _create_large_temp_image(tmp_path)
+    tools = create_visual_tools()
+    registry = ToolRegistry(image_path=image_path, tools=tools)
+
+    result = await registry.execute("threshold", lower=50.0, upper=200.0)
+    assert result.success
+    assert result.image_base64
+
+
+@pytest.mark.asyncio
+async def test_crop_rejects_bool_coords(tmp_path: Path) -> None:
+    """Boolean values must not pass as crop coordinates."""
+    from radiant_harness.tools.visual import create_visual_tools
+
+    image_path = _create_large_temp_image(tmp_path)
+    tools = create_visual_tools()
+    registry = ToolRegistry(image_path=image_path, tools=tools)
+
+    with pytest.raises(ToolExecutionError, match="must be numbers"):
+        await registry.execute("crop", box=[True, False, True, True])
+
+
+@pytest.mark.asyncio
+async def test_beartype_violation_wrapped_as_tool_error(tmp_path: Path) -> None:
+    """BeartypeException from inside tool must become ToolExecutionError, not crash."""
+    from beartype import beartype as bt
+
+    @bt
+    def _strict_op(x: float) -> float:
+        return x
+
+    async def _bad_tool(registry: ToolRegistry, value: str) -> ToolResult:  # noqa: ARG001
+        _strict_op(value)  # type: ignore[arg-type]  # intentional: trigger beartype
+        return ToolResult(tool_name="bad", description="unreachable", metadata={})
+
+    tool = Tool(
+        name="bad",
+        description="triggers beartype",
+        parameters={"value": {"type": "string", "description": "will fail"}},
+        execute=_bad_tool,
+        requires_image=False,
+    )
+    registry = ToolRegistry(tools=[tool])
+    with pytest.raises(ToolExecutionError, match="invalid arguments"):
+        await registry.execute("bad", value="not_a_float")
+
+
+def test_zoom_rejects_oversized_result() -> None:
+    """Zoom that exceeds max_image_dimension must raise ValueError."""
+    from radiant_harness.config import ImageProcessingConfig
+    from radiant_harness.tools.visual import zoom_image
+
+    cfg = ImageProcessingConfig(max_image_dimension=1000)
+    img = Image.new("RGB", (512, 512))
+    with pytest.raises(ValueError, match="exceeds max_image_dimension"):
+        zoom_image(img, 2.5, config=cfg)  # 1280 > 1000
+    img.close()
+
+
+def test_zoom_within_max_dimension_succeeds() -> None:
+    """Zoom that stays within max_image_dimension must succeed."""
+    from radiant_harness.config import ImageProcessingConfig
+    from radiant_harness.tools.visual import zoom_image
+
+    cfg = ImageProcessingConfig(max_image_dimension=2000)
+    img = Image.new("RGB", (512, 512))
+    result = zoom_image(img, 2.0, config=cfg)  # 1024 < 2000
+    assert result.size == (1024, 1024)
+    img.close()
+    result.close()
+
+
 # ── PR5: OpenAI adapter retry config tests ──────────────────────
 
 

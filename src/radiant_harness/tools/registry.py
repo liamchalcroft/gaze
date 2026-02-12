@@ -18,6 +18,7 @@ from types import TracebackType
 from typing import Any
 
 from beartype import beartype
+from beartype.roar import BeartypeException
 from PIL import Image
 
 from radiant_harness.exceptions import ToolExecutionError
@@ -375,17 +376,37 @@ class ToolRegistry:
                     f"Tool '{tool_name}' requires an image, but no image path was provided"
                 )
 
-        # Coerce int → float for parameters declared as "number" in the schema.
-        # JSON deserializes 2 as int, but beartype rejects int for float hints.
+        # Coerce JSON-native types to match Python type hints that beartype enforces.
+        # JSON deserializes 2 as int, but beartype rejects int for float hints;
+        # similarly some models send 50.0 for integer-declared params.
         for param_name, param_info in tool.parameters.items():
-            if param_info.get("type") == "number" and param_name in kwargs:
-                val = kwargs[param_name]
+            if param_name not in kwargs:
+                continue
+            val = kwargs[param_name]
+            param_type = param_info.get("type")
+
+            # int → float for "number" params
+            if param_type == "number":
                 if isinstance(val, int) and not isinstance(val, bool):
                     kwargs[param_name] = float(val)
 
+            # float → int for "integer" params (only if lossless)
+            elif param_type == "integer":
+                if isinstance(val, float) and not isinstance(val, bool) and val == int(val):
+                    kwargs[param_name] = int(val)
+
+            # Coerce elements inside "array" params whose items are "number"
+            elif param_type == "array" and isinstance(val, list):
+                items_type = param_info.get("items", {}).get("type")
+                if items_type == "number":
+                    kwargs[param_name] = [
+                        float(v) if isinstance(v, int) and not isinstance(v, bool) else v
+                        for v in val
+                    ]
+
         try:
             result = await tool.execute(self, **kwargs)
-        except TypeError as e:
+        except (TypeError, BeartypeException) as e:
             raise ToolExecutionError(
                 f"Tool '{tool_name}' received invalid arguments: {e}"
             ) from e

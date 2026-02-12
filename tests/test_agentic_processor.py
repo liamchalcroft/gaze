@@ -166,15 +166,21 @@ async def test_agentic_processor_runs_tool_and_finalizes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agentic_processor_surfaces_unexpected_tool_errors() -> None:
+async def test_agentic_processor_surfaces_tool_errors_gracefully() -> None:
+    """Tool failures are returned to the model, not fatal.
+
+    The FailingAdapter always returns tool calls, so the graceful error
+    flows back on turns 1 and 2, and the last-turn guard fires on turn 3.
+    """
     processor = FailingToolProcessor()
 
     with pytest.raises(AgenticProcessingError) as exc:
         await processor.analyze(images=None, metadata={"history": "hx"})
 
-    assert "unexpected error" in str(exc.value)
+    # The final error is the last-turn guard (not a tool crash)
+    assert "final turn" in str(exc.value).lower()
     assert exc.value.partial_response is not None
-    assert exc.value.partial_response["error"] == "tool_unexpected_error"
+    assert exc.value.partial_response["error"] == "tools_unavailable"
 
 
 # --- Adapters and processors for new edge-case tests ---
@@ -293,14 +299,18 @@ class MarkdownJsonProcessor(AgenticProcessorBase):
 
 @pytest.mark.asyncio
 async def test_loop_exhaustion_raises_when_all_turns_use_tools() -> None:
-    """Loop guard fires when model returns tool calls on every turn."""
+    """Last-turn guard fires when model returns tool calls on final turn."""
     processor = LoopExhaustionProcessor()
 
     with pytest.raises(AgenticProcessingError) as exc:
         await processor.analyze(images=None, metadata={})
 
-    assert "exhausted" in str(exc.value).lower()
+    # With the last-turn guard, the error now fires on the final turn
+    # rather than via the for/else exhaustion path.
+    assert "final turn" in str(exc.value).lower() or "exhausted" in str(exc.value).lower()
     assert exc.value.turns_completed > 0
+    assert exc.value.partial_response is not None
+    assert exc.value.partial_response["error"] == "tools_unavailable"
 
 
 @pytest.mark.asyncio
@@ -311,3 +321,233 @@ async def test_markdown_wrapped_json_parsed_correctly() -> None:
 
     assert result.final_response["result"] == "wrapped"
     assert result.final_response["continue"] is False
+
+
+# --- Patch Set #1: last-turn guard, penultimate warning, max_turns=1 ---
+
+
+class LastTurnToolAdapter(AdapterProtocol):
+    """Adapter that returns tool calls on every turn, ignoring tools=None."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.tools_per_call: list[list[dict[str, Any]] | None] = []
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, response_format
+        self.calls += 1
+        self.tools_per_call.append(tools)
+        # Always return tool calls regardless of whether tools were offered
+        return (
+            "",
+            [{"id": f"call-{self.calls}", "name": "echo", "arguments": {"value": 1}}],
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_last_turn_tool_calls_rejected_without_execution() -> None:
+    """Tool calls on the last turn are rejected immediately, not executed."""
+    adapter = LastTurnToolAdapter()
+
+    class SingleTurnToolProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            _ = response
+            return True
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = SingleTurnToolProcessor()
+
+    with pytest.raises(AgenticProcessingError) as exc:
+        await processor.analyze(images=None, metadata={})
+
+    assert "final turn" in str(exc.value).lower()
+    assert exc.value.partial_response is not None
+    assert exc.value.partial_response["error"] == "tools_unavailable"
+    # Adapter was called exactly once (the single turn) — tools were NOT executed
+    assert adapter.calls == 1
+
+
+class PenultimateWarningAdapter(AdapterProtocol):
+    """Adapter that continues for 2 turns then finalizes on turn 3."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.messages_history: list[list[dict[str, Any]]] = []
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = max_tokens, temperature, tools, response_format
+        self.messages_history.append(list(messages or []))
+        self.calls += 1
+        if self.calls <= 2:
+            return (
+                '{"continue": true, "result": "thinking"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+        return (
+            '{"continue": false, "result": "done"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_penultimate_turn_warning_injected() -> None:
+    """On the penultimate turn, a system warning is injected into messages."""
+    adapter = PenultimateWarningAdapter()
+
+    class ThreeTurnProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+    processor = ThreeTurnProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "done"
+    assert adapter.calls == 3
+
+    # The 3rd call's messages should contain the penultimate warning
+    # (injected after turn 2, which is turn_idx=1, the penultimate of 3)
+    third_call_messages = adapter.messages_history[2]
+    user_messages = [m for m in third_call_messages if m.get("role") == "user"]
+    warning_messages = [m for m in user_messages if "final turn" in str(m.get("content", "")).lower()]
+    assert len(warning_messages) == 1, (
+        f"Expected exactly 1 penultimate warning, found {len(warning_messages)}"
+    )
+
+
+class MaxTurns1ToolAdapter(AdapterProtocol):
+    """Records whether tools were offered on each call."""
+
+    def __init__(self) -> None:
+        self.tools_offered: list[list[dict[str, Any]] | None] = []
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, response_format
+        self.tools_offered.append(tools)
+        return (
+            '{"continue": false, "result": "immediate"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_max_turns_1_with_tools_enabled_passes_no_tools() -> None:
+    """With max_turns=1, the single turn is the last turn so tools=None."""
+    adapter = MaxTurns1ToolAdapter()
+
+    class OneTurnToolProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = OneTurnToolProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "immediate"
+    # Model was called once and tools=None was passed (last turn)
+    assert len(adapter.tools_offered) == 1
+    assert adapter.tools_offered[0] is None
