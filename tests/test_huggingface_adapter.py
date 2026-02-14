@@ -396,6 +396,57 @@ class TestToolCallIdUniqueness:
 
         assert len(all_ids) == len(set(all_ids)), f"Duplicate IDs in {all_ids}"
 
+    def test_separate_adapters_have_isolated_counters(self) -> None:
+        """Two adapter instances must start their counters independently.
+
+        This verifies the fix for the global _tool_call_counter leak where
+        all adapters shared a single monotonic counter, causing IDs from
+        one session to influence another.
+        """
+        adapter_a = HuggingFaceAdapter(model_name="dummy-a")
+        adapter_b = HuggingFaceAdapter(model_name="dummy-b")
+
+        content = '```tool\n{"name": "zoom", "arguments": {}}\n```'
+
+        calls_a, _ = adapter_a._parse_tool_calls(content)
+        calls_b, _ = adapter_b._parse_tool_calls(content)
+
+        assert calls_a is not None and calls_b is not None
+        # Both adapters should start at call_1 since they have independent counters
+        assert calls_a[0]["id"] == "call_1"
+        assert calls_b[0]["id"] == "call_1"
+
+    def test_vlm_adapter_has_isolated_counter(self) -> None:
+        """VLM adapter inherits per-instance counter from base adapter."""
+        adapter_base = HuggingFaceAdapter(model_name="dummy-base")
+        adapter_vlm = HuggingFaceVLMAdapter(model_name="dummy-vlm")
+
+        content = '```tool\n{"name": "zoom", "arguments": {}}\n```'
+
+        # Use base adapter first
+        calls_base, _ = adapter_base._parse_tool_calls(content)
+        assert calls_base is not None
+        assert calls_base[0]["id"] == "call_1"
+
+        # VLM adapter should also start at call_1 (not call_2)
+        calls_vlm, _ = adapter_vlm._parse_tool_calls(content)
+        assert calls_vlm is not None
+        assert calls_vlm[0]["id"] == "call_1"
+
+    def test_counter_increments_within_instance(self) -> None:
+        """Counter increments correctly within a single adapter instance."""
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        content = '```tool\n{"name": "zoom", "arguments": {}}\n```'
+
+        calls_1, _ = adapter._parse_tool_calls(content)
+        calls_2, _ = adapter._parse_tool_calls(content)
+        calls_3, _ = adapter._parse_tool_calls(content)
+
+        assert calls_1 is not None and calls_2 is not None and calls_3 is not None
+        assert calls_1[0]["id"] == "call_1"
+        assert calls_2[0]["id"] == "call_2"
+        assert calls_3[0]["id"] == "call_3"
+
 
 class TestVLMGenKwargsParity:
     """Verify VLM generate_chat gen_kwargs match base HuggingFaceAdapter.
@@ -428,9 +479,7 @@ class TestVLMGenKwargsParity:
         import inspect
 
         source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
-        assert "torch.amp.autocast" in source, (
-            "VLM generate_chat is missing torch.amp.autocast"
-        )
+        assert "torch.amp.autocast" in source, "VLM generate_chat is missing torch.amp.autocast"
 
     def test_base_uses_non_deprecated_autocast(self) -> None:
         """Base adapter must use torch.amp.autocast, not deprecated torch.cuda.amp.autocast."""
@@ -440,6 +489,4 @@ class TestVLMGenKwargsParity:
         assert "torch.cuda.amp.autocast" not in source, (
             "Base adapter still uses deprecated torch.cuda.amp.autocast"
         )
-        assert "torch.amp.autocast" in source, (
-            "Base adapter is missing torch.amp.autocast"
-        )
+        assert "torch.amp.autocast" in source, "Base adapter is missing torch.amp.autocast"

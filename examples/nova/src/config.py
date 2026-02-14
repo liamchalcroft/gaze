@@ -48,6 +48,7 @@ class NOVAConfig:
     output_dir: Path = field(default_factory=lambda: Path("./runs"))
     batch_size: int = 4
     skip_existing: bool = True
+    max_samples: int = 0  # 0 = all samples
 
     def __post_init__(self) -> None:
         """Validate configuration and create output directory."""

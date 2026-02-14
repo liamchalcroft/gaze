@@ -15,7 +15,7 @@ from loguru import logger
 
 DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
     "NOVA_SEMANTIC_MATCH_MODEL",
-    "x-ai/grok-4.1-fast:free"
+    "openai/gpt-5-nano",
 )
 
 # Pre-compiled regex patterns for better performance
@@ -194,7 +194,7 @@ or "NO" if they refer to different conditions.
             {"role": "system", "content": "You are a medical expert. Respond only with YES or NO."},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=5,
+        max_tokens=16,
         temperature=0.0,
     )
     content = response.choices[0].message.content or ""

@@ -8,7 +8,7 @@ from typing import Any
 from typing import Protocol
 
 
-@dataclass
+@dataclass(frozen=True)
 class GenerationLog:
     """Token usage metadata for a generation call."""
 

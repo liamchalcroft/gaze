@@ -2,6 +2,10 @@
 
 Provides dataclasses for tool calls, results, conversation turns,
 and agentic analysis results.
+
+All data types use ``frozen=True`` and immutable containers (tuples,
+MappingProxyType) so that instances are safe to share across async
+tasks and cannot be accidentally mutated after construction.
 """
 
 from __future__ import annotations
@@ -85,16 +89,24 @@ class Turn:
     Attributes:
         role: Message role - must be 'user', 'assistant', or 'tool_result'
         content: Text content of the turn
-        tool_calls: List of tool calls made in this turn (assistant only)
-        tool_results: List of tool results (tool_result only)
+        tool_calls: Tool calls made in this turn (assistant only)
+        tool_results: Tool results (tool_result only)
         image_base64: Optional image data for this turn
     """
 
     role: TurnRole
     content: str
-    tool_calls: list[ToolCall] = field(default_factory=lambda: [])
-    tool_results: list[ToolResult] = field(default_factory=lambda: [])
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_results: tuple[ToolResult, ...] = ()
     image_base64: str | None = None
+
+    def __post_init__(self) -> None:
+        # Coerce sequences to tuples to enforce immutability.
+        # Callers may pass lists for convenience; we freeze them here.
+        if not isinstance(self.tool_calls, tuple):
+            object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
+        if not isinstance(self.tool_results, tuple):
+            object.__setattr__(self, "tool_results", tuple(self.tool_results))
 
 
 @dataclass(frozen=True)
@@ -108,10 +120,17 @@ class AgenticResult:
         confidence: Overall confidence in the analysis (0.0-1.0)
     """
 
-    final_response: dict[str, Any]
-    turns: list[Turn]
+    final_response: Mapping[str, Any]
+    turns: tuple[Turn, ...]
     total_tokens: int
     confidence: float
+
+    def __post_init__(self) -> None:
+        # Freeze mutable containers passed by callers.
+        if not isinstance(self.final_response, MappingProxyType):
+            object.__setattr__(self, "final_response", MappingProxyType(dict(self.final_response)))
+        if not isinstance(self.turns, tuple):
+            object.__setattr__(self, "turns", tuple(self.turns))
 
     @property
     def num_turns(self) -> int:

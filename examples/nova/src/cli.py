@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from loguru import logger
@@ -28,6 +30,15 @@ from .evaluation.caption import evaluate_caption
 from .evaluation.detection import evaluate_detection
 from .evaluation.diagnosis import evaluate_diagnosis_nova_official
 from .processor import NOVAAgenticProcessor
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """Handle MappingProxyType and other frozen containers from radiant_harness."""
+
+    def default(self, o: object) -> Any:
+        if isinstance(o, (MappingProxyType, Mapping)):  # noqa: UP038
+            return dict(o)
+        return super().default(o)
 
 
 async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
@@ -87,6 +98,9 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             raise TypeError(f"Sample {i} image must be a PIL Image, got {type(image).__name__}")
         work_items.append((i, sample))
 
+    if config.max_samples > 0:
+        work_items = work_items[: config.max_samples]
+
     async def _process_sample(
         idx: int, sample: dict[str, Any]
     ) -> tuple[int, AgenticResult, dict[str, Any]]:
@@ -104,6 +118,28 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                 metadata=metadata,
             )
 
+            # Build detailed tool call log for analysis.
+            tool_call_log: list[dict[str, Any]] = []
+            for turn in result.turns:
+                for tc in turn.tool_calls:
+                    tool_call_log.append(
+                        {"name": tc.name, "arguments": tc.arguments}
+                    )
+                for tr in turn.tool_results:
+                    # Capture search queries and key metadata (skip large blobs).
+                    meta: dict[str, Any] = {}
+                    for k in ("query", "search_type", "modality", "body_part", "results_count"):
+                        if k in tr.metadata:
+                            meta[k] = tr.metadata[k]
+                    tool_call_log.append(
+                        {
+                            "name": tr.tool_name,
+                            "result_description": tr.description,
+                            "success": tr.success,
+                            **meta,
+                        }
+                    )
+
             result_file = config.output_dir / f"sample_{idx}.json"
             with result_file.open("w") as f:
                 json.dump(
@@ -112,11 +148,13 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                         "response": result.final_response,
                         "num_turns": result.num_turns,
                         "tools_used": list(result.get_tools_used()),
+                        "tool_call_log": tool_call_log,
                         "confidence": result.confidence,
                         "total_tokens": result.total_tokens,
                     },
                     f,
                     indent=2,
+                    cls=_SafeEncoder,
                 )
 
             logger.info(
@@ -127,16 +165,27 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
 
             return idx, result, sample["ground_truth"]
 
+    failed_samples: list[tuple[int, str]] = []
     if work_items:
-        completed = await asyncio.gather(
-            *(_process_sample(idx, sample) for idx, sample in work_items)
+        raw = await asyncio.gather(
+            *(_process_sample(idx, sample) for idx, sample in work_items),
+            return_exceptions=True,
         )
-        # Sort by original index to preserve deterministic ordering
-        completed_sorted = sorted(completed, key=lambda x: x[0])
-        results = [r for _, r, _ in completed_sorted]
-        ground_truth = [gt for _, _, gt in completed_sorted]
+        # Separate successes from failures
+        for item, (idx, _sample) in zip(raw, work_items):
+            if isinstance(item, BaseException):
+                logger.error(f"Sample {idx} failed: {item}")
+                failed_samples.append((idx, str(item)))
+            else:
+                results.append(item[1])
+                ground_truth.append(item[2])
 
     # Compute evaluation metrics
+    if failed_samples:
+        logger.warning(
+            f"{len(failed_samples)}/{len(work_items)} samples failed: "
+            f"{[i for i, _ in failed_samples]}"
+        )
     logger.info("Computing evaluation metrics...")
     metrics = await compute_metrics(results, ground_truth, config.task)
 
@@ -147,11 +196,17 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             {
                 "config": {
                     "model": config.model_name,
+                    "mode": config.mode,
                     "task": config.task.value,
                     "use_tools": config.use_tools,
+                    "use_web_search": config.use_web_search,
                     "max_turns": config.max_turns,
                 },
                 "num_samples": len(results),
+                "failed_samples": [
+                    {"sample_id": idx, "error": err}
+                    for idx, err in failed_samples
+                ],
                 "metrics": metrics,
             },
             f,

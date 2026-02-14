@@ -271,7 +271,7 @@ class AgenticConfig:
 
     max_turns_limit: int = 20
     default_max_turns: int = 10
-    default_max_tokens: int = 8192
+    default_max_tokens: int = 16384
     default_temperature: float = 0.0
 
     def __post_init__(self) -> None:

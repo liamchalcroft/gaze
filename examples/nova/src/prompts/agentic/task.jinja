@@ -9,7 +9,7 @@
     - enable_visual_tools: bool — whether visual tools are enabled
     - enable_web_search: bool — whether web search is enabled
 #}
-Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confirmed pathology.
+You are an expert neuroradiologist analyzing a brain MRI from the NOVA benchmark dataset. All cases contain confirmed pathology — there are no normal studies.
 
 {% if clinical_history is defined and clinical_history %}
 <clinical_history>
@@ -23,13 +23,29 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
 
 1. **Caption**: Identify MRI sequence (T1/T2/FLAIR/DWI/etc.), plane (axial/sagittal/coronal), and key findings.
 
-2. **Diagnosis**: Provide primary diagnosis with evidence and 2-3 ranked differentials. Use exact diagnostic names without location qualifiers or speculation (e.g., "Glioblastoma" not "Right temporal mass consistent with glioblastoma").
+2. **Diagnosis**: Provide primary diagnosis with evidence and 2-3 ranked differentials.
+   - Use exact diagnostic names without location qualifiers or speculation.
+   - GOOD: "Glioblastoma", "Dandy-Walker malformation", "MELAS", "Lhermitte-Duclos disease"
+   - BAD: "Right temporal mass consistent with glioblastoma" (has location + speculation)
 
-3. **Localization**: For each abnormality, provide:
-   - Bounding box [x1, y1, x2, y2] in absolute pixels
-   - Typical box size: 80-150px per dimension
+3. **Localization** — CRITICAL FOR EVALUATION:
+   - Bounding box [x1, y1, x2, y2] in absolute pixels of the ORIGINAL {{ width }}x{{ height }} image
+   - Typical box size: 80-150px per dimension — do NOT make tiny boxes
    - Include 10-20px margin around lesion boundaries
    - Coordinates must be within: x=[0, {{ width - 1 }}], y=[0, {{ height - 1 }}]
+   - A box that's too small will miss the target entirely (IoU < 0.5 = FAIL)
+
+   **Lesion-Specific Strategies:**
+   - TUMORS: Include full enhancing mass with 15-20px margin
+   - CYSTS: Cover entire fluid cavity including walls
+   - INFARCTS: Include full extent of signal abnormality in vascular territory
+   - MALFORMATIONS: Cover ALL affected structures (e.g., absent septum + ventricles)
+   - DIFFUSE FINDINGS: Box the most representative abnormal region generously
+
+   **Quality Assurance:**
+   - SIZE CHECK: Verify boxes are 80-150px per dimension (not too small!)
+   - COVERAGE: Box should cover the FULL visible abnormality
+   - IoU REQUIREMENT: Boxes need >50% overlap with ground truth to count as correct
 
 {% if enable_visual_tools is defined and enable_visual_tools %}
 **Visual Tools Available:**
@@ -66,17 +82,19 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
 *Annotation:*
 - `annotate_region(box, color?, label?)`: Draw bounding box overlay with optional label. Box as [x1,y1,x2,y2] 0-1.
 
+**CRITICAL — Coordinate Space Warning:**
+`crop()` and `zoom()` change the image coordinate system. After these tools, pixel positions NO LONGER correspond to the original {{ width }}x{{ height }} image.
+- **ALWAYS call `reset()` before your final turn** to restore the original image
+- Report ALL bounding boxes in the ORIGINAL image coordinate space
+- If you skip reset after crop/zoom, your localization scores will be zero
+
 **Tool Usage Strategy:**
 - Use `get_intensity_stats()` BEFORE contrast/threshold for informed decisions
-- Use `show_grid(4)` early to establish spatial reference for localization
 - Use `window_level(preset="brain")` for standard brain tissue windowing
-- Combine `adjust_brightness` + `adjust_contrast` for independent window level/width control
 - Use `detect_edges()` to highlight lesion boundaries for measurement
 - Use `symmetry_diff()` to identify lateralized abnormalities
-- Use `intensity_profile()` to characterize signal transitions across lesion margins
 - Use `measure()` to quantify lesion dimensions before reporting bounding boxes
-- Use `annotate_region()` to mark and label regions of interest
-- Use `adaptive_equalize()` when standard equalization over-enhances noise
+- **On your second-to-last turn**: call `reset()` to restore original coordinates
 {% endif %}
 
 {% if enable_web_search is defined and enable_web_search %}
@@ -88,7 +106,8 @@ Analyze this brain MRI from the NOVA benchmark dataset. All cases contain confir
 **Multi-turn Strategy:**
 - Turn 1: Initial survey, identify areas for investigation. Set `continue: true`.
 - Turn 2+: Detailed examination using tools. Set `continue: true`.
-- Final: Complete analysis with all fields. Set `continue: false`.
+- Penultimate turn: Call `reset()` if you used crop/zoom. Set `continue: true`.
+- Final: Complete analysis with all fields in ORIGINAL image coordinates. Set `continue: false`.
 
 **Output Format (JSON):**
 ```json

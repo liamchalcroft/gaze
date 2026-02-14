@@ -34,15 +34,6 @@ if TYPE_CHECKING:
 
 _TOOL_CALL_BLOCK_RE = re.compile(r"```tool\s*(\{.*?\})\s*```", re.DOTALL)
 
-# Monotonic counter for generating unique tool-call IDs across turns.
-_tool_call_counter = itertools.count(1)
-
-
-def _next_tool_call_id() -> str:
-    """Return a globally unique tool-call ID."""
-    return f"call_{next(_tool_call_counter)}"
-
-
 _TOOL_SYSTEM_PREAMBLE = (
     "\n\n# Available Tools\n"
     "You may call tools by emitting a fenced code block with the `tool` tag. "
@@ -215,6 +206,10 @@ class HuggingFaceAdapter(AdapterProtocol):
         self._load_in_4bit = load_in_4bit
         self._use_flash_attention = use_flash_attention
         self._max_input_length = max_input_length
+
+        # Per-instance counter for generating unique tool-call IDs.
+        # Avoids global mutable state that would leak IDs across sessions.
+        self._tool_call_counter = itertools.count(1)
 
         # Lazy-loaded components
         self._model: PreTrainedModel | None = None
@@ -479,9 +474,10 @@ class HuggingFaceAdapter(AdapterProtocol):
         for i, match in enumerate(matches):
             try:
                 call_data = json.loads(match.group(1))
+                call_id = f"call_{next(self._tool_call_counter)}"
                 tool_calls.append(
                     {
-                        "id": _next_tool_call_id(),
+                        "id": call_id,
                         "name": call_data.get("name", ""),
                         "arguments": json.dumps(call_data.get("arguments", {})),
                     }

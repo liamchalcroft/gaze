@@ -7,6 +7,7 @@ Task-specific details are provided via dependency injection.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from abc import ABC
@@ -518,7 +519,57 @@ class AgenticProcessorBase(ABC):
         for turn_idx in range(self.max_turns):
             is_last_turn = turn_idx == self.max_turns - 1
             current_tools = None if is_last_turn else tool_schemas
+            # Only enforce response_format when tools are NOT being offered.
+            # Many providers cannot handle tools + response_format together,
+            # returning empty responses.  On the last turn (tools stripped)
+            # we enforce the schema so the final answer is well-formed.
+            current_format = response_schema if current_tools is None else None
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
+
+            # On the last turn, inject a schema reminder so models that don't
+            # fully support response_format still know the expected output.
+            if is_last_turn and turn_idx > 0:
+                # Reset image to original so model sees untransformed view
+                if tool_registry is not None:
+                    with contextlib.suppress(ToolExecutionError):
+                        tool_registry.get_image_manager().reset_to_original()
+
+                # Build final-turn message with original image + schema reminder
+                final_parts: list[dict[str, Any]] = []
+
+                if response_schema is not None:
+                    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+                    top_keys = list(schema_obj.get("properties", {}).keys())
+                    if top_keys:
+                        coord_note = ""
+                        if images:
+                            coord_note = (
+                                " The ORIGINAL (untransformed) image is re-attached below. "
+                                "All spatial coordinates (bounding boxes) MUST reference "
+                                "this original image, NOT any zoomed or cropped version."
+                            )
+                        final_parts.append(
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"[System: This is your FINAL turn. Tools are no longer available."
+                                    f"{coord_note} "
+                                    f"You MUST respond with a complete JSON object containing these "
+                                    f"required top-level keys: {top_keys}. "
+                                    f"Set 'continue': false. Do NOT attempt tool calls.]"
+                                ),
+                            }
+                        )
+
+                # Re-inject original images for coordinate reference
+                final_parts.extend(
+                    {"type": "image_url", "image_url": {"url": img.encoded.to_data_url()}}
+                    for img in images
+                    if img.encoded is not None
+                )
+
+                if final_parts:
+                    messages.append({"role": "user", "content": final_parts})
 
             # Strip stale base64 images from earlier rounds (including the
             # initial user message) to reduce payload on subsequent API calls.
@@ -530,7 +581,7 @@ class AgenticProcessorBase(ABC):
                 max_tokens=self._config.default_max_tokens,
                 temperature=self._config.default_temperature,
                 tools=current_tools,
-                response_format=response_schema,
+                response_format=current_format,
             )
             if isinstance(chat_result, AsyncIterator):
                 raise AgenticProcessingError(
@@ -550,11 +601,38 @@ class AgenticProcessorBase(ABC):
                             f"Tool call {i} missing required fields: {missing_fields}. Got: {tc}",
                             turns_completed=turn_idx + 1,
                         )
+                    # Sanitize tool name: some models return None (GLM-4.6V)
+                    # or append special tokens like <|end_of_box|> (Qwen3-VL).
+                    raw_name = tc["name"]
+                    if raw_name is None:
+                        logger.warning(
+                            "Tool call {} on turn {} has name=None, skipping",
+                            i,
+                            turn_idx + 1,
+                        )
+                        continue
+                    clean_name = re.sub(r"<\|[^|]*\|>", "", raw_name).strip()
+                    # Strip trailing parentheses — some models (GLM-4.6V) include
+                    # "()" or "(args)" in the tool name field.
+                    clean_name = re.sub(r"\(.*\)\s*$", "", clean_name).strip()
+                    if not clean_name:
+                        logger.warning(
+                            "Tool call {} on turn {} has empty name after sanitization (raw={!r}), skipping",
+                            i,
+                            turn_idx + 1,
+                            raw_name,
+                        )
+                        continue
+                    # Normalize missing/empty arguments to "{}" — some models send
+                    # None or "" for tools that take no parameters.
+                    raw_args = tc["arguments"]
+                    if raw_args is None or (isinstance(raw_args, str) and not raw_args.strip()):
+                        raw_args = "{}"
                     typed_tool_calls.append(
                         ToolCall(
                             id=tc["id"],
-                            name=tc["name"],
-                            arguments=tc["arguments"],
+                            name=clean_name,
+                            arguments=raw_args,
                         )
                     )
 
@@ -643,6 +721,53 @@ class AgenticProcessorBase(ABC):
                 )
                 turns.append(tool_turn)
                 continue
+            # Detect truncated responses before attempting JSON parsing
+            if gen_log.finish_reason == "length":
+                if not is_last_turn:
+                    # Truncated on intermediate turn — nudge model to use tools
+                    # or produce concise JSON on the next turn.
+                    logger.warning(
+                        f"Turn {turn_idx + 1} truncated (completion_tokens="
+                        f"{gen_log.completion_tokens}). Nudging model to continue."
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[System: Your previous response was too long and was "
+                                "truncated. Please use tools or provide a concise JSON "
+                                "response with 'continue' field.]"
+                            ),
+                        }
+                    )
+                    continue
+                raise AgenticProcessingError(
+                    f"Response truncated on turn {turn_idx + 1} "
+                    f"(finish_reason='length', completion_tokens={gen_log.completion_tokens}, "
+                    f"max_tokens={self._config.default_max_tokens}). "
+                    f"Increase default_max_tokens or simplify the response schema.",
+                    turns_completed=turn_idx + 1,
+                )
+
+            # Handle empty or non-JSON responses on intermediate turns:
+            # nudge the model instead of crashing.
+            if not response_text.strip() and not is_last_turn:
+                logger.warning(
+                    f"Turn {turn_idx + 1} returned empty response with no tool calls. "
+                    "Nudging model to provide JSON."
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[System: You returned an empty response. Please provide "
+                            "your analysis as a JSON object. Use tools if you need "
+                            "more information, or set 'continue': false to finalize.]"
+                        ),
+                    }
+                )
+                continue
+
             try:
                 parsed_obj: dict[str, Any] | list | str | int | float | bool | None = json.loads(
                     response_text
@@ -651,6 +776,23 @@ class AgenticProcessorBase(ABC):
                 # Fallback: extract JSON from markdown code blocks or embedded text
                 fallback = extract_json_from_text(response_text)
                 if fallback is None:
+                    if not is_last_turn:
+                        # On intermediate turns, nudge instead of crashing
+                        logger.warning(
+                            f"Turn {turn_idx + 1} returned non-JSON text. "
+                            "Nudging model to provide JSON."
+                        )
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[System: Your response was not valid JSON. "
+                                    "Please respond with a JSON object including "
+                                    "a 'continue' field.]"
+                                ),
+                            }
+                        )
+                        continue
                     raise AgenticProcessingError(
                         f"No valid JSON found on turn {turn_idx + 1}. "
                         f"Response: {response_text[:200]}",
@@ -676,7 +818,26 @@ class AgenticProcessorBase(ABC):
                 )
 
             if not wants_continue:
-                # Model is done
+                # Model says it's done — but if the response is incomplete
+                # (fails validation) and we have turns left, nudge instead
+                # of accepting a garbage final response.
+                if not is_last_turn and not self.validate_response(parsed):
+                    logger.warning(
+                        f"Turn {turn_idx + 1} returned incomplete response "
+                        f"(keys: {list(parsed.keys())[:10]}). Nudging model."
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[System: Your response is incomplete — it's missing "
+                                "required fields. Please continue your analysis and "
+                                "provide a complete response with all required sections. "
+                                "Set 'continue': true if you need more turns.]"
+                            ),
+                        }
+                    )
+                    continue
                 final_response = parsed
                 break
 
@@ -691,7 +852,9 @@ class AgenticProcessorBase(ABC):
             if turn_idx == self.max_turns - 2:
                 turn_warning = (
                     f"[System: Next turn ({turn_idx + 2}/{self.max_turns}) is your "
-                    f"final turn. You must provide complete analysis with 'continue': false]"
+                    f"final turn. You must provide complete analysis with 'continue': false. "
+                    f"If you used zoom or crop, call reset() NOW to return to the "
+                    f"original image before your final response.]"
                 )
                 messages.append({"role": "user", "content": turn_warning})
         else:
@@ -703,8 +866,10 @@ class AgenticProcessorBase(ABC):
             )
 
         if not self.validate_response(final_response):
+            # Log the actual keys for debugging
+            top_keys = list(final_response.keys())[:10]
             raise AgenticProcessingError(
-                "Final response failed schema validation",
+                f"Final response failed schema validation. Top-level keys: {top_keys}",
                 turns_completed=len(turns),
                 partial_response=final_response,
             )
@@ -910,9 +1075,7 @@ class AgenticProcessorBase(ABC):
             if not isinstance(content, list):
                 continue
             placeholder = (
-                "[original image omitted]"
-                if role == "user"
-                else "[previous tool image omitted]"
+                "[original image omitted]" if role == "user" else "[previous tool image omitted]"
             )
             new_content: list[dict[str, Any]] = []
             for part in content:
