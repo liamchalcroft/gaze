@@ -180,16 +180,26 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                 results.append(item[1])
                 ground_truth.append(item[2])
 
-    # Compute evaluation metrics
+    # Report failures (always print to stdout, not just logger, so errors
+    # are visible even without -v)
     if failed_samples:
-        logger.warning(
-            f"{len(failed_samples)}/{len(work_items)} samples failed: "
+        print(  # noqa: T201
+            f"  {len(failed_samples)}/{len(work_items)} samples failed: "
             f"{[i for i, _ in failed_samples]}"
         )
-    logger.info("Computing evaluation metrics...")
-    metrics = await compute_metrics(results, ground_truth, config.task)
+        # Show first error to help diagnose API/auth issues
+        first_idx, first_err = failed_samples[0]
+        print(f"  First error (sample {first_idx}): {first_err[:300]}")  # noqa: T201
 
-    # Save summary
+    # Compute evaluation metrics (empty dict if no results)
+    metrics: dict[str, object] = {}
+    if results:
+        logger.info("Computing evaluation metrics...")
+        metrics = await compute_metrics(results, ground_truth, config.task)
+    else:
+        logger.warning("All samples failed — skipping metric computation")
+
+    # Save summary (always, even if all samples failed)
     summary_file = config.output_dir / "summary.json"
     with summary_file.open("w") as f:
         json.dump(
@@ -214,6 +224,11 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         )
 
     logger.info(f"Results saved to {config.output_dir}")
+    if not results:
+        raise ValueError(
+            f"All {len(failed_samples)} samples failed. "
+            f"First error: {failed_samples[0][1][:200] if failed_samples else 'unknown'}"
+        )
     return metrics
 
 

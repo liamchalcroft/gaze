@@ -269,7 +269,7 @@ class AgenticConfig:
         default_temperature: Default temperature for generation
     """
 
-    max_turns_limit: int = 20
+    max_turns_limit: int = 30
     default_max_turns: int = 10
     default_max_tokens: int = 16384
     default_temperature: float = 0.0

@@ -56,8 +56,8 @@ class NOVAConfig:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Validate ranges
-        if not 1 <= self.max_turns <= 20:
-            raise ValueError("max_turns must be between 1 and 20")
+        if not 1 <= self.max_turns <= 30:
+            raise ValueError("max_turns must be between 1 and 30")
         if not 1 <= self.batch_size <= 64:
             raise ValueError("batch_size must be between 1 and 64")
 
