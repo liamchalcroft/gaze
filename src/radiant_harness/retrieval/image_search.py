@@ -12,9 +12,10 @@ import hashlib
 import json
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
-from dataclasses import field
 from pathlib import Path
+from types import MappingProxyType
 from types import TracebackType
 from typing import Any
 from urllib.parse import urljoin
@@ -27,7 +28,8 @@ from radiant_harness.cache import TTLCache
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
-from radiant_harness.exceptions import HarnessError
+from radiant_harness.retrieval.base import BaseSearchEngine
+from radiant_harness.retrieval.base import SearchEngineError
 
 _MODALITY_KEYWORDS = {
     "mri": "MRI",
@@ -81,7 +83,7 @@ _CONTENT_TYPE_EXTENSION_MAP = {
 }
 
 
-@dataclass
+@dataclass(frozen=True)
 class ImageSearchResult:
     """Result from a medical image search."""
 
@@ -99,71 +101,35 @@ class ImageSearchResult:
     publication_date: str | None = None
     license: str | None = None
     reliability_score: float = 0.8
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, MappingProxyType):
+            object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
-class ImageSearchError(HarnessError):
+class ImageSearchError(SearchEngineError):
     """Raised when an image search operation fails."""
 
-    def __init__(self, engine_name: str, message: str, original_error: Exception | None = None):
-        self.engine_name = engine_name
-        self.original_error = original_error
-        super().__init__(f"{engine_name}: {message}")
 
-
-class ImageDownloadError(HarnessError):
+class ImageDownloadError(SearchEngineError):
     """Raised when an image download operation fails."""
 
     def __init__(self, url: str, message: str, original_error: Exception | None = None):
         self.url = url
-        self.original_error = original_error
-        super().__init__(f"Failed to download {url}: {message}")
+        super().__init__("ImageDownload", f"Failed to download {url}: {message}", original_error)
 
 
-class ImageSearchEngine:
+class ImageSearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
     """Base class for image search engines.
 
-    Provides common functionality for searching medical image databases.
+    Inherits session management and retry logic from :class:`BaseSearchEngine`.
+    Adds image-search-specific Accept header.
     """
 
     @beartype
-    def __init__(
-        self,
-        name: str,
-        config: SearchConfig | None = None,
-    ) -> None:
-        """Initialize image search engine.
-
-        Args:
-            name: Engine identifier
-            config: Search configuration. If None, uses global default.
-        """
-        self._config = config or get_config().search
-        self.name = name
-        self.timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
-        self.max_retries = self._config.max_retries
-        self.headers = self._get_headers()
-        self._session: aiohttp.ClientSession | None = None
-
-    @property
-    def config(self) -> SearchConfig:
-        """Get the search configuration."""
-        return self._config
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create a reusable aiohttp session for connection pooling."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers=self.headers, timeout=self.timeout)
-        return self._session
-
-    async def close(self) -> None:
-        """Close the session and release resources."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-            self._session = None
-
     def _get_headers(self) -> dict[str, str]:
-        """Get standard headers for web requests."""
+        """Get headers suited for JSON image-search APIs."""
         return {
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -174,45 +140,12 @@ class ImageSearchEngine:
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-    @beartype
-    async def search(self, query: str, max_results: int = 5) -> list[ImageSearchResult]:
-        """Search with retry logic.
-
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of image search results
-
-        Raises:
-            ImageSearchError: If all retry attempts fail
-        """
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries):
-            try:
-                results = await self._search_impl(query, max_results)
-                return results
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-                last_error = e
-                logger.warning(f"Image search attempt {attempt + 1} failed for {self.name}: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2**attempt)
-
-        raise ImageSearchError(self.name, "All search attempts failed", last_error)
-
-    @beartype
-    async def _search_impl(self, query: str, max_results: int) -> list[ImageSearchResult]:
-        """Implement actual search logic in subclasses.
-
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of image search results
-        """
-        raise NotImplementedError
+    def _make_error(
+        self,
+        message: str,
+        original_error: Exception | None = None,
+    ) -> ImageSearchError:
+        return ImageSearchError(self.name, message, original_error)
 
 
 class OpenISearchEngine(ImageSearchEngine):
@@ -689,13 +622,3 @@ class MedicalImageSearchManager:
     def _get_extension_from_content_type(self, content_type: str) -> str:
         main_type = content_type.split(";")[0].strip().lower()
         return _CONTENT_TYPE_EXTENSION_MAP.get(main_type, ".jpg")
-
-
-async def search_medical_images(
-    query: str,
-    max_results: int = 5,
-    modality: str | None = None,
-    body_part: str | None = None,
-) -> list[ImageSearchResult]:
-    async with MedicalImageSearchManager(max_results_per_engine=max_results) as manager:
-        return await manager.search(query, modality=modality, body_part=body_part)

@@ -295,6 +295,55 @@ class TestNCBIParamsOnAllRequests:
             assert params["email"] == "test@example.com"
 
 
+class TestConcurrentSummaryAndAbstracts:
+    """esummary and efetch must run concurrently, not sequentially."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_summary_and_abstracts_overlap(self) -> None:
+        """Verify _fetch_summary and _fetch_abstracts are awaited concurrently.
+
+        We mock both methods to record start/end times via asyncio.sleep.
+        If they run concurrently, total time ≈ max(delay, delay) not sum.
+        """
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.0))
+
+        call_log: list[tuple[str, float]] = []
+
+        async def fake_fetch_summary(pmid_list: list[str]) -> dict:
+            call_log.append(("summary_start", time.monotonic()))
+            await asyncio.sleep(0.15)
+            call_log.append(("summary_end", time.monotonic()))
+            return {"result": {}}
+
+        async def fake_fetch_abstracts(pmid_list: list[str]) -> dict[str, str]:
+            call_log.append(("abstracts_start", time.monotonic()))
+            await asyncio.sleep(0.15)
+            call_log.append(("abstracts_end", time.monotonic()))
+            return {}
+
+        with (
+            patch.object(engine, "_fetch_summary", side_effect=fake_fetch_summary),
+            patch.object(engine, "_fetch_abstracts", side_effect=fake_fetch_abstracts),
+        ):
+            start = time.monotonic()
+            await engine._fetch_article_details(["12345"])
+            elapsed = time.monotonic() - start
+
+        # Both should have started
+        start_events = [e for e, _ in call_log if e.endswith("_start")]
+        assert len(start_events) == 2
+
+        # Concurrent: total ~0.15s. Sequential would be ~0.30s.
+        assert elapsed < 0.25, (
+            f"_fetch_article_details took {elapsed:.2f}s — "
+            "esummary and efetch appear to be running sequentially"
+        )
+
+
 class TestXMLParsing:
     """Tests for the ET-based XML abstract parser."""
 

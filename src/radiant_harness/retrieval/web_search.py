@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import hashlib
 import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from dataclasses import field
 from datetime import datetime
 from types import TracebackType
 from urllib.parse import urlparse
@@ -23,7 +23,8 @@ from radiant_harness.config import CacheConfig
 from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
-from radiant_harness.exceptions import HarnessError
+from radiant_harness.retrieval.base import BaseSearchEngine
+from radiant_harness.retrieval.base import SearchEngineError
 
 # Note: SSL verification is enabled by default for security.
 # If you encounter SSL issues with specific endpoints, handle them explicitly
@@ -32,7 +33,7 @@ from radiant_harness.exceptions import HarnessError
 _PUBLICATION_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
-@dataclass
+@dataclass(frozen=True)
 class SearchResult:
     """Enhanced search result with ranking metadata."""
 
@@ -48,63 +49,26 @@ class SearchResult:
     doi: str | None = None
     content_type: str = "unknown"  # article, guidelines, case_report, review
     medical_relevance: float = 0.0  # Medical relevance score
-    extracted_entities: list[str] = field(default_factory=list)  # Medical entities found
+    extracted_entities: tuple[str, ...] = ()  # Medical entities found
     citation_count: int | None = None  # For academic sources
     open_access: bool = False
     ranking_score: float = 0.0  # Composite ranking score (set during ranking)
 
-
-class SearchError(HarnessError):
-    """Raised when a search operation fails."""
-
-    def __init__(self, engine_name: str, message: str, original_error: Exception | None = None):
-        self.engine_name = engine_name
-        self.original_error = original_error
-        super().__init__(f"{engine_name}: {message}")
+    def __post_init__(self) -> None:
+        if not isinstance(self.extracted_entities, tuple):
+            object.__setattr__(self, "extracted_entities", tuple(self.extracted_entities))
 
 
-class SearchEngine:
-    """Base class for search engines with common functionality."""
+class SearchError(SearchEngineError):
+    """Raised when a web search operation fails."""
 
-    @beartype
-    def __init__(
-        self,
-        name: str,
-        config: SearchConfig | None = None,
-    ) -> None:
-        """Initialize search engine.
 
-        Args:
-            name: Engine identifier
-            config: Search configuration. If None, uses global default.
-        """
-        self._config = config or get_config().search
-        self.name = name
-        self.timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
-        self.max_retries = self._config.max_retries
-        self.headers = self._get_headers()
-        # Reusable session for connection pooling (lazy-initialized)
-        self._session: aiohttp.ClientSession | None = None
+class SearchEngine(BaseSearchEngine[SearchResult, SearchError]):
+    """Base class for web search engines.
 
-    @property
-    def config(self) -> SearchConfig:
-        """Get the search configuration."""
-        return self._config
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create a reusable aiohttp session for connection pooling."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                headers=self.headers,
-                timeout=self.timeout,
-            )
-        return self._session
-
-    async def close(self) -> None:
-        """Close the session and release resources."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-            self._session = None
+    Inherits session management and retry logic from :class:`BaseSearchEngine`.
+    Adds web-specific headers and reliability scoring.
+    """
 
     @beartype
     def _get_headers(self) -> dict[str, str]:
@@ -124,52 +88,12 @@ class SearchEngine:
             "Upgrade-Insecure-Requests": "1",
         }
 
-    @beartype
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        """Search with retry logic.
-
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of search results
-
-        Raises:
-            SearchError: If all retry attempts fail
-        """
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries):
-            try:
-                results = await self._search_impl(query, max_results)
-                if results:
-                    return results
-                # Empty results is valid - no matches found
-                return []
-            except (
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-                OSError,
-            ) as e:
-                last_error = e
-                logger.warning(f"Search attempt {attempt + 1} failed for {self.name}: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2**attempt)  # Exponential backoff
-
-        raise SearchError(self.name, "All search attempts failed", last_error)
-
-    @beartype
-    async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
-        """Implement actual search logic in subclasses.
-
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of search results
-        """
-        raise NotImplementedError
+    def _make_error(
+        self,
+        message: str,
+        original_error: Exception | None = None,
+    ) -> SearchError:
+        return SearchError(self.name, message, original_error)
 
     @beartype
     def _calculate_reliability(self, url: str) -> float:
@@ -297,39 +221,17 @@ class PubMedSearchEngine(SearchEngine):
         """Fetch detailed article information from PubMed.
 
         Uses esummary for metadata and efetch for abstracts (esummary does
-        not return abstract text).
+        not return abstract text).  The two requests are independent so we
+        fire them concurrently via asyncio.gather to halve the wait time.
         """
-        ids_str = ",".join(pmid_list)
-        session = await self._get_session()
-
-        # --- esummary: metadata (title, authors, journal, pubtype, …) ---
-        summary_url = f"{self.base_url}esummary.fcgi"
-        summary_params: dict[str, str] = {
-            "db": "pubmed",
-            "id": ids_str,
-            "retmode": "json",
-            "tool": "radiant_harness",
-        }
-        if self.email:
-            summary_params["email"] = self.email
-        if self.api_key:
-            summary_params["api_key"] = self.api_key
-
-        await asyncio.sleep(self._rate_limit_delay)
-
-        async with session.get(summary_url, params=summary_params) as response:
-            if response.status != 200:
-                raise SearchError(
-                    self.name,
-                    f"Failed to fetch article details: status {response.status}",
-                )
-            summary_data = await response.json()
+        # Run esummary and efetch concurrently — they share no data dependency
+        summary_data, abstracts = await asyncio.gather(
+            self._fetch_summary(pmid_list),
+            self._fetch_abstracts(pmid_list),
+        )
 
         if "result" not in summary_data:
             return []
-
-        # --- efetch: abstracts (XML) ---
-        abstracts = await self._fetch_abstracts(pmid_list)
 
         results: list[SearchResult] = []
         for pmid in pmid_list:
@@ -384,6 +286,36 @@ class PubMedSearchEngine(SearchEngine):
             results.append(result)
 
         return results
+
+    async def _fetch_summary(self, pmid_list: list[str]) -> dict:
+        """Fetch article metadata via esummary JSON.
+
+        Returns:
+            The parsed JSON response dict (contains a ``"result"`` key on success).
+        """
+        ids_str = ",".join(pmid_list)
+        summary_url = f"{self.base_url}esummary.fcgi"
+        summary_params: dict[str, str] = {
+            "db": "pubmed",
+            "id": ids_str,
+            "retmode": "json",
+            "tool": "radiant_harness",
+        }
+        if self.email:
+            summary_params["email"] = self.email
+        if self.api_key:
+            summary_params["api_key"] = self.api_key
+
+        await asyncio.sleep(self._rate_limit_delay)
+
+        session = await self._get_session()
+        async with session.get(summary_url, params=summary_params) as response:
+            if response.status != 200:
+                raise SearchError(
+                    self.name,
+                    f"Failed to fetch article details: status {response.status}",
+                )
+            return await response.json()
 
     async def _fetch_abstracts(self, pmid_list: list[str]) -> dict[str, str]:
         """Fetch abstracts via efetch XML (esummary does not include them).
@@ -808,20 +740,18 @@ class WebSearchManager:
         weights = self._ranking_weights
         content_type_boosts = weights.content_type_boosts.get(search_type, {})
 
+        # Compute raw scores for each result.
+        raw_scores: list[float] = []
         for result in results:
-            # Base score from reliability
             score = result.reliability_score
 
-            # Boost for medical relevance
             score += result.medical_relevance * weights.medical_relevance_weight
 
-            # Boost for recent publications (newer = higher boost)
             if result.publication_date:
                 match = _PUBLICATION_YEAR_RE.search(result.publication_date)
                 if match:
                     year = int(match.group())
                     years_old = current_year - year
-                    # Newer papers get higher boost, decays over configured years
                     recency_boost = max(
                         0.0,
                         weights.recency_max_boost
@@ -829,84 +759,37 @@ class WebSearchManager:
                     )
                     score += recency_boost
 
-            # Boost for open access
             if result.open_access:
                 score += weights.open_access_boost
 
-            # Content type boosts based on search type
             content_boost = content_type_boosts.get(result.content_type, 0.0)
             score += content_boost
 
-            # Query term matching (word-boundary to avoid substring false positives
-            # e.g. "ct" matching "infected")
+            # Query term matching (word-boundary to avoid substring false positives)
             title_lower = result.title.lower()
             content_lower = result.content.lower()
-
             title_matches = sum(1 for pat in query_term_patterns if pat.search(title_lower))
             content_matches = sum(1 for pat in query_term_patterns if pat.search(content_lower))
-
             score += (title_matches * weights.title_match_weight) + (
                 content_matches * weights.content_match_weight
             )
 
-            # Entity matching
             entity_matches = sum(1 for entity in result.extracted_entities if entity in query_lower)
             score += entity_matches * weights.entity_match_weight
 
-            result.ranking_score = score
+            raw_scores.append(score)
 
-        # Normalize scores to [0, 1] so that ranking_score remains meaningful.
-        # The raw additive score easily exceeds 1.0, so we scale relative to
-        # the observed maximum rather than clamping (which destroyed differentiation).
-        if results:
-            max_score = max(r.ranking_score for r in results)
-            if max_score > 0:
-                for result in results:
-                    result.ranking_score = result.ranking_score / max_score
+        # Normalize scores to [0, 1] relative to observed maximum.
+        max_score = max(raw_scores) if raw_scores else 0.0
+        normalized = [s / max_score for s in raw_scores] if max_score > 0 else raw_scores
 
-        # Sort by ranking score (descending)
-        results.sort(key=lambda x: x.ranking_score, reverse=True)
-        return results
-
-
-# Convenience functions for common use cases
-async def search_medical_literature(
-    query: str, max_results: int = 5, search_type: str = "general"
-) -> list[SearchResult]:
-    """Search medical literature with optimized settings.
-
-    Args:
-        query: Search query
-        max_results: Maximum number of results
-        search_type: Type of search (diagnosis, guidelines, research, anatomy, general)
-
-    Returns:
-        List of search results
-
-    Raises:
-        SearchError: If the search fails
-    """
-    async with WebSearchManager(
-        engines=["pubmed"], max_total_results=max_results, max_results_per_engine=max_results
-    ) as manager:
-        return await manager.search(query, search_type=search_type)
-
-
-async def search_clinical_guidelines(query: str, max_results: int = 5) -> list[SearchResult]:
-    """Search specifically for clinical guidelines.
-
-    Raises:
-        SearchError: If the search fails
-    """
-    async with WebSearchManager(max_total_results=max_results) as manager:
-        return await manager.search(query, search_type="guidelines")
-
-
-async def search_diagnostic_information(query: str, max_results: int = 5) -> list[SearchResult]:
-    """Search for diagnostic information and case reports.
-
-    Raises:
-        SearchError: If the search fails
-    """
-    async with WebSearchManager(max_total_results=max_results) as manager:
-        return await manager.search(query, search_type="diagnosis")
+        # Build new frozen results with ranking_score set, sorted descending.
+        scored = sorted(
+            (
+                dataclasses.replace(result, ranking_score=ns)
+                for result, ns in zip(results, normalized, strict=True)
+            ),
+            key=lambda r: r.ranking_score,
+            reverse=True,
+        )
+        return scored

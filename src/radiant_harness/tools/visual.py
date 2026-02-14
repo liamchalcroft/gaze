@@ -724,7 +724,6 @@ def adaptive_equalize(
 
     gray = np.array(image.convert("L"), dtype=np.float64)
     h, w = gray.shape
-    result = np.zeros_like(gray)
 
     # Compute tile dimensions
     th = max(1, h // tile_size)
@@ -755,31 +754,33 @@ def adaptive_equalize(
                 cdf = cdf / cdf[-1] * 255
             cdfs[ty, tx] = cdf
 
-    # Map each pixel using bilinear interpolation of tile CDFs
-    for py in range(h):
-        for px in range(w):
-            val = int(gray[py, px])
-            # Tile center coordinates
-            fy = (py / th) - 0.5
-            fx = (px / tw) - 0.5
+    # Map each pixel using bilinear interpolation of tile CDFs (vectorized)
+    py_coords = np.arange(h, dtype=np.float64)
+    px_coords = np.arange(w, dtype=np.float64)
+    # Shape: (h, w) via broadcasting
+    fy = (py_coords[:, np.newaxis] / th) - 0.5
+    fx = (px_coords[np.newaxis, :] / tw) - 0.5
 
-            ty0 = max(0, min(int(np.floor(fy)), tile_size - 1))
-            ty1 = min(ty0 + 1, tile_size - 1)
-            tx0 = max(0, min(int(np.floor(fx)), tile_size - 1))
-            tx1 = min(tx0 + 1, tile_size - 1)
+    ty0 = np.clip(np.floor(fy).astype(np.intp), 0, tile_size - 1)
+    ty1 = np.clip(ty0 + 1, 0, tile_size - 1)
+    tx0 = np.clip(np.floor(fx).astype(np.intp), 0, tile_size - 1)
+    tx1 = np.clip(tx0 + 1, 0, tile_size - 1)
 
-            # Interpolation weights
-            wy = fy - np.floor(fy) if ty0 != ty1 else 0.0
-            wx = fx - np.floor(fx) if tx0 != tx1 else 0.0
+    # Interpolation weights — zero when clamped to same tile index
+    wy = np.where(ty0 != ty1, fy - np.floor(fy), 0.0)
+    wx = np.where(tx0 != tx1, fx - np.floor(fx), 0.0)
 
-            # Bilinear interpolation of mapped values
-            v00 = cdfs[ty0, tx0, val]
-            v01 = cdfs[ty0, tx1, val]
-            v10 = cdfs[ty1, tx0, val]
-            v11 = cdfs[ty1, tx1, val]
-            top = v00 * (1 - wx) + v01 * wx
-            bot = v10 * (1 - wx) + v11 * wx
-            result[py, px] = top * (1 - wy) + bot * wy
+    val = gray.astype(np.intp)
+
+    # Gather CDF lookups for all four neighbours: cdfs[tile_y, tile_x, pixel_val]
+    v00 = cdfs[ty0, tx0, val]
+    v01 = cdfs[ty0, tx1, val]
+    v10 = cdfs[ty1, tx0, val]
+    v11 = cdfs[ty1, tx1, val]
+
+    top = v00 * (1 - wx) + v01 * wx
+    bot = v10 * (1 - wx) + v11 * wx
+    result = top * (1 - wy) + bot * wy
 
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 

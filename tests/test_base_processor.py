@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -154,3 +155,65 @@ class TestImageInputLoad:
         assert image_input.width == 100
         assert image_input.height == 100
         assert image_input.encoded is not None
+
+
+class TestImageInputAload:
+    """Test ImageInput.aload() async behavior."""
+
+    @pytest.mark.asyncio
+    async def test_aload_populates_fields(self, tmp_path: Path) -> None:
+        """aload() populates dimensions and encoding like sync load()."""
+        image_path = tmp_path / "test.png"
+        Image.new("RGB", (80, 60), color="blue").save(image_path)
+
+        image_input = ImageInput(path=image_path)
+        await image_input.aload()
+
+        assert image_input.width == 80
+        assert image_input.height == 60
+        assert image_input.encoded is not None
+        assert image_input.pil_image is not None
+
+    @pytest.mark.asyncio
+    async def test_aload_is_noop_when_already_loaded(self) -> None:
+        """aload() is a no-op for images created via from_pil."""
+        pil = Image.new("RGB", (32, 32), color="red")
+        image_input = ImageInput.from_pil(pil)
+        # Should not raise or change anything
+        await image_input.aload()
+        assert image_input.width == 32
+
+    @pytest.mark.asyncio
+    async def test_aload_concurrent_multiple_images(self, tmp_path: Path) -> None:
+        """Multiple aload() calls can run concurrently via gather."""
+        inputs = []
+        for i in range(4):
+            p = tmp_path / f"img_{i}.png"
+            Image.new("RGB", (64, 64), color="green").save(p)
+            inputs.append(ImageInput(path=p))
+
+        await asyncio.gather(*(inp.aload() for inp in inputs))
+
+        for inp in inputs:
+            assert inp.width == 64
+            assert inp.encoded is not None
+
+    @pytest.mark.asyncio
+    async def test_aload_rejects_oversized_image(self, tmp_path: Path) -> None:
+        """aload() propagates ValueError for oversized images."""
+        from radiant_harness.config import HarnessConfig
+        from radiant_harness.config import ImageProcessingConfig
+        from radiant_harness.config import get_config
+        from radiant_harness.config import set_config
+
+        original = get_config()
+        try:
+            set_config(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50)))
+            image_path = tmp_path / "big.png"
+            Image.new("RGB", (100, 100), color="red").save(image_path)
+
+            image_input = ImageInput(path=image_path)
+            with pytest.raises(ValueError, match="exceed maximum"):
+                await image_input.aload()
+        finally:
+            set_config(original)

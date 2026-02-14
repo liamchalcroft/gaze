@@ -567,6 +567,48 @@ class TestAdaptiveEqualize:
         with pytest.raises(ValueError, match="tile_size must be >= 2"):
             adaptive_equalize(img, tile_size=1, config=_CFG)
 
+    def test_gradient_image_equalization(self) -> None:
+        """Verify CLAHE produces valid output on a gradient image."""
+        arr = np.tile(np.arange(256, dtype=np.uint8), (256, 1))
+        img = Image.fromarray(arr)
+        result = adaptive_equalize(img, clip_limit=2.0, tile_size=8, config=_CFG)
+        result_arr = np.array(result)
+        assert result_arr.shape == (256, 256)
+        assert result_arr.min() >= 0
+        assert result_arr.max() <= 255
+
+    def test_non_square_image(self) -> None:
+        """Verify CLAHE handles non-square images where dimensions aren't tile multiples."""
+        rng = np.random.default_rng(42)
+        arr = rng.integers(0, 256, size=(100, 200), dtype=np.uint8)
+        img = Image.fromarray(arr)
+        result = adaptive_equalize(img, clip_limit=3.0, tile_size=6, config=_CFG)
+        assert result.size == (200, 100)
+        assert result.mode == "L"
+
+    def test_larger_image_completes_quickly(self) -> None:
+        """Vectorized CLAHE should handle 512x512 in well under 1 second."""
+        import time
+
+        rng = np.random.default_rng(99)
+        arr = rng.integers(0, 256, size=(512, 512), dtype=np.uint8)
+        img = Image.fromarray(arr)
+        start = time.perf_counter()
+        result = adaptive_equalize(img, clip_limit=2.0, tile_size=8, config=_CFG)
+        elapsed = time.perf_counter() - start
+        assert result.size == (512, 512)
+        # Vectorized: ~5-20ms. Old loop: ~8s on 512x512. Use 1s as generous bound.
+        assert elapsed < 1.0, f"adaptive_equalize took {elapsed:.2f}s on 512×512 (expected <1s)"
+
+    def test_uniform_image_unchanged(self) -> None:
+        """A uniform image should remain roughly uniform after CLAHE."""
+        arr = np.full((64, 64), 128, dtype=np.uint8)
+        img = Image.fromarray(arr)
+        result = adaptive_equalize(img, clip_limit=2.0, tile_size=4, config=_CFG)
+        result_arr = np.array(result)
+        # All pixels start at same value, so CDF maps them all identically
+        assert result_arr.std() < 1.0
+
 
 class TestComputeIntensityProfile:
     def test_horizontal_profile(self) -> None:

@@ -6,6 +6,7 @@ Task-specific details are provided via dependency injection.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from abc import ABC
@@ -135,6 +136,16 @@ class ImageInput:
         self.height = img.height
         self.encoded = encode_image(img)
         self.pil_image = img
+
+    async def aload(self) -> None:
+        """Async version of :meth:`load` — offloads blocking I/O to a thread.
+
+        Use this instead of ``load()`` when calling from an async context
+        to avoid blocking the event loop during image decoding and encoding.
+        """
+        if self.pil_image is not None:
+            return
+        await asyncio.to_thread(self.load)
 
 
 class AgenticProcessorBase(ABC):
@@ -380,8 +391,7 @@ class AgenticProcessorBase(ABC):
 
         image_inputs = self._normalize_image_inputs(images, image_labels)
 
-        for img in image_inputs:
-            img.load()
+        await asyncio.gather(*(img.aload() for img in image_inputs))
 
         tool_registry = self._create_tool_registry(image_inputs)
 
@@ -393,7 +403,7 @@ class AgenticProcessorBase(ABC):
             )
         finally:
             if tool_registry is not None:
-                tool_registry.close()
+                await tool_registry.aclose()
 
     @beartype
     def _normalize_image_inputs(
@@ -510,10 +520,10 @@ class AgenticProcessorBase(ABC):
             current_tools = None if is_last_turn else tool_schemas
             logger.debug(f"Turn {turn_idx + 1}/{self.max_turns}")
 
-            # Strip stale base64 images from earlier tool rounds to reduce
-            # payload size on subsequent API calls.
+            # Strip stale base64 images from earlier rounds (including the
+            # initial user message) to reduce payload on subsequent API calls.
             if turn_idx > 0:
-                self._strip_stale_tool_images(messages)
+                self._strip_stale_images(messages)
 
             chat_result = await model_adapter.generate_chat(
                 messages=messages,
@@ -566,7 +576,7 @@ class AgenticProcessorBase(ABC):
             turn = Turn(
                 role="assistant",
                 content=response_text,
-                tool_calls=typed_tool_calls,
+                tool_calls=tuple(typed_tool_calls),
             )
             turns.append(turn)
 
@@ -629,7 +639,7 @@ class AgenticProcessorBase(ABC):
                 tool_turn = Turn(
                     role="tool_result",
                     content=self._format_tool_results(tool_results),
-                    tool_results=tool_results,
+                    tool_results=tuple(tool_results),
                 )
                 turns.append(tool_turn)
                 continue
@@ -703,7 +713,7 @@ class AgenticProcessorBase(ABC):
 
         return AgenticResult(
             final_response=final_response,
-            turns=turns,
+            turns=tuple(turns),
             total_tokens=total_tokens,
             confidence=confidence,
         )
@@ -872,13 +882,18 @@ class AgenticProcessorBase(ABC):
 
     @staticmethod
     @beartype
-    def _strip_stale_tool_images(messages: list[dict[str, Any]]) -> None:
-        """Replace base64 image data URLs in older tool messages with text placeholders.
+    def _strip_stale_images(messages: list[dict[str, Any]]) -> None:
+        """Replace base64 image data URLs in older messages with text placeholders.
 
-        Keeps images only in tool messages that follow the *last* assistant
-        message (i.e. the most recent tool-call round).  Earlier rounds have
-        their ``image_url`` parts replaced with a short text placeholder,
-        dramatically reducing the payload sent on subsequent API calls.
+        Strips images from two sources:
+
+        1. **Initial user message** — the original input images have already
+           been seen by the model on turn 0.  Subsequent turns get updated
+           images from tool results, so the originals are redundant payload.
+        2. **Older tool result messages** — keeps images only in tool messages
+           that follow the *last* assistant message (the most recent round).
+
+        This dramatically reduces the payload sent on subsequent API calls.
         """
         last_assistant_idx = -1
         for i in range(len(messages) - 1, -1, -1):
@@ -888,15 +903,21 @@ class AgenticProcessorBase(ABC):
 
         for i in range(last_assistant_idx):
             msg = messages[i]
-            if msg.get("role") != "tool":
+            role = msg.get("role")
+            if role not in ("tool", "user"):
                 continue
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
+            placeholder = (
+                "[original image omitted]"
+                if role == "user"
+                else "[previous tool image omitted]"
+            )
             new_content: list[dict[str, Any]] = []
             for part in content:
                 if part.get("type") == "image_url":
-                    new_content.append({"type": "text", "text": "[previous tool image omitted]"})
+                    new_content.append({"type": "text", "text": placeholder})
                 else:
                     new_content.append(part)
             msg["content"] = new_content

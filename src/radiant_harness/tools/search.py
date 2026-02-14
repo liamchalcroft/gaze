@@ -12,9 +12,7 @@ from beartype import beartype
 from loguru import logger
 
 from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.image_search import search_medical_images
 from radiant_harness.retrieval.web_search import SearchError
-from radiant_harness.retrieval.web_search import search_medical_literature
 from radiant_harness.tools.registry import Tool
 from radiant_harness.types import ToolResult
 
@@ -28,7 +26,7 @@ if TYPE_CHECKING:
 
 
 async def _execute_search_web(
-    registry: ToolRegistry,  # noqa: ARG001
+    registry: ToolRegistry,
     query: str,
     search_type: str = "general",
 ) -> ToolResult:
@@ -36,11 +34,8 @@ async def _execute_search_web(
     logger.info(f"Searching PubMed: '{query}' (type: {search_type})")
 
     try:
-        search_results = await search_medical_literature(
-            query=query,
-            max_results=5,
-            search_type=search_type,
-        )
+        manager = registry.get_web_search_manager()
+        search_results = await manager.search(query, search_type=search_type)
     except SearchError as e:
         return ToolResult(
             tool_name="search_web",
@@ -103,7 +98,7 @@ async def _execute_search_web(
 
 
 async def _execute_search_images(
-    registry: ToolRegistry,  # noqa: ARG001
+    registry: ToolRegistry,
     query: str,
     modality: str | None = None,
     body_part: str | None = None,
@@ -116,9 +111,9 @@ async def _execute_search_images(
     )
 
     try:
-        search_results = await search_medical_images(
+        manager = registry.get_image_search_manager()
+        search_results = await manager.search(
             query=query,
-            max_results=5,
             modality=modality_filter,
             body_part=body_part_filter,
         )

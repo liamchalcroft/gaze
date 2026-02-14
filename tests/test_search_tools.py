@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
-import radiant_harness.tools.search as search_tools
 from radiant_harness.retrieval.image_search import ImageSearchError
 from radiant_harness.retrieval.image_search import ImageSearchResult
 from radiant_harness.retrieval.web_search import SearchError
@@ -11,12 +12,27 @@ from radiant_harness.tools import ToolRegistry
 from radiant_harness.tools import create_search_tools
 
 
+def _make_registry_with_mock_web(fake_search):
+    """Create a registry whose web search manager uses *fake_search*."""
+    registry = ToolRegistry(tools=create_search_tools())
+    mock_manager = AsyncMock()
+    mock_manager.search = fake_search
+    registry._web_search_manager = mock_manager
+    return registry
+
+
+def _make_registry_with_mock_images(fake_search):
+    """Create a registry whose image search manager uses *fake_search*."""
+    registry = ToolRegistry(tools=create_search_tools())
+    mock_manager = AsyncMock()
+    mock_manager.search = fake_search
+    registry._image_search_manager = mock_manager
+    return registry
+
+
 @pytest.mark.asyncio
-async def test_search_web_tool_formats_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_search(
-        query: str, max_results: int = 5, search_type: str = "general"
-    ) -> list[SearchResult]:
-        _ = query, max_results, search_type
+async def test_search_web_tool_formats_results() -> None:
+    async def fake_search(query, *, search_type="general"):
         return [
             SearchResult(
                 title="Glioblastoma MRI",
@@ -33,9 +49,7 @@ async def test_search_web_tool_formats_results(monkeypatch: pytest.MonkeyPatch) 
             )
         ]
 
-    monkeypatch.setattr(search_tools, "search_medical_literature", fake_search)
-
-    registry = ToolRegistry(tools=create_search_tools())
+    registry = _make_registry_with_mock_web(fake_search)
     result = await registry.execute("search_web", query="glioblastoma MRI", search_type="diagnosis")
 
     assert result.success
@@ -48,16 +62,11 @@ async def test_search_web_tool_formats_results(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_search_web_tool_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_search(
-        query: str, max_results: int = 5, search_type: str = "general"
-    ) -> list[SearchResult]:
-        _ = query, max_results, search_type
+async def test_search_web_tool_error_propagates() -> None:
+    async def fake_search(query, *, search_type="general"):
         raise SearchError("PubMed", "down")
 
-    monkeypatch.setattr(search_tools, "search_medical_literature", fake_search)
-
-    registry = ToolRegistry(tools=create_search_tools())
+    registry = _make_registry_with_mock_web(fake_search)
     result = await registry.execute("search_web", query="glioblastoma MRI", search_type="diagnosis")
 
     assert not result.success
@@ -68,14 +77,8 @@ async def test_search_web_tool_error_propagates(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
-async def test_search_images_tool_formats_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_search(
-        query: str,
-        max_results: int = 5,
-        modality: str | None = None,
-        body_part: str | None = None,
-    ) -> list[ImageSearchResult]:
-        _ = query, max_results, modality, body_part
+async def test_search_images_tool_formats_results() -> None:
+    async def fake_search(query, *, modality=None, body_part=None):
         return [
             ImageSearchResult(
                 title="Reference MRI",
@@ -91,9 +94,7 @@ async def test_search_images_tool_formats_results(monkeypatch: pytest.MonkeyPatc
             )
         ]
 
-    monkeypatch.setattr(search_tools, "search_medical_images", fake_search)
-
-    registry = ToolRegistry(tools=create_search_tools())
+    registry = _make_registry_with_mock_images(fake_search)
     result = await registry.execute(
         "search_images", query="meningioma", modality="MRI", body_part="brain"
     )
@@ -106,19 +107,11 @@ async def test_search_images_tool_formats_results(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
-async def test_search_images_tool_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_search(
-        query: str,
-        max_results: int = 5,
-        modality: str | None = None,
-        body_part: str | None = None,
-    ) -> list[ImageSearchResult]:
-        _ = query, max_results, modality, body_part
+async def test_search_images_tool_error_propagates() -> None:
+    async def fake_search(query, *, modality=None, body_part=None):
         raise ImageSearchError("Open-i", "down")
 
-    monkeypatch.setattr(search_tools, "search_medical_images", fake_search)
-
-    registry = ToolRegistry(tools=create_search_tools())
+    registry = _make_registry_with_mock_images(fake_search)
     result = await registry.execute(
         "search_images", query="meningioma", modality="MRI", body_part="brain"
     )
@@ -149,3 +142,71 @@ def test_search_web_schema_enum_matches_backend() -> None:
     assert schema_enum == backend_types, (
         f"Schema enum {sorted(schema_enum)} != backend types {sorted(backend_types)}"
     )
+
+
+class TestSessionReuse:
+    """Verify search managers are reused across multiple tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_web_search_manager_reused_across_calls(self) -> None:
+        """Two search_web calls should use the same manager instance."""
+        call_count = 0
+
+        async def fake_search(query, *, search_type="general"):
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        registry = ToolRegistry(tools=create_search_tools())
+        mock_manager = AsyncMock()
+        mock_manager.search = fake_search
+        mock_manager.close = AsyncMock()
+        registry._web_search_manager = mock_manager
+
+        await registry.execute("search_web", query="test1")
+        await registry.execute("search_web", query="test2")
+
+        assert call_count == 2
+        # Manager instance should still be the same object
+        assert registry._web_search_manager is mock_manager
+
+    @pytest.mark.asyncio
+    async def test_image_search_manager_reused_across_calls(self) -> None:
+        """Two search_images calls should use the same manager instance."""
+        call_count = 0
+
+        async def fake_search(query, *, modality=None, body_part=None):
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        registry = ToolRegistry(tools=create_search_tools())
+        mock_manager = AsyncMock()
+        mock_manager.search = fake_search
+        mock_manager.close = AsyncMock()
+        registry._image_search_manager = mock_manager
+
+        await registry.execute("search_images", query="test1")
+        await registry.execute("search_images", query="test2")
+
+        assert call_count == 2
+        assert registry._image_search_manager is mock_manager
+
+    @pytest.mark.asyncio
+    async def test_aclose_cleans_up_managers(self) -> None:
+        """aclose() should close all search managers."""
+        registry = ToolRegistry(tools=create_search_tools())
+
+        mock_web = AsyncMock()
+        mock_web.close = AsyncMock()
+        mock_img = AsyncMock()
+        mock_img.close = AsyncMock()
+        registry._web_search_manager = mock_web
+        registry._image_search_manager = mock_img
+
+        await registry.aclose()
+
+        mock_web.close.assert_awaited_once()
+        mock_img.close.assert_awaited_once()
+        assert registry._web_search_manager is None
+        assert registry._image_search_manager is None

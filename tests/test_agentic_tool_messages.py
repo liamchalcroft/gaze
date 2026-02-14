@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-import radiant_harness.tools.search as search_tools
 from radiant_harness.base import AgenticProcessorBase
 from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
@@ -191,10 +191,7 @@ async def test_tool_message_includes_image_payload() -> None:
 async def test_search_web_tool_message_includes_formatted_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_search(
-        query: str, max_results: int = 5, search_type: str = "general"
-    ) -> list[SearchResult]:
-        _ = query, max_results, search_type
+    async def fake_search(query, *, search_type="general", **kwargs):
         return [
             SearchResult(
                 title="Glioblastoma MRI",
@@ -210,7 +207,10 @@ async def test_search_web_tool_message_includes_formatted_results(
             )
         ]
 
-    monkeypatch.setattr(search_tools, "search_medical_literature", fake_search)
+    mock_manager = AsyncMock()
+    mock_manager.search = fake_search
+    mock_manager.close = AsyncMock()
+    monkeypatch.setattr(ToolRegistry, "get_web_search_manager", lambda _self: mock_manager)
 
     adapter = RecordingAdapter(
         tool_calls=[

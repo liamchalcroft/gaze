@@ -7,7 +7,6 @@ All previously hardcoded values are now configurable via these dataclasses.
 from __future__ import annotations
 
 import ipaddress
-import socket
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -142,7 +141,10 @@ class CacheConfig:
 def _validate_base_url(url: str, field_name: str) -> None:
     """Validate a base URL for SSRF protection.
 
-    Enforces HTTPS and rejects private/loopback addresses.
+    Enforces HTTPS and rejects private/loopback addresses given as bare IPs
+    or well-known loopback hostnames.  Does NOT perform DNS resolution — that
+    would block the event loop when configs are constructed in async contexts
+    and is unreliable at import time (network may be unavailable).
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -150,28 +152,20 @@ def _validate_base_url(url: str, field_name: str) -> None:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError(f"{field_name} has no hostname: {url!r}")
+
+    # Reject well-known loopback hostnames
+    if hostname in ("localhost", "0.0.0.0"):  # noqa: S104
+        raise ValueError(f"{field_name} must not point to a loopback address: {hostname}")
+
+    # Reject bare-IP private/loopback/link-local addresses
     try:
         addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local:
-            raise ValueError(
-                f"{field_name} must not point to a private/loopback address: {hostname}"
-            )
     except ValueError:
-        # hostname is not a bare IP — try resolving it
-        if hostname in ("127.0.0.1", "localhost", "0.0.0.0"):  # noqa: S104
-            raise ValueError(
-                f"{field_name} must not point to a loopback address: {hostname}"
-            ) from None
-        try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for _, _, _, _, sockaddr in resolved:
-                addr = ipaddress.ip_address(sockaddr[0])
-                if addr.is_private or addr.is_loopback or addr.is_link_local:
-                    raise ValueError(
-                        f"{field_name} hostname {hostname!r} resolves to private address {addr}"
-                    )
-        except socket.gaierror:
-            pass  # DNS failure is not a security issue here
+        return  # hostname is a regular DNS name — fine
+    if addr.is_private or addr.is_loopback or addr.is_link_local:
+        raise ValueError(
+            f"{field_name} must not point to a private/loopback address: {hostname}"
+        )
 
 
 @dataclass(frozen=True)

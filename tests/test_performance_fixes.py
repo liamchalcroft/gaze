@@ -1,7 +1,7 @@
 """Tests for performance optimizations in Patch Set #1.
 
 Covers:
-1. _strip_stale_tool_images — message payload pruning
+1. _strip_stale_images — message payload pruning
 2. _transform_and_encode — offloaded PIL transforms
 3. ImageInput.from_pil — skip disk I/O for in-memory images
 """
@@ -21,7 +21,7 @@ from radiant_harness.tools.visual import create_visual_tools
 
 
 # =====================================================================
-# 1. _strip_stale_tool_images tests
+# 1. _strip_stale_images tests
 # =====================================================================
 
 
@@ -73,17 +73,17 @@ def _build_messages_with_tool_images(
     return messages
 
 
-class TestStripStaleToolImages:
+class TestStripStaleImages:
     def test_no_messages_is_noop(self) -> None:
         messages: list[dict[str, Any]] = []
-        AgenticProcessorBase._strip_stale_tool_images(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
         assert messages == []
 
     def test_single_tool_round_preserved(self) -> None:
         """With only one round, images after the last assistant msg are kept."""
         messages = _build_messages_with_tool_images(1)
         original_len = len(messages)
-        AgenticProcessorBase._strip_stale_tool_images(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
         assert len(messages) == original_len
         # The tool message should still have its image_url
         tool_msg = messages[-1]
@@ -92,7 +92,7 @@ class TestStripStaleToolImages:
     def test_older_tool_images_stripped(self) -> None:
         """With multiple rounds, only the latest round's images survive."""
         messages = _build_messages_with_tool_images(3)
-        AgenticProcessorBase._strip_stale_tool_images(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
 
         # The last tool message (round 2) should still have image_url
         last_tool = messages[-1]
@@ -134,14 +134,14 @@ class TestStripStaleToolImages:
             {"role": "tool", "tool_call_id": "c2", "content": "Found 3 results"},
         ]
         original = [m.get("content") for m in messages]
-        AgenticProcessorBase._strip_stale_tool_images(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
         current = [m.get("content") for m in messages]
         assert original == current
 
     def test_preserves_text_parts_in_stripped_messages(self) -> None:
         """Text parts in tool messages with images should be kept."""
         messages = _build_messages_with_tool_images(2)
-        AgenticProcessorBase._strip_stale_tool_images(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
 
         # First tool message (index 3) should have text preserved
         first_tool = messages[3]
@@ -150,6 +150,59 @@ class TestStripStaleToolImages:
         # Should have original text AND placeholder
         texts = [p["text"] for p in text_parts]
         assert any("Zoomed round 0" in t for t in texts)
+
+    def test_user_message_images_stripped(self) -> None:
+        """Initial user message images should be stripped after the first turn."""
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this brain MRI"},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("input1")}},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("input2")}},
+                ],
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "zoom", "arguments": '{"factor": 2.0}'}},
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": [
+                    {"type": "text", "text": "Zoomed image"},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("zoomed")}},
+                ],
+            },
+        ]
+
+        AgenticProcessorBase._strip_stale_images(messages)
+
+        # User message images should be replaced with placeholders
+        user_content = messages[1]["content"]
+        assert isinstance(user_content, list)
+        # Text part should be preserved
+        assert user_content[0] == {"type": "text", "text": "Analyze this brain MRI"}
+        # Image parts should be replaced
+        assert user_content[1] == {"type": "text", "text": "[original image omitted]"}
+        assert user_content[2] == {"type": "text", "text": "[original image omitted]"}
+
+        # Latest tool message should still have its image
+        tool_content = messages[3]["content"]
+        assert any(p.get("type") == "image_url" for p in tool_content)
+
+    def test_user_message_string_content_untouched(self) -> None:
+        """User messages with plain string content (no images) are not modified."""
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "plain text question"},
+            {"role": "assistant", "content": '{"continue": false, "answer": "ok"}'},
+        ]
+        AgenticProcessorBase._strip_stale_images(messages)
+        assert messages[1]["content"] == "plain text question"
 
 
 # =====================================================================

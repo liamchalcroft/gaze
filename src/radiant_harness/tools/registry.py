@@ -9,12 +9,14 @@ This module provides:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
 from typing import Any
 
 from beartype import beartype
@@ -26,6 +28,10 @@ from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.tools.image_manager import ImageManager
 from radiant_harness.tools.tool import Tool
 from radiant_harness.types import ToolResult
+
+if TYPE_CHECKING:
+    from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+    from radiant_harness.retrieval.web_search import WebSearchManager
 
 # Valid JSON Schema types for tool parameters
 VALID_PARAM_TYPES = {"string", "number", "integer", "boolean", "array", "object", "null"}
@@ -323,6 +329,11 @@ class ToolRegistry:
         self._tool_history: deque[ToolResult] = deque(maxlen=max_history)
         self.max_history = max_history
 
+        # Lazily-created search managers — reused across tool calls within a
+        # single agentic session to keep TCP connections alive.
+        self._web_search_manager: WebSearchManager | None = None
+        self._image_search_manager: MedicalImageSearchManager | None = None
+
         # Set initial image if provided
         if image_path:
             self._image_manager.set_image(image_path)
@@ -342,9 +353,42 @@ class ToolRegistry:
 
     @beartype
     def close(self) -> None:
-        """Close and clean up all resources."""
+        """Close and clean up synchronous resources.
+
+        Prefer :meth:`aclose` from async contexts so that search manager
+        sessions are properly awaited.
+        """
         self._image_manager.close()
         self._tool_history.clear()
+
+    async def aclose(self) -> None:
+        """Close all resources including async search manager sessions."""
+        close_tasks: list[asyncio.Task[None]] = []
+        if self._web_search_manager is not None:
+            close_tasks.append(asyncio.ensure_future(self._web_search_manager.close()))
+            self._web_search_manager = None
+        if self._image_search_manager is not None:
+            close_tasks.append(asyncio.ensure_future(self._image_search_manager.close()))
+            self._image_search_manager = None
+        if close_tasks:
+            await asyncio.gather(*close_tasks)
+        self.close()
+
+    def get_web_search_manager(self) -> WebSearchManager:
+        """Get or create a reusable WebSearchManager for the session."""
+        if self._web_search_manager is None:
+            from radiant_harness.retrieval.web_search import WebSearchManager
+
+            self._web_search_manager = WebSearchManager()
+        return self._web_search_manager
+
+    def get_image_search_manager(self) -> MedicalImageSearchManager:
+        """Get or create a reusable MedicalImageSearchManager for the session."""
+        if self._image_search_manager is None:
+            from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+
+            self._image_search_manager = MedicalImageSearchManager()
+        return self._image_search_manager
 
     @beartype
     def register(self, tool: Tool) -> None:

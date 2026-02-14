@@ -128,6 +128,31 @@ class TestSearchConfigBaseUrlValidation:
         assert config.ncbi_base_url.startswith("https://")
         assert config.openi_base_url.startswith("https://")
 
+    def test_rejects_localhost(self) -> None:
+        with pytest.raises(ValueError, match="loopback"):
+            SearchConfig(ncbi_base_url="https://localhost/eutils/")
+
+    def test_rejects_bare_loopback_ip(self) -> None:
+        with pytest.raises(ValueError, match="private/loopback"):
+            SearchConfig(ncbi_base_url="https://127.0.0.1/eutils/")
+
+    def test_rejects_private_ip(self) -> None:
+        with pytest.raises(ValueError, match="private/loopback"):
+            SearchConfig(openi_base_url="https://192.168.1.1/api/search")
+
+    def test_rejects_link_local_ip(self) -> None:
+        with pytest.raises(ValueError, match="private/loopback"):
+            SearchConfig(openi_base_url="https://169.254.1.1/api/search")
+
+    def test_no_dns_resolution_at_construction(self) -> None:
+        """SearchConfig must NOT call socket.getaddrinfo during __post_init__."""
+        import socket
+        from unittest.mock import patch
+
+        with patch.object(socket, "getaddrinfo", side_effect=AssertionError("DNS called")):
+            config = SearchConfig()  # should not trigger DNS
+            assert config.ncbi_base_url.startswith("https://")
+
 
 # ---------------------------------------------------------------------------
 # APIError no longer stores response_body
