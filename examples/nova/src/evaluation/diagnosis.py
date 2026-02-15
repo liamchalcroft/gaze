@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from beartype import beartype
-from loguru import logger
 
 DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
     "NOVA_SEMANTIC_MATCH_MODEL",
@@ -23,6 +22,33 @@ _DASH_PATTERN = re.compile(r"\s*–\s*")
 _DOUBLE_SPACE_PATTERN = re.compile(r"  +")
 
 # Common medical abbreviation mappings - use frozenset for faster lookups
+_semantic_match_client: Any = None
+
+
+def _get_semantic_match_client() -> Any:
+    """Return a shared AsyncOpenAI client, creating it on first call."""
+    global _semantic_match_client  # noqa: PLW0603
+    if _semantic_match_client is not None:
+        return _semantic_match_client
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = openai_key or openrouter_key
+    if not api_key:
+        raise ValueError(
+            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY for LLM semantic matching."
+        )
+
+    from openai import AsyncOpenAI
+
+    base_url: str | None = None
+    if not openai_key and openrouter_key:
+        base_url = "https://openrouter.ai/api/v1"
+
+    _semantic_match_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return _semantic_match_client
+
+
 _ABBREVIATION_MAPPING = {
     "sod": "septo-optic dysplasia",
     "acc": "agenesis of corpus callosum",
@@ -152,10 +178,6 @@ async def llm_semantic_match_async(
     Raises:
         ValueError: If LLM API call fails (semantic matching is required for NOVA evaluation).
     """
-    import os
-
-    from openai import AsyncOpenAI
-
     prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
 Your task is to determine if two diagnostic labels refer to the same medical condition,
@@ -174,20 +196,7 @@ Respond with ONLY "YES" if they refer to the same medical condition,
 or "NO" if they refer to different conditions.
 """
 
-    openai_key = os.getenv("OPENAI_API_KEY")
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
-    api_key = openai_key or openrouter_key
-    if not api_key:
-        raise ValueError(
-            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY "
-            "for LLM semantic matching."
-        )
-
-    base_url: str | None = None
-    if not openai_key and openrouter_key:
-        base_url = "https://openrouter.ai/api/v1"
-
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    client = _get_semantic_match_client()
     response = await client.chat.completions.create(
         model=model_name,
         messages=[
@@ -260,47 +269,47 @@ async def evaluate_diagnosis_nova_official(
     if len(preds) != n:
         raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {n}")
 
-    # Track semantic and exact matches
-    top1_count = 0
-    top5_count = 0
+    # Collect all (pred, ref) pairs that need LLM matching, then run in parallel.
     all_preds: list[Any] = []
-
+    items: list[tuple[int, bool, Any, Any]] = []
     for i, (p, r) in enumerate(zip(preds, refs, strict=True)):
-        if i % 10 == 0 and i > 0:
-            logger.debug(f"Processed {i}/{n} diagnosis comparisons")
-
         if isinstance(p, list):
-            # Handle list predictions (top-5)
-            top1_pred = p[0] if p else None
-
-            # Top-1 evaluation - use fast exact match first, then LLM semantic matching
-            if top1_pred and (
-                exact_diagnosis_match(str(top1_pred), str(r))
-                or await llm_semantic_match_async(str(top1_pred), str(r), model_name)
-            ):
-                top1_count += 1
-
-            # Top-5 evaluation - use fast exact match first, then LLM for remaining
-            top5_match = False
-            for pred in p:
-                if exact_diagnosis_match(str(pred), str(r)):
-                    top5_match = True
-                    break
-                if await llm_semantic_match_async(str(pred), str(r), model_name):
-                    top5_match = True
-                    break
-
-            if top5_match:
-                top5_count += 1
-
+            items.append((i, True, p, r))
             all_preds.extend(p)
         else:
-            # Handle single predictions - use fast exact match first, then LLM
-            if exact_diagnosis_match(str(p), str(r)) or await llm_semantic_match_async(str(p), str(r), model_name):
-                top1_count += 1
-                top5_count += 1
-
+            items.append((i, False, p, r))
             all_preds.append(p)
+
+    # Evaluate each sample — exact match first, LLM only if needed.
+    # Run LLM calls concurrently with a semaphore to avoid overwhelming the API.
+    sem = asyncio.Semaphore(8)
+
+    async def _eval_single(pred: str, ref: str) -> bool:
+        if exact_diagnosis_match(pred, ref):
+            return True
+        async with sem:
+            return await llm_semantic_match_async(pred, ref, model_name)
+
+    async def _eval_item(item: tuple[int, bool, Any, Any]) -> tuple[bool, bool]:
+        """Return (top1_match, top5_match) for one sample."""
+        _idx, is_list, p, r = item
+        if is_list:
+            top1_pred = p[0] if p else None
+            top1 = bool(top1_pred and await _eval_single(str(top1_pred), str(r)))
+            # Top-5: check each differential
+            top5 = top1  # if top1 matched, top5 is also True
+            if not top5:
+                for pred in p:
+                    if await _eval_single(str(pred), str(r)):
+                        top5 = True
+                        break
+            return top1, top5
+        match = await _eval_single(str(p), str(r))
+        return match, match
+
+    results_list = await asyncio.gather(*(_eval_item(item) for item in items))
+    top1_count = sum(1 for t1, _ in results_list if t1)
+    top5_count = sum(1 for _, t5 in results_list if t5)
 
     # Calculate metrics
     results = {
