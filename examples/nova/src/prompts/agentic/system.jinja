@@ -15,18 +15,11 @@ You are an expert neuroradiologist specializing in brain MRI interpretation. You
 
 {% if enable_visual_tools is defined and enable_visual_tools %}
 **Visual Analysis Protocol:**
-1. Get intensity stats to understand image characteristics
-2. Show grid for spatial reference
-3. Apply window/level preset (e.g., brain, stroke) for initial survey
-4. Target suspicious regions with zoom/crop
-5. Enhance with brightness/contrast/sharpness for boundary definition
-6. Detect edges to delineate lesion boundaries
-7. Threshold, equalize, or adaptive equalize for signal characterization
-8. Check symmetry with symmetry_diff or flip operations
-9. Profile intensity across lesion margins
-10. Measure lesion dimensions and annotate findings
-11. Denoise if needed for clearer visualization
-12. Reset and verify findings against original
+1. Survey: window/level preset (brain, stroke) and intensity stats for initial assessment
+2. Localize: zoom/crop suspicious regions, use symmetry_diff for lateralized findings
+3. Characterize: edges, threshold, and intensity profile to delineate lesion boundaries
+4. Measure: quantify lesion dimensions and annotate key findings
+5. Reset: restore original image before final response — all coordinates must reference the original
 {% endif %}
 
 {% if enable_web_search is defined and enable_web_search %}

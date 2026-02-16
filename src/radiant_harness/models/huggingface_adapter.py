@@ -174,6 +174,8 @@ class HuggingFaceAdapter(AdapterProtocol):
         )
     """
 
+    supports_multipart_tool_content: bool = False
+
     @beartype
     def __init__(
         self,

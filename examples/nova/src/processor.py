@@ -8,6 +8,7 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from typing import Literal
@@ -18,6 +19,7 @@ from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
 from radiant_harness import create_prompt
+from radiant_harness.models import AdapterProtocol
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
 
@@ -70,6 +72,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         task: NOVATask = "all",
         confidence_config: ConfidenceConfig = DEFAULT_CONFIDENCE_CONFIG,
         mode: Literal["agentic", "single_turn"] = "agentic",
+        adapter_factory: Callable[[], AdapterProtocol] | None = None,
     ) -> None:
         """Initialize NOVA processor.
 
@@ -83,6 +86,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             task: NOVA task type for reward computation
             confidence_config: Configuration for confidence calculations
             mode: Prompt mode — "agentic" for multi-turn or "single_turn"
+            adapter_factory: Optional factory for custom model adapter (e.g. LMStudioAdapter)
         """
         super().__init__(
             model_name=model_name,
@@ -91,6 +95,7 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             max_turns=max_turns,
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
+            adapter_factory=adapter_factory,
         )
         self._task = task
         self._confidence_config = confidence_config

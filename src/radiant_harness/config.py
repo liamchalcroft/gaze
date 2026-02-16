@@ -163,9 +163,7 @@ def _validate_base_url(url: str, field_name: str) -> None:
     except ValueError:
         return  # hostname is a regular DNS name — fine
     if addr.is_private or addr.is_loopback or addr.is_link_local:
-        raise ValueError(
-            f"{field_name} must not point to a private/loopback address: {hostname}"
-        )
+        raise ValueError(f"{field_name} must not point to a private/loopback address: {hostname}")
 
 
 @dataclass(frozen=True)
@@ -273,6 +271,7 @@ class AgenticConfig:
     default_max_turns: int = 10
     default_max_tokens: int = 16384
     default_temperature: float = 0.0
+    max_consecutive_nudges: int = 3
 
     def __post_init__(self) -> None:
         if self.max_turns_limit < 1:
@@ -288,6 +287,10 @@ class AgenticConfig:
             raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
         if self.default_temperature < 0:
             raise ValueError(f"default_temperature must be >= 0, got {self.default_temperature}")
+        if self.max_consecutive_nudges < 1:
+            raise ValueError(
+                f"max_consecutive_nudges must be >= 1, got {self.max_consecutive_nudges}"
+            )
 
 
 @dataclass(frozen=True)

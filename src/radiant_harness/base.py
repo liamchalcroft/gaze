@@ -7,7 +7,6 @@ Task-specific details are provided via dependency injection.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import re
 from abc import ABC
@@ -475,19 +474,15 @@ class AgenticProcessorBase(ABC):
         ]
         system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
-        if tool_registry:
-            tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
-            if tool_docs:
-                system_prompt = f"{system_prompt}\n\nAvailable tools:\n{tool_docs}"
-            if len(images) > 1:
-                first_label = images[0].label or images[0].path.name
-                system_prompt = (
-                    f"{system_prompt}\n\nIMPORTANT: Visual tools (zoom, crop, "
-                    f"contrast, etc.) operate only on the first image "
-                    f"({first_label}). All images are visible in the "
-                    f"conversation, but tool manipulations apply to the first "
-                    f"image only."
-                )
+        if tool_registry and len(images) > 1:
+            first_label = images[0].label or images[0].path.name
+            system_prompt = (
+                f"{system_prompt}\n\nIMPORTANT: Visual tools (zoom, crop, "
+                f"contrast, etc.) operate only on the first image "
+                f"({first_label}). All images are visible in the "
+                f"conversation, but tool manipulations apply to the first "
+                f"image only."
+            )
         user_message = self.get_user_message(images=images, metadata=metadata)
 
         turns: list[Turn] = []
@@ -516,6 +511,37 @@ class AgenticProcessorBase(ABC):
         response_schema = self.get_response_schema()
 
         total_tokens: int = 0
+        nudge_count: int = 0
+
+        def _force_finalize_message() -> str:
+            """Build a force-finalize message with the response JSON skeleton."""
+            schema_obj = {}
+            if response_schema is not None:
+                schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+            props = schema_obj.get("properties", {})
+            skeleton: dict[str, str] = {}
+            for key, prop in props.items():
+                ptype = prop.get("type", "string")
+                if ptype == "boolean":
+                    skeleton[key] = "true/false"
+                elif ptype == "array":
+                    skeleton[key] = "[...]"
+                elif ptype == "object":
+                    skeleton[key] = "{...}"
+                elif ptype in ("number", "integer"):
+                    skeleton[key] = "0"
+                else:
+                    skeleton[key] = "..."
+            skeleton["continue"] = "false"
+            skeleton_str = json.dumps(skeleton, indent=2)
+            return (
+                "[System: You have failed to produce valid JSON for multiple consecutive turns. "
+                "You MUST respond with ONLY a JSON object NOW. Fill in this template with your "
+                f"best analysis based on what you have observed so far:\n{skeleton_str}\n"
+                "Replace placeholder values with your actual analysis. Respond with ONLY the "
+                "JSON object, no other text.]"
+            )
+
         for turn_idx in range(self.max_turns):
             is_last_turn = turn_idx == self.max_turns - 1
             current_tools = None if is_last_turn else tool_schemas
@@ -531,8 +557,10 @@ class AgenticProcessorBase(ABC):
             if is_last_turn and turn_idx > 0:
                 # Reset image to original so model sees untransformed view
                 if tool_registry is not None:
-                    with contextlib.suppress(ToolExecutionError):
+                    try:
                         tool_registry.get_image_manager().reset_to_original()
+                    except ToolExecutionError:
+                        logger.warning("Failed to reset image on final turn")
 
                 # Build final-turn message with original image + schema reminder
                 final_parts: list[dict[str, Any]] = []
@@ -685,12 +713,14 @@ class AgenticProcessorBase(ABC):
                     turn_idx=turn_idx,
                 )
 
+                multipart_ok = model_adapter.supports_multipart_tool_content
+
                 for i, result in enumerate(tool_results):
                     tool_call_id = typed_tool_calls[i].id
                     image_data_url = result.get_image_data_url()
 
                     tool_content: str | list[dict[str, Any]]
-                    if image_data_url:
+                    if image_data_url and multipart_ok:
                         tool_content = [
                             {
                                 "type": "text",
@@ -720,26 +750,32 @@ class AgenticProcessorBase(ABC):
                     tool_results=tuple(tool_results),
                 )
                 turns.append(tool_turn)
+                nudge_count = 0  # Successful tool calls reset nudge counter
                 continue
             # Detect truncated responses before attempting JSON parsing
             if gen_log.finish_reason == "length":
                 if not is_last_turn:
+                    nudge_count += 1
                     # Truncated on intermediate turn — nudge model to use tools
                     # or produce concise JSON on the next turn.
                     logger.warning(
                         f"Turn {turn_idx + 1} truncated (completion_tokens="
-                        f"{gen_log.completion_tokens}). Nudging model to continue."
+                        f"{gen_log.completion_tokens}). Nudge {nudge_count}/"
+                        f"{self._config.max_consecutive_nudges}."
                     )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[System: Your previous response was too long and was "
-                                "truncated. Please use tools or provide a concise JSON "
-                                "response with 'continue' field.]"
-                            ),
-                        }
-                    )
+                    if nudge_count >= self._config.max_consecutive_nudges:
+                        messages.append({"role": "user", "content": _force_finalize_message()})
+                    else:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[System: Your previous response was too long and was "
+                                    "truncated. Please use tools or provide a concise JSON "
+                                    "response with 'continue' field.]"
+                                ),
+                            }
+                        )
                     continue
                 raise AgenticProcessingError(
                     f"Response truncated on turn {turn_idx + 1} "
@@ -752,20 +788,24 @@ class AgenticProcessorBase(ABC):
             # Handle empty or non-JSON responses on intermediate turns:
             # nudge the model instead of crashing.
             if not response_text.strip() and not is_last_turn:
+                nudge_count += 1
                 logger.warning(
                     f"Turn {turn_idx + 1} returned empty response with no tool calls. "
-                    "Nudging model to provide JSON."
+                    f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
                 )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "[System: You returned an empty response. Please provide "
-                            "your analysis as a JSON object. Use tools if you need "
-                            "more information, or set 'continue': false to finalize.]"
-                        ),
-                    }
-                )
+                if nudge_count >= self._config.max_consecutive_nudges:
+                    messages.append({"role": "user", "content": _force_finalize_message()})
+                else:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[System: You returned an empty response. Please provide "
+                                "your analysis as a JSON object. Use tools if you need "
+                                "more information, or set 'continue': false to finalize.]"
+                            ),
+                        }
+                    )
                 continue
 
             try:
@@ -777,21 +817,25 @@ class AgenticProcessorBase(ABC):
                 fallback = extract_json_from_text(response_text)
                 if fallback is None:
                     if not is_last_turn:
+                        nudge_count += 1
                         # On intermediate turns, nudge instead of crashing
                         logger.warning(
                             f"Turn {turn_idx + 1} returned non-JSON text. "
-                            "Nudging model to provide JSON."
+                            f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
                         )
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "[System: Your response was not valid JSON. "
-                                    "Please respond with a JSON object including "
-                                    "a 'continue' field.]"
-                                ),
-                            }
-                        )
+                        if nudge_count >= self._config.max_consecutive_nudges:
+                            messages.append({"role": "user", "content": _force_finalize_message()})
+                        else:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "[System: Your response was not valid JSON. "
+                                        "Please respond with a JSON object including "
+                                        "a 'continue' field.]"
+                                    ),
+                                }
+                            )
                         continue
                     raise AgenticProcessingError(
                         f"No valid JSON found on turn {turn_idx + 1}. "
@@ -808,6 +852,7 @@ class AgenticProcessorBase(ABC):
                 )
 
             parsed: dict[str, Any] = parsed_obj
+            nudge_count = 0  # Valid JSON resets nudge counter
 
             wants_continue = parsed.get("continue", False)
             if not isinstance(wants_continue, bool):
@@ -822,21 +867,26 @@ class AgenticProcessorBase(ABC):
                 # (fails validation) and we have turns left, nudge instead
                 # of accepting a garbage final response.
                 if not is_last_turn and not self.validate_response(parsed):
+                    nudge_count += 1
                     logger.warning(
                         f"Turn {turn_idx + 1} returned incomplete response "
-                        f"(keys: {list(parsed.keys())[:10]}). Nudging model."
+                        f"(keys: {list(parsed.keys())[:10]}). "
+                        f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
                     )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[System: Your response is incomplete — it's missing "
-                                "required fields. Please continue your analysis and "
-                                "provide a complete response with all required sections. "
-                                "Set 'continue': true if you need more turns.]"
-                            ),
-                        }
-                    )
+                    if nudge_count >= self._config.max_consecutive_nudges:
+                        messages.append({"role": "user", "content": _force_finalize_message()})
+                    else:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[System: Your response is incomplete — it's missing "
+                                    "required fields. Please continue your analysis and "
+                                    "provide a complete response with all required sections. "
+                                    "Set 'continue': true if you need more turns.]"
+                                ),
+                            }
+                        )
                     continue
                 final_response = parsed
                 break

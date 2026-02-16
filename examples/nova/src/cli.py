@@ -27,7 +27,9 @@ from .config import NOVAConfig
 from .config import TaskType
 from .data import NovaDataset
 from .evaluation.caption import evaluate_caption
+from .evaluation.detection import clamp_and_validate_box
 from .evaluation.detection import evaluate_detection
+from .evaluation.detection import rescale_and_clamp_box
 from .evaluation.diagnosis import evaluate_diagnosis_nova_official
 from .processor import NOVAAgenticProcessor
 
@@ -59,6 +61,17 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         ground_truth_dir=gt_dir_str,
     )
 
+    # Build adapter factory for custom base URLs (e.g. LM Studio)
+    adapter_factory = None
+    if config.base_url is not None:
+        from radiant_harness.models import LMStudioAdapter
+
+        _url = config.base_url
+        _model = config.model_name
+
+        def adapter_factory() -> LMStudioAdapter:
+            return LMStudioAdapter(model_name=_model, base_url=_url)
+
     # Create NOVA processor using radiant_harness
     processor = NOVAAgenticProcessor(
         model_name=config.model_name,
@@ -68,6 +81,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         reasoning_enabled=config.reasoning_enabled,
         reasoning_effort=config.reasoning_effort,
         mode=config.mode,
+        adapter_factory=adapter_factory,
     )
 
     logger.info(f"Running NOVA evaluation with model: {config.model_name}")
@@ -83,14 +97,36 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     results: list[AgenticResult] = []
     ground_truth: list[dict[str, Any]] = []
 
-    # Pre-validate and collect work items
+    # Pre-validate and collect work items; load cached results for skipped samples.
+    # max_samples caps the TOTAL samples considered (cached + new).
+    sample_limit = config.max_samples if config.max_samples > 0 else len(dataset)
     work_items: list[tuple[int, dict[str, Any]]] = []
+    cached_count = 0
     for i, sample in enumerate(dataset):
+        if cached_count + len(work_items) >= sample_limit:
+            break
         if config.skip_existing:
             result_file = config.output_dir / f"sample_{i}.json"
             if result_file.exists():
-                logger.debug(f"Skipping existing result: {result_file}")
-                continue
+                # Load cached result so metrics cover all completed samples
+                try:
+                    with result_file.open() as f:
+                        cached = json.load(f)
+                    results.append(
+                        AgenticResult(
+                            final_response=cached["response"],
+                            turns=(),
+                            total_tokens=cached.get("total_tokens", 0),
+                            confidence=cached.get("confidence", 0.0),
+                        )
+                    )
+                    ground_truth.append(sample["ground_truth"])
+                    cached_count += 1
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.warning(f"Corrupt cached result {result_file}, re-processing: {exc}")
+                    # Fall through to re-process this sample
+                else:
+                    continue
         if "ground_truth" not in sample:
             raise KeyError(f"Sample {i} missing ground truth data")
         image = sample["image"]
@@ -98,8 +134,8 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             raise TypeError(f"Sample {i} image must be a PIL Image, got {type(image).__name__}")
         work_items.append((i, sample))
 
-    if config.max_samples > 0:
-        work_items = work_items[: config.max_samples]
+    if cached_count:
+        print(f"  Loaded {cached_count} cached results from previous run")  # noqa: T201
 
     async def _process_sample(
         idx: int, sample: dict[str, Any]
@@ -195,7 +231,8 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     metrics: dict[str, object] = {}
     if results:
         logger.info("Computing evaluation metrics...")
-        metrics = await compute_metrics(results, ground_truth, config.task)
+        eval_set = set(config.eval_tasks) if config.eval_tasks else None
+        metrics = await compute_metrics(results, ground_truth, config.task, eval_set)
     else:
         logger.warning("All samples failed — skipping metric computation")
 
@@ -236,6 +273,7 @@ async def compute_metrics(
     results: list[AgenticResult],
     ground_truth: list[dict[str, Any]],
     task: TaskType,
+    eval_tasks: set[str] | None = None,
 ) -> dict[str, object]:
     """Compute evaluation metrics for results.
 
@@ -243,6 +281,8 @@ async def compute_metrics(
         results: List of agentic results
         ground_truth: Ground truth annotations aligned with results
         task: Task type to evaluate
+        eval_tasks: If provided, only compute metrics for these tasks
+            (e.g. {"caption", "localization"}). Overrides *task* filtering.
 
     Returns:
         Dictionary of metrics
@@ -255,10 +295,18 @@ async def compute_metrics(
             f"Results and ground truth length mismatch: {len(results)} vs {len(ground_truth)}"
         )
 
+    # Map task names to enum members for lookup
+    _TASK_BY_NAME = {t.value: t for t in TaskType}
+
+    def _should_compute(task_name: str) -> bool:
+        if eval_tasks is not None:
+            return task_name in eval_tasks
+        return task in (TaskType.ALL, _TASK_BY_NAME[task_name])
+
     metrics: dict[str, object] = {}
     predictions = [r.final_response for r in results]
 
-    if task in (TaskType.ALL, TaskType.CAPTION):
+    if _should_compute("caption"):
         pred_captions = []
         for i, p in enumerate(predictions):
             caption = p.get("caption")
@@ -275,7 +323,7 @@ async def compute_metrics(
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
         metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
 
-    if task in (TaskType.ALL, TaskType.DIAGNOSIS):
+    if _should_compute("diagnosis"):
         pred_diagnoses = []
         for i, p in enumerate(predictions):
             diag = p.get("diagnosis")
@@ -291,12 +339,22 @@ async def compute_metrics(
                 raise KeyError(
                     f"Prediction {i} 'diagnosis' missing required 'primary_diagnosis' field"
                 )
-            pred_diagnoses.append(primary)
+            # Build ranked list [primary, diff1, diff2, ...] for top-5 evaluation.
+            # evaluate_diagnosis_nova_official already handles lists via isinstance(p, list).
+            ranked: list[str] = [primary]
+            for dd in diag.get("differential_diagnoses", []):
+                if isinstance(dd, dict):
+                    name = dd.get("diagnosis")
+                    if name:
+                        ranked.append(name)
+                elif isinstance(dd, str) and dd:
+                    ranked.append(dd)
+            pred_diagnoses.append(ranked)
 
         gt_diagnoses = [gt.get("final_diagnosis", "") for gt in ground_truth]
         metrics["diagnosis"] = await evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
 
-    if task in (TaskType.ALL, TaskType.LOCALIZATION):
+    if _should_compute("localization"):
         pred_boxes = []
         gt_boxes = []
         for i, (p, gt) in enumerate(zip(predictions, ground_truth, strict=True)):
@@ -308,6 +366,10 @@ async def compute_metrics(
                     f"Prediction {i} 'localization' must be dict, got {type(loc_data).__name__}"
                 )
             localizations = loc_data.get("localizations", [])
+            # Extract image dimensions for clamping (model reports these)
+            img_dims = loc_data.get("image_dimensions", {})
+            img_w = img_dims.get("width", 0)
+            img_h = img_dims.get("height", 0)
             boxes = []
             scores = []
             for j, loc in enumerate(localizations):
@@ -317,6 +379,11 @@ async def compute_metrics(
                     raise KeyError(
                         f"Prediction {i} localization {j} missing required 'bounding_box' field"
                     )
+                # Rescale proportionally if model used wrong coordinate space,
+                # then clamp to image bounds.
+                bbox = list(bbox)
+                if img_w > 0 and img_h > 0:
+                    bbox = rescale_and_clamp_box(bbox, img_w, img_h)
                 boxes.append(bbox)
                 scores.append(loc.get("confidence", 1.0))
             pred_boxes.append(
@@ -329,7 +396,10 @@ async def compute_metrics(
 
             # Ground truth format: uses 'bbox' field
             gt_localizations = gt.get("localizations", [])
-            gt_box_list = [loc["bbox"] for loc in gt_localizations if "bbox" in loc]
+            gt_box_list = [list(loc["bbox"]) for loc in gt_localizations if "bbox" in loc]
+            # Defensively clamp GT boxes too
+            if img_w > 0 and img_h > 0:
+                gt_box_list = [clamp_and_validate_box(b, img_w, img_h) for b in gt_box_list]
             gt_boxes.append(
                 {
                     "boxes": gt_box_list,
@@ -354,7 +424,13 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="openai/gpt-4o",
-        help="Model name (OpenRouter format)",
+        help="Model name (OpenRouter format, or local model ID for --base-url)",
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI-compatible server (e.g. http://host:1234/v1)",
     )
     parser.add_argument(
         "--task",
@@ -416,6 +492,20 @@ def parse_args() -> argparse.Namespace:
         help="Batch size for processing",
     )
     parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=0,
+        help="Maximum samples to process (0 = all)",
+    )
+    parser.add_argument(
+        "--eval-tasks",
+        type=str,
+        nargs="+",
+        choices=["caption", "diagnosis", "localization"],
+        default=None,
+        help="Metrics to compute (default: all matching --task)",
+    )
+    parser.add_argument(
         "--no-skip-existing",
         action="store_true",
         help="Reprocess existing results",
@@ -444,6 +534,7 @@ def main() -> None:
     # Create configuration
     config = NOVAConfig(
         model_name=args.model,
+        base_url=args.base_url,
         task=TaskType(args.task),
         data_dir=args.data_dir,
         ground_truth_dir=args.ground_truth_dir,
@@ -453,7 +544,9 @@ def main() -> None:
         max_turns=args.max_turns,
         reasoning_enabled=args.reasoning,
         mode=args.mode,
+        eval_tasks=tuple(args.eval_tasks) if args.eval_tasks else None,
         batch_size=args.batch_size,
+        max_samples=args.max_samples,
         skip_existing=not args.no_skip_existing,
     )
 

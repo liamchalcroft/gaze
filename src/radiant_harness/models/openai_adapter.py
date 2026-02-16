@@ -51,6 +51,8 @@ def _safe_error_summary(e: Exception) -> str:
 class OpenAIAdapter(AdapterProtocol):
     """Adapter around OpenAI's Chat Completions API (text + vision)."""
 
+    supports_multipart_tool_content: bool = True
+
     _ALLOWED_BASE_URLS: frozenset[str] = frozenset(
         {
             OPENROUTER_BASE_URL,

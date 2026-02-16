@@ -15,6 +15,8 @@ from radiant_harness.types import ToolResult
 
 
 class RecordingAdapter(AdapterProtocol):
+    supports_multipart_tool_content: bool = True
+
     def __init__(self, tool_calls: list[dict[str, Any]]) -> None:
         self.tool_calls = tool_calls
         self.messages_history: list[list[dict[str, Any]]] = []

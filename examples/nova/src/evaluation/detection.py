@@ -19,6 +19,80 @@ _MAP_RANGE_IOU_THRESHOLDS = [0.5 + 0.05 * i for i in range(10)]
 
 
 @beartype
+def clamp_and_validate_box(
+    box: list[int | float], width: int | float, height: int | float
+) -> list[float]:
+    """Clamp a bounding box to image dimensions and ensure x1 < x2, y1 < y2.
+
+    Args:
+        box: [x1, y1, x2, y2] bounding box coordinates.
+        width: Image width in pixels.
+        height: Image height in pixels.
+
+    Returns:
+        Clamped [x1, y1, x2, y2] with coordinates within [0, width] / [0, height].
+    """
+    x1, y1, x2, y2 = (float(c) for c in box)
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
+    x1 = max(0.0, min(x1, float(width)))
+    y1 = max(0.0, min(y1, float(height)))
+    x2 = max(0.0, min(x2, float(width)))
+    y2 = max(0.0, min(y2, float(height)))
+    return [x1, y1, x2, y2]
+
+
+@beartype
+def rescale_and_clamp_box(
+    box: list[int | float], width: int | float, height: int | float
+) -> list[float]:
+    """Rescale out-of-bounds coordinates proportionally, then clamp.
+
+    When a model outputs coordinates in a different coordinate space (e.g.
+    [238, 223, 760, 479] for a 480x480 image), simple clamping squishes the
+    box.  This function detects the implicit coordinate range and rescales
+    all coordinates proportionally before clamping.
+
+    Args:
+        box: [x1, y1, x2, y2] bounding box coordinates.
+        width: Image width in pixels.
+        height: Image height in pixels.
+
+    Returns:
+        Rescaled and clamped [x1, y1, x2, y2].
+    """
+    x1, y1, x2, y2 = (float(c) for c in box)
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
+
+    w = float(width)
+    h = float(height)
+
+    # Detect if coordinates exceed image bounds — rescale proportionally
+    max_x = max(x1, x2)
+    max_y = max(y1, y2)
+    if max_x > w or max_y > h:
+        # Infer the model's implicit coordinate range
+        scale_x = w / max_x if max_x > w else 1.0
+        scale_y = h / max_y if max_y > h else 1.0
+        x1 *= scale_x
+        x2 *= scale_x
+        y1 *= scale_y
+        y2 *= scale_y
+
+    # Final clamp to be safe
+    x1 = max(0.0, min(x1, w))
+    y1 = max(0.0, min(y1, h))
+    x2 = max(0.0, min(x2, w))
+    y2 = max(0.0, min(y2, h))
+    return [x1, y1, x2, y2]
+
+
+@beartype
 def _convert_to_tensors(
     data: dict[str, Any] | list[list[int | float]],
 ) -> dict[str, torch.Tensor]:

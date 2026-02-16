@@ -25,6 +25,8 @@ class GenerationLog:
 class AdapterProtocol(Protocol):
     """Minimal interface required by AgenticProcessorBase."""
 
+    supports_multipart_tool_content: bool
+
     async def generate_chat(
         self,
         messages: list[dict[str, Any]],

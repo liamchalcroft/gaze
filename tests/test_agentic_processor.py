@@ -16,6 +16,8 @@ from radiant_harness.types import ToolResult
 
 
 class FakeAdapter(AdapterProtocol):
+    supports_multipart_tool_content: bool = True
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -43,6 +45,8 @@ class FakeAdapter(AdapterProtocol):
 
 
 class FailingAdapter(AdapterProtocol):
+    supports_multipart_tool_content: bool = True
+
     async def generate_chat(
         self,
         messages=None,
@@ -189,6 +193,8 @@ async def test_agentic_processor_surfaces_tool_errors_gracefully() -> None:
 class AlwaysToolAdapter(AdapterProtocol):
     """Adapter that always returns tool calls, even when tools=None."""
 
+    supports_multipart_tool_content: bool = True
+
     async def generate_chat(
         self,
         messages: list[dict[str, Any]] | None = None,
@@ -207,6 +213,8 @@ class AlwaysToolAdapter(AdapterProtocol):
 
 class MarkdownJsonAdapter(AdapterProtocol):
     """Adapter that returns JSON wrapped in a markdown code block."""
+
+    supports_multipart_tool_content: bool = True
 
     async def generate_chat(
         self,
@@ -329,6 +337,8 @@ async def test_markdown_wrapped_json_parsed_correctly() -> None:
 class LastTurnToolAdapter(AdapterProtocol):
     """Adapter that returns tool calls on every turn, ignoring tools=None."""
 
+    supports_multipart_tool_content: bool = True
+
     def __init__(self) -> None:
         self.calls = 0
         self.tools_per_call: list[list[dict[str, Any]] | None] = []
@@ -408,6 +418,8 @@ async def test_last_turn_tool_calls_rejected_without_execution() -> None:
 class PenultimateWarningAdapter(AdapterProtocol):
     """Adapter that continues for 2 turns then finalizes on turn 3."""
 
+    supports_multipart_tool_content: bool = True
+
     def __init__(self) -> None:
         self.calls = 0
         self.messages_history: list[list[dict[str, Any]]] = []
@@ -483,6 +495,8 @@ async def test_penultimate_turn_warning_injected() -> None:
 
 class MaxTurns1ToolAdapter(AdapterProtocol):
     """Records whether tools were offered on each call."""
+
+    supports_multipart_tool_content: bool = True
 
     def __init__(self) -> None:
         self.tools_offered: list[list[dict[str, Any]] | None] = []
@@ -560,6 +574,8 @@ async def test_max_turns_1_with_tools_enabled_passes_no_tools() -> None:
 
 class RecoveringAdapter(AdapterProtocol):
     """Adapter that requests a failing tool, then recovers with a final response."""
+
+    supports_multipart_tool_content: bool = True
 
     def __init__(self) -> None:
         self.calls = 0
@@ -654,7 +670,6 @@ async def test_graceful_tool_failure_lets_model_recover() -> None:
 @pytest.mark.asyncio
 async def test_multi_image_tool_limitation_in_prompt() -> None:
     """When >1 images are provided, system prompt notes tools only affect first."""
-    from pathlib import Path
     from PIL import Image as PILImage
 
     adapter = MaxTurns1ToolAdapter()
@@ -705,6 +720,8 @@ async def test_multi_image_tool_limitation_in_prompt() -> None:
 
 class TimingAdapter(AdapterProtocol):
     """Adapter that records timestamps and requests both image and search tools."""
+
+    supports_multipart_tool_content: bool = True
 
     def __init__(self) -> None:
         self.calls = 0
@@ -810,7 +827,6 @@ async def test_parallel_execution_of_image_and_independent_tools() -> None:
     processor = ParallelToolProcessor()
     start = time.monotonic()
     result = await processor.analyze(images=None, metadata={})
-    elapsed = time.monotonic() - start
 
     assert result.final_response["result"] == "done"
     # Both tools completed successfully

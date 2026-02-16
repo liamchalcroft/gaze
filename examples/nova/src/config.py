@@ -34,6 +34,7 @@ class NOVAConfig:
 
     # Model settings (passed to radiant_harness)
     model_name: str = "openai/gpt-4o"
+    base_url: str | None = None
     max_turns: int = 10
     use_tools: bool = True
     use_web_search: bool = False
@@ -47,6 +48,7 @@ class NOVAConfig:
     ground_truth_dir: Path | None = None  # Separate GT dir; None = use data_dir or HF
     output_dir: Path = field(default_factory=lambda: Path("./runs"))
     batch_size: int = 4
+    eval_tasks: tuple[str, ...] | None = None  # None = use task; e.g. ("caption", "localization")
     skip_existing: bool = True
     max_samples: int = 0  # 0 = all samples
 

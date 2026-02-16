@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from beartype import beartype
+from loguru import logger
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageEnhance
@@ -947,6 +948,46 @@ def _require_image(registry: ToolRegistry) -> Image.Image:
     return image_manager.current_image
 
 
+def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
+    """Auto-normalize pixel coordinates to [0, 1] if all values exceed 1.
+
+    Models sometimes pass pixel coordinates (e.g. [200, 150, 380, 350])
+    instead of normalized [0, 1] values. When all 4 box coordinates are > 1,
+    they are clearly pixel values — divide x-coords by width, y-coords by height.
+    """
+    if all(v > 1 for v in box):
+        w, h = image.size
+        normalized = [box[0] / w, box[1] / h, box[2] / w, box[3] / h]
+        logger.warning(
+            "Auto-normalized pixel coords {} -> {:.3f},{:.3f},{:.3f},{:.3f} (image {}x{})",
+            box,
+            *normalized,
+            w,
+            h,
+        )
+        return normalized
+    return box
+
+
+def _maybe_normalize_point(point: list[float], image: Image.Image) -> list[float]:
+    """Auto-normalize pixel coordinates to [0, 1] if both values exceed 1.
+
+    Same heuristic as _maybe_normalize_box but for 2-element point arrays.
+    """
+    if all(v > 1 for v in point):
+        w, h = image.size
+        normalized = [point[0] / w, point[1] / h]
+        logger.warning(
+            "Auto-normalized pixel point {} -> {:.3f},{:.3f} (image {}x{})",
+            point,
+            *normalized,
+            w,
+            h,
+        )
+        return normalized
+    return point
+
+
 def _get_current_image(registry: ToolRegistry) -> Image.Image:
     """Get current image after a transform (guaranteed non-None by transform_image)."""
     image_manager = registry.get_image_manager()
@@ -1011,7 +1052,7 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
     if len(box) != 4:
         raise ToolExecutionError(f"Crop requires [x1, y1, x2, y2], got {len(box)} values")
 
-    # Validate types and range before arithmetic
+    # Validate types before normalization
     coord_names = ["x1", "y1", "x2", "y2"]
     for i, value in enumerate(box):
         if isinstance(value, bool) or not isinstance(value, int | float):
@@ -1019,12 +1060,16 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
                 f"Crop coordinates must be numbers, got {coord_names[i]}={value!r} "
                 f"(type {type(value).__name__})"
             )
+
+    # Auto-normalize pixel coords before range validation
+    image = _require_image(registry)
+    box = _maybe_normalize_box(box, image)
+
+    for i, value in enumerate(box):
         if not 0 <= value <= 1:
             raise ToolExecutionError(
                 f"Crop coordinates must be in range [0, 1]. Got {coord_names[i]}={value}"
             )
-
-    image = _require_image(registry)
     x1, y1, x2, y2 = box
     original_size = image.size
 
@@ -1223,15 +1268,20 @@ async def _execute_equalize(registry: ToolRegistry) -> ToolResult:
 
 
 async def _execute_intensity_stats(
-    registry: ToolRegistry, box: list[float] | None = None
+    registry: ToolRegistry, box: list[float] | str | None = None
 ) -> ToolResult:
     """Execute intensity statistics tool."""
     image = _require_image(registry)
+
+    # Models sometimes pass the string "null" instead of JSON null
+    if isinstance(box, str):
+        box = None
 
     box_tuple: tuple[float, float, float, float] | None = None
     if box is not None:
         if len(box) != 4:
             raise ToolExecutionError(f"box requires [x1, y1, x2, y2], got {len(box)} values")
+        box = _maybe_normalize_box(box, image)
         for i, value in enumerate(box):
             if not 0 <= value <= 1:
                 raise ToolExecutionError(
@@ -1259,6 +1309,9 @@ async def _execute_measure(
 ) -> ToolResult:
     """Execute distance measurement tool."""
     image = _require_image(registry)
+
+    point1 = _maybe_normalize_point(point1, image)
+    point2 = _maybe_normalize_point(point2, image)
 
     for name, pt in [("point1", point1), ("point2", point2)]:
         if len(pt) != 2:
@@ -1355,13 +1408,15 @@ async def _execute_annotate_region(
     """Execute region annotation tool."""
     if len(box) != 4:
         raise ToolExecutionError(f"box requires [x1, y1, x2, y2], got {len(box)} values")
+
+    image = _require_image(registry)
+    box = _maybe_normalize_box(box, image)
+
     for i, value in enumerate(box):
         if not 0 <= value <= 1:
             raise ToolExecutionError(
                 f"box coordinates must be in [0, 1], got value {value} at index {i}"
             )
-
-    _require_image(registry)
     box_tuple = (box[0], box[1], box[2], box[3])
 
     try:
@@ -1456,6 +1511,9 @@ async def _execute_intensity_profile(
 ) -> ToolResult:
     """Execute intensity profile tool."""
     image = _require_image(registry)
+
+    point1 = _maybe_normalize_point(point1, image)
+    point2 = _maybe_normalize_point(point2, image)
 
     for name, pt in [("point1", point1), ("point2", point2)]:
         if len(pt) != 2:
