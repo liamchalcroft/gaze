@@ -103,7 +103,7 @@ class ImageManager:
         try:
             with Image.open(resolved) as img:
                 self._original_image = img.copy()
-                self._current_image = img.copy()
+                self._current_image = self._original_image
         except FileNotFoundError as e:
             raise ToolExecutionError(f"Image file not found: {image_path}") from e
         except UnidentifiedImageError as e:
@@ -139,12 +139,12 @@ class ImageManager:
             # Re-validate in case the path was set before validation was added
             image_path = self._validate_image_path(self._image_path)
 
-            def _load_image() -> tuple[Image.Image, Image.Image]:
+            def _load_image() -> Image.Image:
                 with Image.open(image_path) as img:
-                    return img.copy(), img.copy()
+                    return img.copy()
 
             try:
-                original, current = await asyncio.to_thread(_load_image)
+                loaded = await asyncio.to_thread(_load_image)
             except FileNotFoundError as e:
                 raise ToolExecutionError(f"Image file not found: {self._image_path}") from e
             except UnidentifiedImageError as e:
@@ -154,8 +154,8 @@ class ImageManager:
                     f"Failed to read image file {self._image_path}: {e}"
                 ) from e
 
-            self._original_image = original
-            self._current_image = current
+            self._original_image = loaded
+            self._current_image = loaded
 
     @beartype
     def transform_image(self, operation: Callable[[Image.Image], Image.Image]) -> None:
@@ -181,15 +181,15 @@ class ImageManager:
 
         old_image = self._current_image
         self._current_image = operation(old_image)
-        old_image.close()
+        if old_image is not self._original_image:
+            old_image.close()
 
     @beartype
     def set_preloaded_image(self, image: Image.Image, image_path: Path) -> None:
         """Set a pre-loaded PIL Image, avoiding a redundant disk read.
 
         The caller transfers ownership of *image* — it must not be modified
-        or closed afterwards.  One internal copy is made for the working
-        ("current") image; the original reference is kept as-is for resets.
+        or closed afterwards.
 
         Args:
             image: Already-loaded PIL Image (must have pixel data in memory).
@@ -201,7 +201,7 @@ class ImageManager:
         resolved = self._validate_image_path(image_path)
         self.close()
         self._original_image = image
-        self._current_image = image.copy()
+        self._current_image = image
         self._image_path = resolved
 
     @beartype
@@ -214,6 +214,9 @@ class ImageManager:
         if self._original_image is None:
             raise ToolExecutionError("No original image to reset to")
 
+        if self._current_image is self._original_image:
+            return
+
         old_image = self._current_image
         self._current_image = self._original_image.copy()
         if old_image is not None:
@@ -223,9 +226,9 @@ class ImageManager:
     @beartype
     def close(self) -> None:
         """Close and release all image resources."""
-        if self._current_image is not None:
+        if self._current_image is not None and self._current_image is not self._original_image:
             self._current_image.close()
-            self._current_image = None
+        self._current_image = None
         if self._original_image is not None:
             self._original_image.close()
             self._original_image = None

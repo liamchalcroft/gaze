@@ -120,7 +120,12 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                             confidence=cached.get("confidence", 0.0),
                         )
                     )
-                    ground_truth.append(sample["ground_truth"])
+                    gt = dict(sample["ground_truth"])
+                    image = sample["image"]
+                    if isinstance(image, Image.Image):
+                        gt["image_width"] = image.width
+                        gt["image_height"] = image.height
+                    ground_truth.append(gt)
                     cached_count += 1
                 except (json.JSONDecodeError, KeyError) as exc:
                     logger.warning(f"Corrupt cached result {result_file}, re-processing: {exc}")
@@ -158,9 +163,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             tool_call_log: list[dict[str, Any]] = []
             for turn in result.turns:
                 for tc in turn.tool_calls:
-                    tool_call_log.append(
-                        {"name": tc.name, "arguments": tc.arguments}
-                    )
+                    tool_call_log.append({"name": tc.name, "arguments": tc.arguments})
                 for tr in turn.tool_results:
                     # Capture search queries and key metadata (skip large blobs).
                     meta: dict[str, Any] = {}
@@ -199,7 +202,10 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                 f"confidence: {result.confidence:.2f}"
             )
 
-            return idx, result, sample["ground_truth"]
+            gt = dict(sample["ground_truth"])
+            gt["image_width"] = image.width
+            gt["image_height"] = image.height
+            return idx, result, gt
 
     failed_samples: list[tuple[int, str]] = []
     if work_items:
@@ -250,10 +256,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "max_turns": config.max_turns,
                 },
                 "num_samples": len(results),
-                "failed_samples": [
-                    {"sample_id": idx, "error": err}
-                    for idx, err in failed_samples
-                ],
+                "failed_samples": [{"sample_id": idx, "error": err} for idx, err in failed_samples],
                 "metrics": metrics,
             },
             f,
@@ -366,10 +369,11 @@ async def compute_metrics(
                     f"Prediction {i} 'localization' must be dict, got {type(loc_data).__name__}"
                 )
             localizations = loc_data.get("localizations", [])
-            # Extract image dimensions for clamping (model reports these)
             img_dims = loc_data.get("image_dimensions", {})
-            img_w = img_dims.get("width", 0)
-            img_h = img_dims.get("height", 0)
+            pred_w = img_dims.get("width", 0)
+            pred_h = img_dims.get("height", 0)
+            actual_w = gt.get("image_width", pred_w)
+            actual_h = gt.get("image_height", pred_h)
             boxes = []
             scores = []
             for j, loc in enumerate(localizations):
@@ -379,11 +383,9 @@ async def compute_metrics(
                     raise KeyError(
                         f"Prediction {i} localization {j} missing required 'bounding_box' field"
                     )
-                # Rescale proportionally if model used wrong coordinate space,
-                # then clamp to image bounds.
                 bbox = list(bbox)
-                if img_w > 0 and img_h > 0:
-                    bbox = rescale_and_clamp_box(bbox, img_w, img_h)
+                if actual_w > 0 and actual_h > 0:
+                    bbox = rescale_and_clamp_box(bbox, actual_w, actual_h)
                 boxes.append(bbox)
                 scores.append(loc.get("confidence", 1.0))
             pred_boxes.append(
@@ -397,9 +399,8 @@ async def compute_metrics(
             # Ground truth format: uses 'bbox' field
             gt_localizations = gt.get("localizations", [])
             gt_box_list = [list(loc["bbox"]) for loc in gt_localizations if "bbox" in loc]
-            # Defensively clamp GT boxes too
-            if img_w > 0 and img_h > 0:
-                gt_box_list = [clamp_and_validate_box(b, img_w, img_h) for b in gt_box_list]
+            if actual_w > 0 and actual_h > 0:
+                gt_box_list = [clamp_and_validate_box(b, actual_w, actual_h) for b in gt_box_list]
             gt_boxes.append(
                 {
                     "boxes": gt_box_list,

@@ -76,7 +76,9 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
     "description": "<descriptive radiological caption — 1-3 sentences describing sequence, plane, findings, and signal characteristics>",
     "sequence_characteristics": "<T1W/T2W/FLAIR/DWI/etc.>",
     "orientation": "<axial/sagittal/coronal>",
-    "confidence": <0.0-1.0>
+    "confidence": <0.0-1.0>,
+    "findings": ["<specific finding 1>", "<specific finding 2>"],
+    "anatomical_regions": ["<region 1>", "<region 2>"]
   },
   "diagnosis": {
     "primary_diagnosis": "<EXACT DIAGNOSIS NAME. Include WHO grade/subtype if relevant. NEVER add location, 'likely', 'secondary to', or 'consistent with'. GOOD: 'Dandy-Walker malformation', 'Oligodendroglioma (WHO grade II)', 'MELAS', 'Lhermitte-Duclos disease', 'Colloid cyst', 'Arnold Chiari malformation type II', 'Marchiafava-Bignami disease', 'Fahr syndrome'. BAD: 'Right temporal glioma' (has location), 'Meningioma likely arising from...' (has speculation), 'Infarct secondary to...' (has causation).>",

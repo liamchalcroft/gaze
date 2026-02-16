@@ -26,7 +26,6 @@ if str(EXAMPLE_NOVA_ROOT) not in sys.path:
 from src.schemas import NOVA_SCHEMA
 from src.schemas import validate_nova_response
 
-
 # =====================================================================
 # 1. Schema strict mode compliance
 # =====================================================================
@@ -75,14 +74,10 @@ class TestSchemaStrictCompliance:
                 errors.append(f"{path}: properties not in required: {missing}")
 
             for prop_name, prop_schema in schema.get("properties", {}).items():
-                errors.extend(
-                    self._check_nested_objects(prop_schema, f"{path}.{prop_name}")
-                )
+                errors.extend(self._check_nested_objects(prop_schema, f"{path}.{prop_name}"))
 
         if schema.get("type") == "array" and "items" in schema:
-            errors.extend(
-                self._check_nested_objects(schema["items"], f"{path}[]")
-            )
+            errors.extend(self._check_nested_objects(schema["items"], f"{path}[]"))
 
         return errors
 
@@ -163,20 +158,15 @@ class TestDiagnosisImports:
 
     def test_no_broken_model_import(self) -> None:
         """The old 'from ..models import get_model_client' should be gone."""
-        diagnosis_path = (
-            EXAMPLE_NOVA_ROOT / "src" / "evaluation" / "diagnosis.py"
-        )
+        diagnosis_path = EXAMPLE_NOVA_ROOT / "src" / "evaluation" / "diagnosis.py"
         content = diagnosis_path.read_text()
         assert "from ..models import" not in content, (
-            "diagnosis.py still uses 'from ..models import' which references "
-            "a nonexistent module"
+            "diagnosis.py still uses 'from ..models import' which references a nonexistent module"
         )
 
     def test_uses_openai_directly(self) -> None:
         """Should use openai.AsyncOpenAI directly."""
-        diagnosis_path = (
-            EXAMPLE_NOVA_ROOT / "src" / "evaluation" / "diagnosis.py"
-        )
+        diagnosis_path = EXAMPLE_NOVA_ROOT / "src" / "evaluation" / "diagnosis.py"
         content = diagnosis_path.read_text()
         assert "AsyncOpenAI" in content
 
@@ -190,18 +180,14 @@ class TestSingleTurnPrompt:
     """Verify single-turn prompt template includes required schema fields."""
 
     def test_continue_field_in_template(self) -> None:
-        template_path = (
-            EXAMPLE_NOVA_ROOT / "src" / "prompts" / "single_turn" / "task.jinja"
-        )
+        template_path = EXAMPLE_NOVA_ROOT / "src" / "prompts" / "single_turn" / "task.jinja"
         content = template_path.read_text()
         assert '"continue"' in content, (
             "Single-turn task.jinja missing 'continue' field in JSON example"
         )
 
     def test_reasoning_field_in_template(self) -> None:
-        template_path = (
-            EXAMPLE_NOVA_ROOT / "src" / "prompts" / "single_turn" / "task.jinja"
-        )
+        template_path = EXAMPLE_NOVA_ROOT / "src" / "prompts" / "single_turn" / "task.jinja"
         content = template_path.read_text()
         assert '"reasoning"' in content, (
             "Single-turn task.jinja missing 'reasoning' field in JSON example"

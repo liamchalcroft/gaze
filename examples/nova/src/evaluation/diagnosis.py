@@ -412,14 +412,10 @@ async def evaluate_diagnosis_nova_official(
             pred_norm = normalize_diagnosis_string(pred)
             ref_norm = normalize_diagnosis_string(ref)
             method = "exact_match" if pred_norm == ref_norm else "synonym_match"
-            judgment_log.add(
-                JudgmentRecord(pred=pred, ref=ref, method=method, verdict=True)
-            )
+            judgment_log.add(JudgmentRecord(pred=pred, ref=ref, method=method, verdict=True))
             return True
         async with sem:
-            verdict, record = await llm_semantic_match_async(
-                pred, ref, model_name, num_votes
-            )
+            verdict, record = await llm_semantic_match_async(pred, ref, model_name, num_votes)
             judgment_log.add(record)
             return verdict
 
@@ -429,10 +425,9 @@ async def evaluate_diagnosis_nova_official(
         if is_list:
             top1_pred = p[0] if p else None
             top1 = bool(top1_pred and await _eval_single(str(top1_pred), str(r)))
-            # Top-5: check each differential
-            top5 = top1  # if top1 matched, top5 is also True
+            top5 = top1
             if not top5:
-                for pred in p:
+                for pred in p[1:]:
                     if await _eval_single(str(pred), str(r)):
                         top5 = True
                         break

@@ -294,9 +294,10 @@ class AgenticProcessorBase(ABC):
         # ImageManager to avoid re-reading the file from disk.
         if active_image.pil_image is not None:
             registry = ToolRegistry(tools=tools)
-            registry.get_image_manager().set_preloaded_image(
-                active_image.pil_image, active_image.path
-            )
+            mgr = registry.get_image_manager()
+            mgr.set_preloaded_image(active_image.pil_image, active_image.path)
+            if active_image.encoded is not None:
+                mgr.original_encoding = active_image.encoded
             return registry
 
         return ToolRegistry(image_path=active_image.path, tools=tools)

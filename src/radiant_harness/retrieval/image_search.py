@@ -398,6 +398,15 @@ class MedicalImageSearchManager:
         if not self.engines:
             raise ValueError("No valid image search engines configured")
 
+        self._download_session: aiohttp.ClientSession | None = None
+
+    async def _get_download_session(self) -> aiohttp.ClientSession:
+        if self._download_session is None or self._download_session.closed:
+            self._download_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30),
+            )
+        return self._download_session
+
     async def __aenter__(self) -> MedicalImageSearchManager:
         return self
 
@@ -410,6 +419,9 @@ class MedicalImageSearchManager:
         await self.close()
 
     async def close(self) -> None:
+        if self._download_session is not None and not self._download_session.closed:
+            await self._download_session.close()
+            self._download_session = None
         for engine in self.engines:
             await engine.close()
         self._cache.clear()
@@ -539,10 +551,8 @@ class MedicalImageSearchManager:
                 return filepath
 
         try:
-            # Always create a dedicated session for downloads to avoid
-            # session reuse issues and ensure proper resource cleanup
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-                return await self._do_download(session, result, url_hash, extension)
+            session = await self._get_download_session()
+            return await self._do_download(session, result, url_hash, extension)
 
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             raise ImageDownloadError(result.image_url, str(e), e) from e

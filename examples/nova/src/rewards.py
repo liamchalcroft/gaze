@@ -120,8 +120,7 @@ def compute_diagnosis_reward(
     return 0.6 * float(top1_match) + 0.4 * coverage
 
 
-# Common medical abbreviation mappings — aligned with evaluation/diagnosis.py
-# to prevent reward-eval mismatch for abbreviated diagnoses.
+# Must stay in sync with evaluation/diagnosis.py._ABBREVIATION_MAPPING.
 _ABBREVIATION_MAPPING: dict[str, str] = {
     "sod": "septo-optic dysplasia",
     "acc": "agenesis of corpus callosum",
@@ -129,6 +128,10 @@ _ABBREVIATION_MAPPING: dict[str, str] = {
     "avm": "arteriovenous malformation",
     "pnet": "primitive neuroectodermal tumor",
     "gbm": "glioblastoma multiforme",
+    "mri": "magnetic resonance imaging",
+    "ct": "computed tomography",
+    "dwi": "diffusion weighted imaging",
+    "flair": "fluid attenuated inversion recovery",
     "dc": "dermoid cyst",
     "ec": "epidermoid cyst",
     "ac": "arachnoid cyst",
@@ -144,14 +147,10 @@ _DASH_PATTERN = re.compile(r"\s*[–—]\s*")
 
 
 def _normalize_diagnosis(diagnosis: str) -> str:
-    """Normalize diagnosis text for comparison.
+    """Normalize diagnosis text for reward comparison.
 
-    Applies the same normalization as evaluation/diagnosis.py:
-    - Lowercase, strip punctuation
-    - En-dash / em-dash → hyphen
-    - Expand common medical abbreviations (gbm → glioblastoma multiforme, etc.)
-    - Strip hedging modifiers (possible, probable, likely, suspected)
-    - Collapse whitespace
+    MORE aggressive than evaluation/diagnosis.py:normalize_diagnosis_string()
+    — also strips punctuation and hedging modifiers for simple string matching.
     """
     if not diagnosis:
         return ""
@@ -200,6 +199,8 @@ def _area_penalty(
         Multiplier in [0.0, 1.0].
     """
     if image_area <= 0:
+        return 1.0
+    if penalty_start >= 1.0:
         return 1.0
     pred_area = (box[2] - box[0]) * (box[3] - box[1])
     area_ratio = pred_area / image_area
@@ -287,9 +288,6 @@ def compute_localization_reward(
         f1 *= avg_penalty
 
     return f1
-
-
-# IoU calculation now imported from radiant_harness.utils.iou
 
 
 class NOVAVerifiersReward(BaseRewardFunction):
@@ -440,9 +438,8 @@ class NOVAVerifiersReward(BaseRewardFunction):
             ref_source = info.get("localizations", info.get("gold_localizations", []))
         ref_boxes = _extract_boxes(ref_source)
 
-        # Compute image area for area penalty if dimensions are available
-        width = info.get("width", 0)
-        height = info.get("height", 0)
+        width = info.get("image_width", info.get("width", 0))
+        height = info.get("image_height", info.get("height", 0))
         image_area = float(width) * float(height)
 
         return compute_localization_reward(pred_boxes, ref_boxes, image_area=image_area)
@@ -463,5 +460,4 @@ __all__ = [
     "compute_caption_reward",
     "compute_diagnosis_reward",
     "compute_localization_reward",
-    "_area_penalty",
 ]
