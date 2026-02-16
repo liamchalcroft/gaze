@@ -227,6 +227,9 @@ class IoUReward(BaseRewardFunction):
     Rewards based on spatial overlap between predicted and reference boxes.
     Uses continuous IoU values by default to provide smooth gradient signal
     for RL training. A step-function mode is available for binary rewards.
+
+    Includes an optional area penalty to discourage degenerate full-image
+    predictions that trivially overlap any ground-truth box.
     """
 
     def __init__(
@@ -234,6 +237,7 @@ class IoUReward(BaseRewardFunction):
         iou_threshold: float = 0.5,
         normalized: bool = True,
         continuous: bool = True,
+        area_penalty_start: float = 0.5,
     ) -> None:
         """Initialize IoU reward.
 
@@ -242,10 +246,14 @@ class IoUReward(BaseRewardFunction):
             normalized: Whether coordinates are normalized [0,1]
             continuous: If True (default), return raw IoU for smooth gradients.
                 If False, return 1.0 when IoU >= threshold, else 0.0.
+            area_penalty_start: Area ratio above which penalty begins.
+                When normalized=True, image area is 1.0. A box covering >50%
+                of the image starts getting penalized. Set to 1.0 to disable.
         """
         self.iou_threshold = iou_threshold
         self.normalized = normalized
         self.continuous = continuous
+        self.area_penalty_start = area_penalty_start
 
     def __call__(
         self,
@@ -265,17 +273,46 @@ class IoUReward(BaseRewardFunction):
         ref_floats = [float(x) for x in ref_box[:4]]
         iou = compute_iou(pred_floats, ref_floats)
 
-        if self.continuous:
-            return iou
-        return 1.0 if iou >= self.iou_threshold else 0.0
+        reward = iou if self.continuous else (1.0 if iou >= self.iou_threshold else 0.0)
+
+        # Apply area penalty for degenerate full-image boxes.
+        # For normalized coords (in [0,1]), image_area = 1.0.
+        # For pixel coords, image_area must be supplied via info dict.
+        if self.area_penalty_start < 1.0:
+            if self.normalized:
+                # Only apply when coords are actually in [0,1] range.
+                coords_in_range = all(0.0 <= c <= 1.0 for c in pred_floats)
+                image_area = 1.0 if coords_in_range else 0.0
+            else:
+                image_area = float(info.get("image_area", 0.0))
+            if image_area > 0:
+                pred_area = abs(pred_floats[2] - pred_floats[0]) * abs(
+                    pred_floats[3] - pred_floats[1]
+                )
+                area_ratio = pred_area / image_area
+                if area_ratio > self.area_penalty_start:
+                    penalty = max(
+                        0.0, (1.0 - area_ratio) / (1.0 - self.area_penalty_start)
+                    )
+                    reward *= penalty
+
+        return reward
 
     def _extract_bbox(self, completion: Any) -> list[float]:
-        """Extract bounding box from completion."""
+        """Extract bounding box from completion.
+
+        Searches all top-level JSON objects in the text, not just the first.
+        Models may emit reasoning JSON before the final response that contains
+        the bbox, so we need to check every candidate.
+        """
         text = extract_completion_text(completion)
 
-        # Try to find JSON with bbox
-        start = text.find("{")
-        if start != -1:
+        # Search all JSON objects in the text for one containing a bbox
+        pos = 0
+        while pos < len(text):
+            start = text.find("{", pos)
+            if start == -1:
+                break
             depth = 0
             for i, c in enumerate(text[start:], start):
                 if c == "{":
@@ -290,12 +327,30 @@ class IoUReward(BaseRewardFunction):
                                 return data["bbox"]
                             if "location" in data and "bbox" in data["location"]:
                                 return data["location"]["bbox"]
+                            # Also check nested localization structures
+                            if "localization" in data:
+                                loc = data["localization"]
+                                if isinstance(loc, dict):
+                                    locs = loc.get("localizations", [])
+                                    if isinstance(locs, list) and locs:
+                                        first = locs[0]
+                                        if isinstance(first, dict):
+                                            bbox = first.get(
+                                                "bounding_box", first.get("bbox")
+                                            )
+                                            if isinstance(bbox, list) and len(bbox) >= 4:
+                                                return [float(x) for x in bbox[:4]]
                         except json.JSONDecodeError as e:
                             logger.debug(
                                 f"IoUReward: JSON parse failed for bbox extraction: {e}. "
                                 f"Snippet: {json_candidate[:100]}..."
                             )
+                        # Continue searching from after this JSON object
+                        pos = i + 1
                         break
+            else:
+                # Unclosed brace — no more valid JSON possible
+                break
 
         # Fallback: regex for [x1, y1, x2, y2] pattern
         pattern = r"\[(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\]"

@@ -120,21 +120,92 @@ def compute_diagnosis_reward(
     return 0.6 * float(top1_match) + 0.4 * coverage
 
 
+# Common medical abbreviation mappings — aligned with evaluation/diagnosis.py
+# to prevent reward-eval mismatch for abbreviated diagnoses.
+_ABBREVIATION_MAPPING: dict[str, str] = {
+    "sod": "septo-optic dysplasia",
+    "acc": "agenesis of corpus callosum",
+    "cpa": "cerebellopontine angle",
+    "avm": "arteriovenous malformation",
+    "pnet": "primitive neuroectodermal tumor",
+    "gbm": "glioblastoma multiforme",
+    "dc": "dermoid cyst",
+    "ec": "epidermoid cyst",
+    "ac": "arachnoid cyst",
+    "cm": "cavernous malformation",
+    "vs": "vestibular schwannoma",
+    "an": "acoustic neuroma",
+    "da": "diffuse axonal injury",
+    "sah": "subarachnoid hemorrhage",
+    "ich": "intracerebral hemorrhage",
+}
+
+_DASH_PATTERN = re.compile(r"\s*[–—]\s*")
+
+
 def _normalize_diagnosis(diagnosis: str) -> str:
     """Normalize diagnosis text for comparison.
 
-    Strips hedging modifiers (possible, probable, likely, suspected) that
-    indicate uncertainty but NOT severity qualifiers (mild, moderate, severe)
-    which are clinically meaningful and change the diagnosis.
+    Applies the same normalization as evaluation/diagnosis.py:
+    - Lowercase, strip punctuation
+    - En-dash / em-dash → hyphen
+    - Expand common medical abbreviations (gbm → glioblastoma multiforme, etc.)
+    - Strip hedging modifiers (possible, probable, likely, suspected)
+    - Collapse whitespace
     """
-    # Lowercase and remove punctuation
-    normalized = diagnosis.lower()
-    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    if not diagnosis:
+        return ""
+
+    # Lowercase and normalize dashes
+    normalized = diagnosis.lower().strip()
+    normalized = _DASH_PATTERN.sub("-", normalized)
+    # Remove punctuation (except hyphens, which are clinically meaningful)
+    normalized = re.sub(r"[^\w\s-]", " ", normalized)
+    # Collapse whitespace
+    normalized = " ".join(normalized.split())
+
+    # Expand common abbreviations — aligned with evaluation/diagnosis.py
+    for abbrev, full in _ABBREVIATION_MAPPING.items():
+        if normalized == abbrev:
+            normalized = full
+        elif normalized.startswith(abbrev + " "):
+            normalized = full + normalized[len(abbrev) :]
+
     # Remove hedging modifiers only — severity qualifiers are clinically meaningful
     for modifier in ["possible", "probable", "likely", "suspected"]:
         normalized = normalized.replace(modifier, "")
-    # Collapse whitespace
+
+    # Final whitespace cleanup
     return " ".join(normalized.split())
+
+
+@beartype
+def _area_penalty(
+    box: list[float],
+    image_area: float,
+    penalty_start: float = 0.5,
+) -> float:
+    """Compute penalty for degenerate full-image boxes.
+
+    A box covering most of the image trivially overlaps any ground-truth,
+    so we scale the reward toward 0 as predicted area grows.
+    Linear ramp: full credit at <= penalty_start coverage, zero at 100%.
+
+    Args:
+        box: [x1, y1, x2, y2] in absolute pixels.
+        image_area: Total image area (width * height).
+        penalty_start: Area ratio above which penalty begins (default 0.5).
+
+    Returns:
+        Multiplier in [0.0, 1.0].
+    """
+    if image_area <= 0:
+        return 1.0
+    pred_area = (box[2] - box[0]) * (box[3] - box[1])
+    area_ratio = pred_area / image_area
+    if area_ratio <= penalty_start:
+        return 1.0
+    return max(0.0, (1.0 - area_ratio) / (1.0 - penalty_start))
 
 
 @beartype
@@ -142,16 +213,25 @@ def compute_localization_reward(
     prediction: list[list[int | float]],
     reference: list[list[int | float]],
     iou_threshold: float = 0.5,
+    image_area: float = 0.0,
+    area_penalty_start: float = 0.5,
 ) -> float:
     """Compute localization reward using IoU matching.
 
     Uses IoU threshold of 0.5 by default to align with NOVA evaluation
     metric (ACC50 / mAP@0.5), preventing reward-eval misalignment.
 
+    When image_area > 0, applies an area penalty to each predicted box
+    to discourage degenerate full-image predictions that trivially
+    overlap any ground-truth.
+
     Args:
         prediction: List of predicted bounding boxes [x1, y1, x2, y2]
         reference: List of ground truth bounding boxes
         iou_threshold: IoU threshold for positive match (default 0.5 per NOVA eval)
+        image_area: Total image area (width * height) for area penalty.
+            When 0 (default), no area penalty is applied.
+        area_penalty_start: Area ratio above which penalty begins (default 0.5).
 
     Returns:
         Detection score in [0.0, 1.0]
@@ -163,6 +243,7 @@ def compute_localization_reward(
 
     matched_refs = set()
     true_positives = 0
+    penalty_sum = 0.0
 
     for pred_box in prediction:
         if len(pred_box) < 4:
@@ -185,6 +266,11 @@ def compute_localization_reward(
         if best_iou >= iou_threshold and best_ref_idx >= 0:
             matched_refs.add(best_ref_idx)
             true_positives += 1
+            # Accumulate area penalty for matched predictions
+            if image_area > 0:
+                penalty_sum += _area_penalty(pred_box_f, image_area, area_penalty_start)
+            else:
+                penalty_sum += 1.0
 
     # F1-like score
     precision = true_positives / len(prediction) if prediction else 0.0
@@ -193,7 +279,14 @@ def compute_localization_reward(
     if precision + recall == 0:
         return 0.0
 
-    return 2 * precision * recall / (precision + recall)
+    f1 = 2 * precision * recall / (precision + recall)
+
+    # Apply average area penalty across matched predictions
+    if true_positives > 0 and image_area > 0:
+        avg_penalty = penalty_sum / true_positives
+        f1 *= avg_penalty
+
+    return f1
 
 
 # IoU calculation now imported from radiant_harness.utils.iou
@@ -347,7 +440,12 @@ class NOVAVerifiersReward(BaseRewardFunction):
             ref_source = info.get("localizations", info.get("gold_localizations", []))
         ref_boxes = _extract_boxes(ref_source)
 
-        return compute_localization_reward(pred_boxes, ref_boxes)
+        # Compute image area for area penalty if dimensions are available
+        width = info.get("width", 0)
+        height = info.get("height", 0)
+        image_area = float(width) * float(height)
+
+        return compute_localization_reward(pred_boxes, ref_boxes, image_area=image_area)
 
     def _extract_text(self, completion: Any) -> str:
         """Extract text from completion."""
@@ -365,4 +463,5 @@ __all__ = [
     "compute_caption_reward",
     "compute_diagnosis_reward",
     "compute_localization_reward",
+    "_area_penalty",
 ]

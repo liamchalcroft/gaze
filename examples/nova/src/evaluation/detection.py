@@ -76,13 +76,15 @@ def rescale_and_clamp_box(
     max_x = max(x1, x2)
     max_y = max(y1, y2)
     if max_x > w or max_y > h:
-        # Infer the model's implicit coordinate range
+        # Use uniform scale factor to preserve aspect ratio.
+        # Per-axis scaling distorts the box when only one axis overflows.
         scale_x = w / max_x if max_x > w else 1.0
         scale_y = h / max_y if max_y > h else 1.0
-        x1 *= scale_x
-        x2 *= scale_x
-        y1 *= scale_y
-        y2 *= scale_y
+        scale = min(scale_x, scale_y)
+        x1 *= scale
+        x2 *= scale
+        y1 *= scale
+        y2 *= scale
 
     # Final clamp to be safe
     x1 = max(0.0, min(x1, w))

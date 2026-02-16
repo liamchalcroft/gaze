@@ -677,8 +677,12 @@ def apply_window_level(
     elif center is None or width is None:
         raise ValueError("Must provide either preset or both center and width")
 
-    if width < 1:
-        raise ValueError(f"width must be >= 1, got {width}")
+    cfg = _get_image_config()
+    if width < cfg.min_window_width:
+        raise ValueError(
+            f"width must be >= {cfg.min_window_width}, got {width}. "
+            f"Very narrow windows destroy diagnostic information."
+        )
 
     lower = center - width // 2
     upper = center + width // 2
@@ -720,8 +724,10 @@ def adaptive_equalize(
             f"clip_limit must be in [{cfg.min_clahe_clip_limit}, {cfg.max_clahe_clip_limit}], "
             f"got {clip_limit}"
         )
-    if tile_size < 2:
-        raise ValueError(f"tile_size must be >= 2, got {tile_size}")
+    if tile_size < 2 or tile_size > cfg.max_clahe_tile_size:
+        raise ValueError(
+            f"tile_size must be in [2, {cfg.max_clahe_tile_size}], got {tile_size}"
+        )
 
     gray = np.array(image.convert("L"), dtype=np.float64)
     h, w = gray.shape
@@ -949,13 +955,16 @@ def _require_image(registry: ToolRegistry) -> Image.Image:
 
 
 def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
-    """Auto-normalize pixel coordinates to [0, 1] if all values exceed 1.
+    """Auto-normalize pixel coordinates to [0, 1] if values indicate pixel space.
 
-    Models sometimes pass pixel coordinates (e.g. [200, 150, 380, 350])
-    instead of normalized [0, 1] values. When all 4 box coordinates are > 1,
-    they are clearly pixel values — divide x-coords by width, y-coords by height.
+    Models sometimes pass pixel coordinates (e.g. [200, 150, 380, 350] or
+    [0, 50, 200, 300]) instead of normalized [0, 1] values.
+
+    Detection heuristic: if ANY coordinate exceeds 1.0, the box is in pixel
+    space.  The old check ``all(v > 1 ...)`` missed boxes starting at the
+    image edge where x1=0 or y1=0 — a common case.
     """
-    if all(v > 1 for v in box):
+    if any(v > 1.0 for v in box):
         w, h = image.size
         normalized = [box[0] / w, box[1] / h, box[2] / w, box[3] / h]
         logger.warning(
@@ -970,11 +979,11 @@ def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
 
 
 def _maybe_normalize_point(point: list[float], image: Image.Image) -> list[float]:
-    """Auto-normalize pixel coordinates to [0, 1] if both values exceed 1.
+    """Auto-normalize pixel coordinates to [0, 1] if values indicate pixel space.
 
     Same heuristic as _maybe_normalize_box but for 2-element point arrays.
     """
-    if all(v > 1 for v in point):
+    if any(v > 1.0 for v in point):
         w, h = image.size
         normalized = [point[0] / w, point[1] / h]
         logger.warning(
@@ -1882,6 +1891,7 @@ def create_visual_tools(
                         "type": "integer",
                         "description": "Tile grid size for local processing.",
                         "minimum": 2,
+                        "maximum": cfg.max_clahe_tile_size,
                         "default": 8,
                     },
                 },
@@ -1900,7 +1910,8 @@ def create_visual_tools(
                 parameters={
                     "method": {
                         "type": "string",
-                        "description": "Edge detection method: 'sobel' or 'laplacian'.",
+                        "description": "Edge detection method.",
+                        "enum": ["sobel", "laplacian"],
                         "default": "sobel",
                     }
                 },
@@ -1950,7 +1961,8 @@ def create_visual_tools(
                 parameters={
                     "operation": {
                         "type": "string",
-                        "description": "Operation: 'erode', 'dilate', 'open', or 'close'.",
+                        "description": "Morphological operation to apply.",
+                        "enum": ["erode", "dilate", "open", "close"],
                     },
                     "iterations": {
                         "type": "integer",

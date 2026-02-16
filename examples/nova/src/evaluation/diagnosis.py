@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 
 # Default model for semantic matching - cost-efficient SOTA model via OpenRouter
@@ -8,9 +9,13 @@ import os
 import re
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 from beartype import beartype
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
     "NOVA_SEMANTIC_MATCH_MODEL",
@@ -158,10 +163,62 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class JudgmentRecord:
+    """Record of a single diagnosis matching judgment for audit trails."""
+
+    pred: str
+    ref: str
+    method: str  # "exact_match", "synonym_match", or "llm"
+    verdict: bool
+    model: str = ""
+    raw_responses: tuple[str, ...] = ()
+    num_votes: int = 0
+    vote_counts: tuple[int, int] = (0, 0)  # (yes_count, no_count)
+
+
+@dataclass
+class JudgmentLog:
+    """Accumulates judgment records during an evaluation run."""
+
+    records: list[JudgmentRecord] = field(default_factory=list)
+
+    def add(self, record: JudgmentRecord) -> None:
+        self.records.append(record)
+        logger.debug(
+            "diagnosis_judgment: pred=%r ref=%r method=%s verdict=%s model=%s votes=%s",
+            record.pred,
+            record.ref,
+            record.method,
+            record.verdict,
+            record.model,
+            record.vote_counts,
+        )
+
+    def to_dicts(self) -> list[dict[str, Any]]:
+        """Serialize all records to a list of dicts for JSON persistence."""
+        return [
+            {
+                "pred": r.pred,
+                "ref": r.ref,
+                "method": r.method,
+                "verdict": r.verdict,
+                "model": r.model,
+                "raw_responses": list(r.raw_responses),
+                "num_votes": r.num_votes,
+                "vote_counts": {"yes": r.vote_counts[0], "no": r.vote_counts[1]},
+            }
+            for r in self.records
+        ]
+
+
 @beartype
 async def llm_semantic_match_async(
-    pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL
-) -> bool:
+    pred: str,
+    ref: str,
+    model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
+    num_votes: int = 1,
+) -> tuple[bool, JudgmentRecord]:
     """
     Use LLM semantic matching between prediction and reference diagnosis (async).
 
@@ -172,12 +229,21 @@ async def llm_semantic_match_async(
     Args:
         pred: Predicted diagnosis string.
         ref: Reference/ground truth diagnosis string.
-        model_name: Model to use for semantic matching. Default uses the best
-            available free model on OpenRouter for cost efficiency.
+        model_name: Model to use for semantic matching.
+        num_votes: Number of LLM calls to make. When >1, uses majority vote
+            to mitigate non-determinism. Must be odd for a clear majority.
+
+    Returns:
+        Tuple of (verdict, JudgmentRecord) for audit logging.
 
     Raises:
-        ValueError: If LLM API call fails (semantic matching is required for NOVA evaluation).
+        ValueError: If num_votes < 1 or is even when > 1.
     """
+    if num_votes < 1:
+        raise ValueError(f"num_votes must be >= 1, got {num_votes}")
+    if num_votes > 1 and num_votes % 2 == 0:
+        raise ValueError(f"num_votes must be odd for majority vote, got {num_votes}")
+
     prompt = f"""You are a medical expert evaluating diagnostic predictions.
 
 Your task is to determine if two diagnostic labels refer to the same medical condition,
@@ -197,26 +263,77 @@ or "NO" if they refer to different conditions.
 """
 
     client = _get_semantic_match_client()
-    response = await client.chat.completions.create(
+    messages = [
+        {"role": "system", "content": "You are a medical expert. Respond only with YES or NO."},
+        {"role": "user", "content": prompt},
+    ]
+
+    async def _single_call() -> str:
+        response = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            max_tokens=16,
+            temperature=0.0,
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    if num_votes == 1:
+        raw = await _single_call()
+        verdict = raw.upper() == "YES"
+        record = JudgmentRecord(
+            pred=pred,
+            ref=ref,
+            method="llm",
+            verdict=verdict,
+            model=model_name,
+            raw_responses=(raw,),
+            num_votes=1,
+            vote_counts=(1 if verdict else 0, 0 if verdict else 1),
+        )
+        return verdict, record
+
+    # Majority vote: run N calls concurrently
+    raw_responses = await asyncio.gather(*(_single_call() for _ in range(num_votes)))
+    yes_count = sum(1 for r in raw_responses if r.upper() == "YES")
+    no_count = num_votes - yes_count
+    verdict = yes_count > no_count
+    record = JudgmentRecord(
+        pred=pred,
+        ref=ref,
+        method="llm",
+        verdict=verdict,
         model=model_name,
-        messages=[
-            {"role": "system", "content": "You are a medical expert. Respond only with YES or NO."},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=16,
-        temperature=0.0,
+        raw_responses=tuple(raw_responses),
+        num_votes=num_votes,
+        vote_counts=(yes_count, no_count),
     )
-    content = response.choices[0].message.content or ""
-    return content.strip().upper() == "YES"
+    if yes_count > 0 and no_count > 0:
+        logger.warning(
+            "diagnosis_judgment_split: pred=%r ref=%r votes=%d/%d (yes/no) verdict=%s",
+            pred,
+            ref,
+            yes_count,
+            no_count,
+            verdict,
+        )
+    return verdict, record
 
 
 @beartype
-def llm_semantic_match(pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL) -> bool:
+def llm_semantic_match(
+    pred: str,
+    ref: str,
+    model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
+    num_votes: int = 1,
+) -> tuple[bool, JudgmentRecord]:
     """
     Synchronous wrapper for LLM semantic matching.
 
     Note: This function cannot be called from within an async context.
     Use llm_semantic_match_async directly when in async context.
+
+    Returns:
+        Tuple of (verdict, JudgmentRecord) for audit logging.
 
     Raises:
         RuntimeError: If called from within an async context
@@ -234,7 +351,7 @@ def llm_semantic_match(pred: str, ref: str, model_name: str = DEFAULT_SEMANTIC_M
             "Use llm_semantic_match_async instead."
         )
 
-    return asyncio.run(llm_semantic_match_async(pred, ref, model_name))
+    return asyncio.run(llm_semantic_match_async(pred, ref, model_name, num_votes))
 
 
 @beartype
@@ -242,7 +359,8 @@ async def evaluate_diagnosis_nova_official(
     preds: Sequence[Any | list[Any]],
     refs: Sequence[Any],
     model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
-) -> dict[str, float]:
+    num_votes: int = 1,
+) -> dict[str, Any]:
     """
     Official NOVA diagnosis evaluation using LLM semantic matching (async).
 
@@ -253,21 +371,25 @@ async def evaluate_diagnosis_nova_official(
     Args:
         preds: List of predicted diagnosis or list of predictions (for top-5).
         refs: List of reference diagnoses.
-        model_name: Model to use for semantic matching. Default uses the best
-            available free model on OpenRouter for cost efficiency.
+        model_name: Model to use for semantic matching.
+        num_votes: Number of LLM calls per judgment. When >1, uses majority
+            vote to mitigate non-determinism. Must be odd.
 
     Returns:
-        Dictionary with keys 'top1', 'top5', 'coverage', 'entropy'.
+        Dictionary with keys 'top1', 'top5', 'coverage', 'entropy', and
+        'judgment_log' (list of dicts for post-hoc auditing).
 
     Raises:
         ValueError: If preds and refs have different lengths.
     """
     n = len(refs)
     if n == 0:
-        return {"top1": 0.0, "top5": 0.0, "coverage": 0.0, "entropy": 0.0}
+        return {"top1": 0.0, "top5": 0.0, "coverage": 0.0, "entropy": 0.0, "judgment_log": []}
 
     if len(preds) != n:
         raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {n}")
+
+    judgment_log = JudgmentLog()
 
     # Collect all (pred, ref) pairs that need LLM matching, then run in parallel.
     all_preds: list[Any] = []
@@ -286,9 +408,20 @@ async def evaluate_diagnosis_nova_official(
 
     async def _eval_single(pred: str, ref: str) -> bool:
         if exact_diagnosis_match(pred, ref):
+            # Determine which method matched for the log
+            pred_norm = normalize_diagnosis_string(pred)
+            ref_norm = normalize_diagnosis_string(ref)
+            method = "exact_match" if pred_norm == ref_norm else "synonym_match"
+            judgment_log.add(
+                JudgmentRecord(pred=pred, ref=ref, method=method, verdict=True)
+            )
             return True
         async with sem:
-            return await llm_semantic_match_async(pred, ref, model_name)
+            verdict, record = await llm_semantic_match_async(
+                pred, ref, model_name, num_votes
+            )
+            judgment_log.add(record)
+            return verdict
 
     async def _eval_item(item: tuple[int, bool, Any, Any]) -> tuple[bool, bool]:
         """Return (top1_match, top5_match) for one sample."""
@@ -312,7 +445,7 @@ async def evaluate_diagnosis_nova_official(
     top5_count = sum(1 for _, t5 in results_list if t5)
 
     # Calculate metrics
-    results = {
+    results: dict[str, Any] = {
         "top1": top1_count / n,
         "top5": top5_count / n,
     }
@@ -332,5 +465,18 @@ async def evaluate_diagnosis_nova_official(
         entropy -= p_i * math.log2(p_i)
 
     results["entropy"] = entropy
+    results["judgment_log"] = judgment_log.to_dicts()
+
+    total = len(judgment_log.records)
+    exact = sum(1 for r in judgment_log.records if r.method == "exact_match")
+    synonym = sum(1 for r in judgment_log.records if r.method == "synonym_match")
+    llm = sum(1 for r in judgment_log.records if r.method == "llm")
+    logger.info(
+        "diagnosis_eval_complete: total=%d exact_match=%d synonym_match=%d llm=%d",
+        total,
+        exact,
+        synonym,
+        llm,
+    )
 
     return results

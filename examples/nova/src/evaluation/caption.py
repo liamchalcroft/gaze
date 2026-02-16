@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import re
 from collections.abc import Sequence
 
 import nltk
@@ -63,6 +64,25 @@ def _cached_word_tokenize(text: str) -> tuple[str, ...]:
     return tuple(word_tokenize(text))
 
 
+_WORD_PATTERN = re.compile(r"\b[\w][\w-]*[\w]\b|\b\w\b")
+
+
+def _extract_keyword_tokens(text: str) -> set[str]:
+    """Extract keyword tokens from text, splitting hyphenated compounds.
+
+    "T2-weighted axial FLAIR" yields {"t2-weighted", "t2", "weighted", "axial", "flair"}.
+    This ensures that both the compound term and its parts can match keyword sets.
+    """
+    tokens: set[str] = set()
+    for match in _WORD_PATTERN.finditer(text.lower()):
+        word = match.group()
+        tokens.add(word)
+        # Also add hyphen-split sub-tokens for compound terms
+        if "-" in word:
+            tokens.update(word.split("-"))
+    return tokens
+
+
 @beartype
 def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, float | None]:
     """Evaluate generated captions using multiple metrics.
@@ -89,8 +109,8 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {len(refs)}")
     bleu = sacrebleu.corpus_bleu(preds, [refs])
 
-    _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=False)
-    # Raw BERTScore F1 is in [0, 1]; scale to [0, 100] for internal use
+    _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
+    # Baseline-rescaled BERTScore F1 is in [0, 1]; scale to [0, 100] for internal use
     bert_f1_score = float(f1_scores.mean()) * 100
 
     # METEOR calculation with proper tokenization
@@ -154,8 +174,11 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     fn = 0  # False negatives for binary F1
 
     for p, r in zip(preds, refs, strict=True):
-        p_words = {w.lower().strip(".,;:!?()[]") for w in p.split()}
-        r_words = {w.lower().strip(".,;:!?()[]") for w in r.split()}
+        # Extract word tokens and also split hyphenated terms into components.
+        # "T2-weighted" yields {"t2-weighted", "t2", "weighted"} so that
+        # both the compound and its parts can match keyword sets.
+        p_words = _extract_keyword_tokens(p)
+        r_words = _extract_keyword_tokens(r)
 
         # Modality F1
         p_mod = p_words & modality_terms

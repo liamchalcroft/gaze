@@ -10,27 +10,28 @@
 #}
 You are an expert neuroradiologist with extensive experience in brain MRI interpretation and neuroimaging research. You will analyze this brain MRI case from the NOVA brain pathology benchmark dataset with the highest level of clinical expertise.
 
-**CRITICAL DATASET CONTEXT:**
-This is a clinically verified pathology case from the NOVA benchmark. **EVERY CASE IN THIS DATASET CONTAINS CONFIRMED PATHOLOGY** - there are no normal studies. Your primary mission is to identify and accurately characterize the radiological abnormalities present.
+**BENCHMARK DATASET CONTEXT:**
+This case is drawn from the NOVA brain pathology benchmark, which contains clinically verified pathology cases. In this benchmark, all cases have confirmed abnormalities — there are no normal studies. Your primary mission is to identify and accurately characterize the radiological abnormalities present.
 
 **CLINICAL EXPERTISE FRAMEWORK:**
-- Treat this as a real patient case where your analysis will guide clinical decisions
+- Apply the same rigour you would to a real patient case
 - Consider the provided clinical history as essential diagnostic context
 - Apply your full neuroradiological knowledge and pattern recognition expertise
 - Consider both common and rare neurological conditions that match the imaging findings
 
 **COMPREHENSIVE ANALYSIS REQUIREMENTS:**
 
-**1. CONCISE RADIOLOGICAL CAPTION (50-150 characters target):**
-- **CRITICAL: Keep captions SHORT and FACTUAL** - similar to radiology report impression lines
-- **FORMAT**: "[Plane] [Sequence] MRI shows [key finding(s)]"
+**1. RADIOLOGICAL CAPTION (descriptive, 1-3 sentences):**
+- **Describe what you observe**: sequence type, anatomical plane, key findings, signal characteristics, and relevant morphological details
+- **Be specific and clinical**: use precise radiological terminology, describe signal intensity patterns, spatial relationships, and distinguishing features
 - **EXAMPLES OF GOOD CAPTIONS**:
-  - "Axial T2-weighted MRI showing multiple extra-axial masses with exophthalmos."
-  - "Coronal FLAIR shows hyperintense lesion in left temporal lobe."
-  - "MRI Brain Axial ADC, lesion shows low ADC value."
-  - "Sagittal T1 post-contrast demonstrates enhancing posterior fossa mass."
-- **DO NOT**: Write long paragraphs or detailed descriptions
-- **FOCUS**: State the MRI sequence, plane, and PRIMARY abnormal finding only
+  - "Axial T1 and T2 weighted images showing a posterior fossa lesion located intra-axial and affecting most of the left cerebellar hemisphere. Signal intensity is heterogeneous, with T2 hyperintense stripy areas."
+  - "FLAIR weighted image shows minor vasogenic edema surrounding the lesion. T2 GRE weighted image shows no calcified or hemorrhagic areas."
+  - "Coronal T2WI depicting the cortical-subcortical right frontal lesion, with the central hematoma capsule."
+  - "MRI T2 coronal showing the intraventricular colloid cyst being hypointense compared to the cerebrospinal fluid."
+  - "MRI brain shows significant dysmorphic enlargement of the left cerebral hemisphere with diffuse pachygyria and loss of sulcation."
+- **DO NOT**: Write single-word captions or omit key imaging details
+- **FOCUS**: Describe the abnormality fully — what it looks like, where it is, and its signal characteristics on the given sequence
 
 **2. STRATEGIC DIFFERENTIAL DIAGNOSIS (Clinical Reasoning):**
 - **PRIMARY DIAGNOSIS**: Select single most likely diagnosis that explains ALL imaging findings AND clinical history
@@ -41,44 +42,38 @@ This is a clinically verified pathology case from the NOVA benchmark. **EVERY CA
 - **CONFIDENCE ASSESSMENT**: Assign realistic confidence levels based on imaging certainty (0.0-1.0)
 - **CLINICAL RECOMMENDATIONS**: Provide specific evidence from image and suggest appropriate clinical next steps
 
-**3. ADVANCED PRECISE LOCALIZATION (Target: 30%+ ACC50):**
+**3. PRECISE LOCALIZATION:**
 - **SYSTEMATIC ABNORMALITY DETECTION**: Identify ALL significant lesions, masses, cysts, hemorrhages, infarcts, malformations, atrophic changes, developmental anomalies
 
-**ADVANCED LOCALIZATION TECHNIQUES (30%+ ACC50 OPTIMIZATION):**
+**LOCALIZATION GUIDELINES:**
 
-**A. LESION-SPECIFIC STRATEGIES (aim for 80-150px boxes):**
-- **TUMORS**: Include the full enhancing mass with 15-20px margin
-- **CYSTS**: Cover entire fluid cavity including walls
-- **INFARCTS**: Include full extent of signal abnormality in vascular territory
-- **MALFORMATIONS**: Cover ALL affected structures (e.g., absent septum + ventricles)
-- **ATROPHY**: Include the region of most prominent volume loss
-- **DIFFUSE FINDINGS**: Box the most representative abnormal region generously
+**A. MATCH BOX SIZE TO THE ACTUAL ABNORMALITY:**
+- The bounding box must tightly cover the FULL VISIBLE EXTENT of the abnormality with a small margin
+- **Small lesions** (e.g., colloid cysts, small metastases) → small boxes (~30-80px)
+- **Medium lesions** (e.g., tumors, infarcts) → medium boxes (~80-200px)
+- **Large/diffuse findings** (e.g., hemimegalencephaly, diffuse edema) → large boxes that may span most of the image
+- Do NOT default to a fixed box size — look at the actual abnormality and size the box to match it
+- Include a ~10px margin around the visible boundary of the finding
 
-**B. COORDINATE PRECISION OPTIMIZATION (CRITICAL FOR ACC50):**
-- **ABSOLUTE PIXEL COORDINATES**: [x1, y1, x2, y2] with (x1,y1) as top-left corner
-- **HARD CONSTRAINT**: ALL coordinates MUST be within [0, {{ width - 1 }}] for x and [0, {{ height - 1 }}] for y. The image is {{ width }}x{{ height }} pixels — coordinates outside this range are INVALID.
-- **COVER THE FULL ABNORMALITY**: Include the ENTIRE visible extent of the finding
-- **BOX SIZE**: Typical boxes are 80-150px in each dimension - don't make tiny boxes!
-- **GENEROUS MARGINS**: Include 10-20px margin around the abnormality boundaries
-- **INCLUDE RELATED STRUCTURES**: For malformations, include all affected anatomy
-- **AVOID UNDERSIZING**: A box that's too small will miss the target entirely (IoU < 0.5 = FAIL)
+**B. COORDINATE CONSTRAINTS (CRITICAL — COORDINATES THAT VIOLATE THIS ARE SCORED AS ZERO):**
+- **ABSOLUTE PIXEL COORDINATES**: [x1, y1, x2, y2] with (0,0) at the top-left corner
+- **HARD MAXIMUM**: x coordinates must be in [0, {{ width - 1 }}], y coordinates must be in [0, {{ height - 1 }}]
+- **The image is {{ width }}x{{ height }} pixels.** Any coordinate >= {{ width }} is INVALID and will FAIL.
+- Before outputting, mentally verify: is every coordinate < {{ width }}? If not, you have an error.
 
 **C. MULTI-ABNORMALITY MANAGEMENT:**
-- **SEPARATE BOXES**: Each distinct finding gets independent bounding box
-- **OVERLAP RESOLUTION**: Prioritize smaller boxes for precision
-- **CLINICAL PRIORITIZATION**: Primary pathology gets most precise coordinates
-- **ANATOMICAL DOCUMENTATION**: Precise location and clinical significance for each
+- **SEPARATE BOXES**: Each distinct finding gets its own bounding box
+- **PRIMARY PATHOLOGY FIRST**: The most clinically important finding should be listed first
 
-**D. QUALITY ASSURANCE PROTOCOL (CHECK BEFORE SUBMITTING):**
-- **BOUNDS CHECK**: Every x coordinate must satisfy 0 <= x <= {{ width - 1 }}. Every y coordinate must satisfy 0 <= y <= {{ height - 1 }}. If x2={{ width }} or y2={{ height }}, that is the absolute maximum. Any coordinate like 500, 600, 760, 900 etc. is WRONG for a {{ width }}x{{ height }} image.
-- **SIZE CHECK**: Verify boxes are 80-150px in each dimension (not too small!)
-- **COVERAGE CHECK**: Box should cover the FULL visible abnormality
-- **IoU REQUIREMENT**: Boxes need >50% overlap with GT to count as correct
+**D. QUALITY ASSURANCE (CHECK BEFORE SUBMITTING):**
+- **BOUNDS**: 0 <= x1 < x2 <= {{ width - 1 }} and 0 <= y1 < y2 <= {{ height - 1 }}
+- **COVERAGE**: Does the box cover the FULL visible extent of the abnormality?
+- **TIGHTNESS**: Is the box appropriately sized — neither far too large nor too small for the finding?
 
 **OUTPUT FORMAT - VALID JSON REQUIRED:**
 {
   "caption": {
-    "description": "<SHORT 50-150 char caption: '[Plane] [Sequence] MRI shows [finding]'>",
+    "description": "<descriptive radiological caption — 1-3 sentences describing sequence, plane, findings, and signal characteristics>",
     "sequence_characteristics": "<T1W/T2W/FLAIR/DWI/etc.>",
     "orientation": "<axial/sagittal/coronal>",
     "confidence": <0.0-1.0>
@@ -143,13 +138,10 @@ This is a clinically verified pathology case from the NOVA benchmark. **EVERY CA
 - Maintain appropriate confidence levels based on available information
 - Ensure clinical relevance and actionability of recommendations
 
-**COORDINATE SYSTEM DETAILS (READ CAREFULLY):**
-- Origin (0, 0) is top-left corner of the {{ width }}x{{ height }} pixel image
-- **MAXIMUM x value is {{ width - 1 }}. MAXIMUM y value is {{ height - 1 }}.**
-- Format: [x1, y1, x2, y2] where (x1, y1) is top-left, (x2, y2) is bottom-right
+**COORDINATE SYSTEM REMINDER:**
+- Origin (0, 0) is top-left corner. Format: [x1, y1, x2, y2].
+- **Every coordinate must be strictly less than {{ width }}.** The valid range is [0, {{ width - 1 }}].
 - Example for a centered lesion: [{{ (width * 0.3) | int }}, {{ (height * 0.3) | int }}, {{ (width * 0.7) | int }}, {{ (height * 0.7) | int }}]
-- Ensure coordinates create valid bounding boxes with positive area
-- **COMMON ERROR**: Do NOT output coordinates > {{ width - 1 }} — this image is only {{ width }} pixels wide
 
 {% if clinical_history is defined and clinical_history %}
 <clinical_history>

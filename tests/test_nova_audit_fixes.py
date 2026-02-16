@@ -219,14 +219,22 @@ class TestEvaluateAsyncWrapper:
     def test_evaluate_async_is_coroutine_function(self) -> None:
         import asyncio
 
-        from src.evaluation import evaluate_async
+        try:
+            from src.evaluation import evaluate_async
+        except (ImportError, ModuleNotFoundError):
+            pytest.skip("torch not installed")
+            return
 
         assert asyncio.iscoroutinefunction(evaluate_async)
 
     def test_evaluate_is_sync(self) -> None:
         import asyncio
 
-        from src.evaluation import evaluate
+        try:
+            from src.evaluation import evaluate
+        except (ImportError, ModuleNotFoundError):
+            pytest.skip("torch not installed")
+            return
 
         assert not asyncio.iscoroutinefunction(evaluate)
 

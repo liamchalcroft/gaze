@@ -14,11 +14,20 @@ from PIL import Image
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.tools.visual import apply_intensity_threshold
 
-from examples.nova.src.evaluation.diagnosis import (
-    exact_diagnosis_match,
-    normalize_diagnosis_string,
-)
+# Guard imports that chain through evaluation/__init__.py → detection.py → torch
+try:
+    from examples.nova.src.evaluation.diagnosis import (
+        exact_diagnosis_match,
+        normalize_diagnosis_string,
+    )
+
+    _HAS_DIAGNOSIS = True
+except (ImportError, ModuleNotFoundError):
+    _HAS_DIAGNOSIS = False
+
 from examples.nova.src.schemas import validate_nova_response
+
+_skip_no_torch = pytest.mark.skipif(not _HAS_DIAGNOSIS, reason="torch not installed")
 
 
 # =====================================================================
@@ -26,6 +35,7 @@ from examples.nova.src.schemas import validate_nova_response
 # =====================================================================
 
 
+@_skip_no_torch
 class TestDiagnosisMatchSafety:
     """Verify that clinically distinct diagnoses are NOT conflated."""
 
@@ -85,6 +95,7 @@ class TestDiagnosisMatchSafety:
         assert exact_diagnosis_match("shearing injury", "diffuse axonal injury") is True
 
 
+@_skip_no_torch
 class TestDiagnosisNormalization:
     """Test normalization correctness."""
 
