@@ -44,7 +44,7 @@ async def test_search_web_tool_formats_results() -> None:
                 publication_date="2024",
                 content_type="article",
                 medical_relevance=0.9,
-                extracted_entities=["glioblastoma"],
+                extracted_entities=("glioblastoma",),
                 open_access=True,
             )
         ]

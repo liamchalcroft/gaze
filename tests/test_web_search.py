@@ -307,7 +307,7 @@ class TestConcurrentSummaryAndAbstracts:
         """
         import asyncio
         import time
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import patch
 
         engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.0))
 
@@ -586,15 +586,14 @@ class TestRateLimitSingleDelay:
     async def test_single_delay_before_concurrent_fetches(self) -> None:
         """Verify only one rate-limit sleep before the concurrent esummary/efetch."""
         import asyncio
-        import time
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import patch
 
         engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.2))
 
         sleep_calls: list[float] = []
         original_sleep = asyncio.sleep
 
-        async def tracking_sleep(delay: float, *args: object, **kwargs: object) -> None:
+        async def tracking_sleep(delay: float) -> None:
             sleep_calls.append(delay)
             await original_sleep(delay)
 
@@ -609,9 +608,7 @@ class TestRateLimitSingleDelay:
             patch.object(engine, "_fetch_summary", side_effect=fake_fetch_summary),
             patch.object(engine, "_fetch_abstracts", side_effect=fake_fetch_abstracts),
         ):
-            start = time.monotonic()
             await engine._fetch_article_details(["12345"])
-            elapsed = time.monotonic() - start
 
         # Should have exactly one rate-limit sleep (0.2s), not two
         rate_limit_sleeps = [s for s in sleep_calls if s == 0.2]
