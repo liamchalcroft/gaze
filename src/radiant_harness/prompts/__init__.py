@@ -114,6 +114,10 @@ def load_prompt(
         ValueError: If mode directory doesn't exist
         TemplateError: If template file doesn't exist or rendering fails
     """
+    valid_modes = [m.value for m in AnalysisMode]
+    if mode not in valid_modes:
+        raise ValueError(f"Unknown mode: {mode!r}. Valid modes: {valid_modes}")
+
     mode_dir = prompts_dir / mode
     if not mode_dir.exists():
         raise ValueError(f"Mode directory not found: {mode_dir}")

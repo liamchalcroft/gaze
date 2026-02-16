@@ -114,11 +114,18 @@ def test_load_template_syntax_error(tmp_path: Path) -> None:
         load_template(tmp_path / "bad.jinja", {})
 
 
+def test_load_prompt_rejects_invalid_mode(tmp_path: Path) -> None:
+    from radiant_harness.prompts import load_prompt
+
+    with pytest.raises(ValueError, match="Unknown mode"):
+        load_prompt(tmp_path, "system.jinja", "nonexistent_mode", {})
+
+
 def test_load_prompt_missing_mode_dir(tmp_path: Path) -> None:
     from radiant_harness.prompts import load_prompt
 
     with pytest.raises(ValueError, match="Mode directory not found"):
-        load_prompt(tmp_path, "system.jinja", "nonexistent_mode", {})
+        load_prompt(tmp_path, "system.jinja", "agentic", {})
 
 
 # ---------------------------------------------------------------------------
