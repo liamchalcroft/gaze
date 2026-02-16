@@ -564,7 +564,7 @@ class TestAdaptiveEqualize:
 
     def test_tile_size_below_2_raises(self) -> None:
         img = _make_image(64, 64)
-        with pytest.raises(ValueError, match="tile_size must be >= 2"):
+        with pytest.raises(ValueError, match="tile_size must be in"):
             adaptive_equalize(img, tile_size=1, config=_CFG)
 
     def test_gradient_image_equalization(self) -> None:

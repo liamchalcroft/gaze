@@ -1208,7 +1208,12 @@ async def _execute_reset(registry: ToolRegistry) -> ToolResult:
     image_manager.reset_to_original()
 
     current = _get_current_image(registry)
-    encoded = await asyncio.to_thread(encode_image, current)
+
+    # Reuse cached encoding of the original image when available
+    encoded = image_manager.original_encoding
+    if encoded is None:
+        encoded = await asyncio.to_thread(encode_image, current)
+        image_manager.original_encoding = encoded
 
     return ToolResult(
         tool_name="reset",
@@ -1843,7 +1848,8 @@ def create_visual_tools(
                     },
                     "preset": {
                         "type": "string",
-                        "description": f"Clinical preset: {presets_list}",
+                        "description": "Clinical window preset name.",
+                        "enum": sorted(WINDOW_PRESETS.keys()),
                         "default": None,
                     },
                 },
@@ -2091,7 +2097,8 @@ def create_visual_tools(
                     },
                     "color": {
                         "type": "string",
-                        "description": "Box color (e.g. 'red', 'green', 'yellow').",
+                        "description": "Box outline color.",
+                        "enum": ["red", "green", "yellow", "blue", "white", "cyan", "magenta"],
                         "default": "red",
                     },
                     "label": {

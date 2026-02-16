@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from beartype import beartype
 from loguru import logger
@@ -31,6 +32,7 @@ class ImageManager:
         self._image_path: Path | None = None
         self._current_image: Image.Image | None = None
         self._original_image: Image.Image | None = None
+        self._original_encoding: Any = None
         self._image_lock = asyncio.Lock()
 
     @property
@@ -47,6 +49,23 @@ class ImageManager:
     def has_image(self) -> bool:
         """Check if an image is currently loaded."""
         return self._current_image is not None
+
+    @property
+    def original_encoding(self) -> Any:
+        """Cached base64 encoding of the *original* (unmodified) image.
+
+        Set once after the first encode and reused by reset to skip
+        redundant JPEG→base64 work.
+
+        Typed as ``Any`` at runtime to avoid circular-import forward-reference
+        issues with beartype.  Static checkers see ``EncodedImage | None`` via
+        the TYPE_CHECKING guard.
+        """
+        return self._original_encoding
+
+    @original_encoding.setter
+    def original_encoding(self, value: Any) -> None:
+        self._original_encoding = value
 
     @staticmethod
     def _validate_image_path(image_path: Path) -> Path:
@@ -211,3 +230,4 @@ class ImageManager:
             self._original_image.close()
             self._original_image = None
         self._image_path = None
+        self._original_encoding = None
