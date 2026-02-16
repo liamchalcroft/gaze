@@ -841,3 +841,300 @@ async def test_parallel_execution_of_image_and_independent_tools() -> None:
     assert _independent_tool_started_at - start < 0.04, (
         "Independent tool should start concurrently with image tool, not after"
     )
+
+
+# --- Patch Set #3: string continue coercion, idle-tool escalation, last-turn salvage ---
+
+
+class StringContinueAdapter(AdapterProtocol):
+    """Adapter that returns 'continue' as a string instead of bool."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        if self.calls == 1:
+            # Return string "true" — model wants to continue
+            return (
+                '{"continue": "true", "result": "thinking"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+        # Return string "false" — model is done
+        return (
+            '{"continue": "false", "result": "done"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_string_continue_coerced_to_bool() -> None:
+    """String 'true'/'false' in 'continue' field is coerced to bool."""
+    adapter = StringContinueAdapter()
+
+    class StringContinueProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+    processor = StringContinueProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    # Model returned string "false" on turn 2 — coerced and accepted
+    assert result.final_response["result"] == "done"
+    assert adapter.calls == 2
+
+
+class IdleToolAdapter(AdapterProtocol):
+    """Adapter that returns continue:true JSON without ever requesting tools."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        # Always return continue:true with no tool calls
+        return (
+            '{"continue": true, "result": "still thinking"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_idle_tool_escalation_force_accepts_after_nudge() -> None:
+    """After idle-tool nudge, the next idle turn force-accepts the response."""
+    adapter = IdleToolAdapter()
+
+    class IdleToolProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=10,  # plenty of turns — should terminate early
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = IdleToolProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    # _IDLE_TOOL_TURNS_LIMIT=3, so:
+    # Turn 1,2: continue:true, no tools — under threshold
+    # Turn 3: idle threshold hit, nudge injected
+    # Turn 4: still no tools, force-accept
+    assert adapter.calls == 4
+    assert result.final_response["result"] == "still thinking"
+    assert result.final_response["continue"] is False
+
+
+class LastTurnSalvageAdapter(AdapterProtocol):
+    """Adapter that returns both tool calls AND valid JSON text on the last turn."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        # Return BOTH valid JSON text AND tool calls
+        return (
+            '{"continue": false, "result": "salvaged"}',
+            [{"id": "call-1", "name": "echo", "arguments": {"value": 1}}],
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_last_turn_salvages_valid_text_alongside_tool_calls() -> None:
+    """When model returns tool calls + valid JSON on last turn, salvage the text."""
+    adapter = LastTurnSalvageAdapter()
+
+    class SalvageProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = SalvageProcessor()
+    # Previously this would raise AgenticProcessingError;
+    # now it salvages the valid text response.
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "salvaged"
+    assert result.final_response["continue"] is False
+    assert adapter.calls == 1
+
+
+class LastTurnNoSalvageAdapter(AdapterProtocol):
+    """Adapter that returns tool calls + invalid text on the last turn."""
+
+    supports_multipart_tool_content: bool = True
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        # Tool calls + empty text — nothing to salvage
+        return (
+            "",
+            [{"id": "call-1", "name": "echo", "arguments": {"value": 1}}],
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_last_turn_still_raises_when_text_not_salvageable() -> None:
+    """When model returns tool calls + no valid JSON text, still raises."""
+
+    class NoSalvageProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=LastTurnNoSalvageAdapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = NoSalvageProcessor()
+    with pytest.raises(AgenticProcessingError) as exc:
+        await processor.analyze(images=None, metadata={})
+
+    assert "final turn" in str(exc.value).lower()
+    assert exc.value.partial_response is not None
+    assert exc.value.partial_response["error"] == "tools_unavailable"

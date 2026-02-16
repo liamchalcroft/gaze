@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10, <4.0"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_python_implementation != 'PyPy' and sys_platform == 'darwin'",
@@ -4006,6 +4006,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "beartype" },
+    { name = "defusedxml" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "minijinja" },
@@ -4067,6 +4068,7 @@ requires-dist = [
     { name = "bert-score", marker = "extra == 'nova'" },
     { name = "datasets", marker = "extra == 'medmarks'", specifier = ">=2.0.0" },
     { name = "datasets", marker = "extra == 'nova'" },
+    { name = "defusedxml", specifier = ">=0.7,<1" },
     { name = "httpx", specifier = ">=0.25,<1" },
     { name = "huggingface-hub", marker = "extra == 'nova'" },
     { name = "loguru", specifier = ">=0.7,<1" },

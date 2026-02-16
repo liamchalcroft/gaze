@@ -205,7 +205,7 @@ class TestRankingNormalization:
             publication_date="2025",
             content_type="review",
             medical_relevance=0.9,
-            extracted_entities=["glioblastoma", "mri"],
+            extracted_entities=("glioblastoma", "mri"),
             open_access=True,
         )
         # Result with lower relevance signals
@@ -219,7 +219,7 @@ class TestRankingNormalization:
             publication_date="2005",
             content_type="article",
             medical_relevance=0.5,
-            extracted_entities=[],
+            extracted_entities=(),
             open_access=False,
         )
 
@@ -345,7 +345,7 @@ class TestConcurrentSummaryAndAbstracts:
 
 
 class TestXMLParsing:
-    """Tests for the ET-based XML abstract parser."""
+    """Tests for the defusedxml-based XML abstract parser."""
 
     def test_parse_malformed_xml_returns_empty(self) -> None:
         """Malformed XML should not crash, just return empty dict."""
@@ -378,6 +378,124 @@ class TestXMLParsing:
         result = engine._parse_abstracts_xml(xml)
         assert "99999" in result
         assert "Signal > noise ratio was < 0.5." in result["99999"]
+
+    def test_xxe_entity_expansion_rejected(self) -> None:
+        """XML with external entity declarations must be rejected (XXE defense).
+
+        defusedxml blocks DTD entity definitions by default, preventing
+        attacks that could read local files or trigger SSRF.
+        """
+        engine = PubMedSearchEngine()
+        xxe_xml = """<?xml version="1.0"?>
+        <!DOCTYPE foo [
+          <!ENTITY xxe SYSTEM "file:///etc/passwd">
+        ]>
+        <PubmedArticleSet>
+          <PubmedArticle>
+            <MedlineCitation>
+              <PMID>00001</PMID>
+              <Article>
+                <Abstract>
+                  <AbstractText>&xxe;</AbstractText>
+                </Abstract>
+              </Article>
+            </MedlineCitation>
+          </PubmedArticle>
+        </PubmedArticleSet>
+        """
+        result = engine._parse_abstracts_xml(xxe_xml)
+        assert result == {}
+
+    def test_billion_laughs_rejected(self) -> None:
+        """XML billion-laughs (entity expansion bomb) must be rejected.
+
+        defusedxml blocks recursive entity expansion that could cause
+        exponential memory consumption (denial of service).
+        """
+        engine = PubMedSearchEngine()
+        bomb_xml = """<?xml version="1.0"?>
+        <!DOCTYPE lolz [
+          <!ENTITY lol "lol">
+          <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+          <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+        ]>
+        <PubmedArticleSet>
+          <PubmedArticle>
+            <MedlineCitation>
+              <PMID>00002</PMID>
+              <Article>
+                <Abstract>
+                  <AbstractText>&lol3;</AbstractText>
+                </Abstract>
+              </Article>
+            </MedlineCitation>
+          </PubmedArticle>
+        </PubmedArticleSet>
+        """
+        result = engine._parse_abstracts_xml(bomb_xml)
+        assert result == {}
+
+
+class TestPubMedUserAgent:
+    """PubMed must identify itself honestly per NCBI E-utilities guidelines."""
+
+    def test_ua_contains_tool_name(self) -> None:
+        """User-Agent header must include 'radiant_harness'."""
+        engine = PubMedSearchEngine()
+        headers = engine._get_headers()
+        assert "radiant_harness" in headers["User-Agent"]
+
+    def test_ua_contains_version(self) -> None:
+        """User-Agent header must include the package version."""
+        import radiant_harness
+
+        engine = PubMedSearchEngine()
+        headers = engine._get_headers()
+        assert radiant_harness.__version__ in headers["User-Agent"]
+
+    def test_ua_does_not_impersonate_browser(self) -> None:
+        """PubMed UA must not contain browser-impersonation strings."""
+        engine = PubMedSearchEngine()
+        headers = engine._get_headers()
+        ua = headers["User-Agent"]
+        assert "Mozilla" not in ua
+        assert "Chrome" not in ua
+        assert "Safari" not in ua
+
+    def test_ua_includes_email_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """UA should include mailto: when NCBI_EMAIL is configured."""
+        from radiant_harness.retrieval import web_search
+
+        # Clear the lru_cache so the monkeypatched env var takes effect
+        web_search._get_ncbi_email.cache_clear()
+        monkeypatch.setenv("NCBI_EMAIL", "researcher@example.edu")
+        try:
+            engine = PubMedSearchEngine()
+            headers = engine._get_headers()
+            assert "mailto:researcher@example.edu" in headers["User-Agent"]
+        finally:
+            web_search._get_ncbi_email.cache_clear()
+
+    def test_ua_omits_email_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """UA should not contain 'mailto' when NCBI_EMAIL is not set."""
+        from radiant_harness.retrieval import web_search
+
+        web_search._get_ncbi_email.cache_clear()
+        monkeypatch.delenv("NCBI_EMAIL", raising=False)
+        try:
+            engine = PubMedSearchEngine()
+            headers = engine._get_headers()
+            assert "mailto" not in headers["User-Agent"]
+        finally:
+            web_search._get_ncbi_email.cache_clear()
+
+    def test_accepts_json_and_xml(self) -> None:
+        """Accept header must include JSON and XML for E-utilities responses."""
+        engine = PubMedSearchEngine()
+        headers = engine._get_headers()
+        accept = headers["Accept"]
+        assert "application/json" in accept
+        assert "xml" in accept
 
 
 class TestWordBoundaryRanking:
@@ -413,3 +531,90 @@ class TestWordBoundaryRanking:
         # The result with actual "CT" should rank higher
         assert ranked[0].url.endswith("/444/")
         assert ranked[0].ranking_score > ranked[1].ranking_score
+
+    def test_entity_match_uses_word_boundary(self) -> None:
+        """Entity 'ct' must not match substring in query 'duct ectasia'."""
+        manager = WebSearchManager()
+
+        result_ct_entity = SearchResult(
+            title="Some imaging study",
+            url="https://pubmed.ncbi.nlm.nih.gov/666/",
+            content="CT scan of the chest.",
+            snippet="CT scan",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=("ct",),
+        )
+        result_no_entity = SearchResult(
+            title="Some other study",
+            url="https://pubmed.ncbi.nlm.nih.gov/777/",
+            content="Another study.",
+            snippet="Other",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=(),
+        )
+
+        # Query "duct ectasia" contains "ct" as a substring but NOT as a word
+        ranked = manager._rank_results(
+            [result_ct_entity, result_no_entity],
+            query="duct ectasia",
+            search_type="general",
+        )
+
+        # Entity "ct" should NOT match "duct ectasia" — scores should be equal
+        # (both have same reliability, no other differentiating signals)
+        assert ranked[0].ranking_score == ranked[1].ranking_score
+
+
+class TestExtractMedicalEntitiesReturnType:
+    """_extract_medical_entities must return tuple[str, ...] matching SearchResult."""
+
+    def test_returns_tuple(self) -> None:
+        engine = PubMedSearchEngine()
+        result = engine._extract_medical_entities("brain MRI shows tumor and edema")
+        assert isinstance(result, tuple)
+        assert "tumor" in result
+        assert "mri" in result
+        assert "edema" in result
+
+
+class TestRateLimitSingleDelay:
+    """Rate-limit delay must happen once before gather, not inside each fetch."""
+
+    @pytest.mark.asyncio
+    async def test_single_delay_before_concurrent_fetches(self) -> None:
+        """Verify only one rate-limit sleep before the concurrent esummary/efetch."""
+        import asyncio
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.2))
+
+        sleep_calls: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def tracking_sleep(delay: float, *args: object, **kwargs: object) -> None:
+            sleep_calls.append(delay)
+            await original_sleep(delay)
+
+        async def fake_fetch_summary(pmid_list: list[str]) -> dict:
+            return {"result": {}}
+
+        async def fake_fetch_abstracts(pmid_list: list[str]) -> dict[str, str]:
+            return {}
+
+        with (
+            patch("asyncio.sleep", side_effect=tracking_sleep),
+            patch.object(engine, "_fetch_summary", side_effect=fake_fetch_summary),
+            patch.object(engine, "_fetch_abstracts", side_effect=fake_fetch_abstracts),
+        ):
+            start = time.monotonic()
+            await engine._fetch_article_details(["12345"])
+            elapsed = time.monotonic() - start
+
+        # Should have exactly one rate-limit sleep (0.2s), not two
+        rate_limit_sleeps = [s for s in sleep_calls if s == 0.2]
+        assert len(rate_limit_sleeps) == 1, (
+            f"Expected 1 rate-limit sleep, got {len(rate_limit_sleeps)}: {sleep_calls}"
+        )

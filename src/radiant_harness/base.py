@@ -47,6 +47,14 @@ _MAX_TOOL_CONTENT_CHARS = 8_000
 # Regex for ASCII/Unicode control characters (except newline/tab).
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
+# Turns with zero tool calls before force-finalizing in agentic mode.
+# Prevents wasting tokens when the model ignores available tools.
+_IDLE_TOOL_TURNS_LIMIT = 3
+
+# Tools that modify the image coordinate space. After these, bounding box
+# coordinates no longer correspond to the original image.
+_COORD_MODIFYING_TOOLS = frozenset({"crop", "zoom"})
+
 
 def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
     """Sanitize tool result text before injecting into the LLM conversation.
@@ -62,16 +70,20 @@ def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHAR
     return f"[Tool Result - External Data]\n{text}\n[End Tool Result]"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ImageInput:
     """Represents a single image input with optional label.
+
+    Immutable after construction.  Use :meth:`load` / :meth:`aload` to
+    obtain a *new* ``ImageInput`` with populated pixel data — the
+    original unloaded instance is never mutated.
 
     Attributes:
         path: Path to the image file
         label: Optional label for the image (e.g., "T1-weighted", "Pre-contrast")
-        width: Image width in pixels (set after loading)
-        height: Image height in pixels (set after loading)
-        encoded: Base64-encoded image (set after loading)
+        width: Image width in pixels (populated after loading)
+        height: Image height in pixels (populated after loading)
+        encoded: Base64-encoded image (populated after loading)
         pil_image: Loaded PIL Image kept in memory to avoid re-reading from disk
     """
 
@@ -104,7 +116,7 @@ class ImageInput:
                 f"Image dimensions {image.width}x{image.height} exceed "
                 f"maximum allowed dimension of {max_dim}px"
             )
-        inp = ImageInput(
+        return ImageInput(
             path=path or Path("<in-memory>"),
             label=label,
             width=image.width,
@@ -112,16 +124,15 @@ class ImageInput:
             encoded=encode_image(image),
             pil_image=image,
         )
-        return inp
 
     @beartype
-    def load(self) -> None:
-        """Load image and populate dimensions, encoding, and PIL reference.
+    def load(self) -> ImageInput:
+        """Load image and return a new ImageInput with populated fields.
 
-        No-op if the image was already loaded (e.g. via ``from_pil``).
+        Returns ``self`` if already loaded (e.g. via :meth:`from_pil`).
         """
         if self.pil_image is not None:
-            return
+            return self
 
         img = Image.open(self.path)
         img.load()  # Force full pixel decode into memory
@@ -132,20 +143,25 @@ class ImageInput:
                 f"Image dimensions {img.width}x{img.height} exceed "
                 f"maximum allowed dimension of {max_dim}px"
             )
-        self.width = img.width
-        self.height = img.height
-        self.encoded = encode_image(img)
-        self.pil_image = img
+        return ImageInput(
+            path=self.path,
+            label=self.label,
+            width=img.width,
+            height=img.height,
+            encoded=encode_image(img),
+            pil_image=img,
+        )
 
-    async def aload(self) -> None:
+    async def aload(self) -> ImageInput:
         """Async version of :meth:`load` — offloads blocking I/O to a thread.
 
+        Returns ``self`` if already loaded.
         Use this instead of ``load()`` when calling from an async context
         to avoid blocking the event loop during image decoding and encoding.
         """
         if self.pil_image is not None:
-            return
-        await asyncio.to_thread(self.load)
+            return self
+        return await asyncio.to_thread(self.load)
 
 
 class AgenticProcessorBase(ABC):
@@ -391,7 +407,7 @@ class AgenticProcessorBase(ABC):
 
         image_inputs = self._normalize_image_inputs(images, image_labels)
 
-        await asyncio.gather(*(img.aload() for img in image_inputs))
+        image_inputs = list(await asyncio.gather(*(img.aload() for img in image_inputs)))
 
         tool_registry = self._create_tool_registry(image_inputs)
 
@@ -512,6 +528,9 @@ class AgenticProcessorBase(ABC):
 
         total_tokens: int = 0
         nudge_count: int = 0
+        total_tool_calls: int = 0
+        coord_space_modified: bool = False
+        idle_tool_nudged: bool = False
 
         def _force_finalize_message() -> str:
             """Build a force-finalize message with the response JSON skeleton."""
@@ -571,11 +590,23 @@ class AgenticProcessorBase(ABC):
                     if top_keys:
                         coord_note = ""
                         if images:
-                            coord_note = (
-                                " The ORIGINAL (untransformed) image is re-attached below. "
-                                "All spatial coordinates (bounding boxes) MUST reference "
-                                "this original image, NOT any zoomed or cropped version."
-                            )
+                            w, h = images[0].width, images[0].height
+                            if coord_space_modified:
+                                coord_note = (
+                                    f" WARNING: You previously used crop/zoom which changed the "
+                                    f"coordinate space. The image has been AUTOMATICALLY RESET to "
+                                    f"the original {w}x{h} image (re-attached below). "
+                                    f"Any bounding boxes from your cropped/zoomed analysis are "
+                                    f"INVALID. Re-examine this original image and provide ALL "
+                                    f"coordinates in the original pixel space "
+                                    f"[0, {w - 1}] x [0, {h - 1}]."
+                                )
+                            else:
+                                coord_note = (
+                                    " The ORIGINAL (untransformed) image is re-attached below. "
+                                    "All spatial coordinates (bounding boxes) MUST reference "
+                                    "this original image, NOT any zoomed or cropped version."
+                                )
                         final_parts.append(
                             {
                                 "type": "text",
@@ -665,6 +696,27 @@ class AgenticProcessorBase(ABC):
                     )
 
             if typed_tool_calls and (tool_registry is None or is_last_turn):
+                # Before crashing, check if the model also returned valid JSON
+                # text alongside the tool calls — some models do both.  If the
+                # text is a valid, complete response we can salvage it.
+                if response_text.strip():
+                    salvaged = extract_json_from_text(response_text)
+                    if (
+                        salvaged is not None
+                        and isinstance(salvaged.get("continue"), bool)
+                        and self.validate_response(salvaged)
+                    ):
+                        logger.warning(
+                            f"Turn {turn_idx + 1}: Model returned tool calls on "
+                            f"{'final turn' if is_last_turn else 'tools-unavailable turn'} "
+                            f"alongside a valid JSON response — salvaging text response."
+                        )
+                        salvaged["continue"] = False
+                        # Record the turn (without executing the spurious tool calls)
+                        turns.append(Turn(role="assistant", content=response_text))
+                        final_response = salvaged
+                        break
+
                 reason = (
                     "tools were withheld on final turn"
                     if is_last_turn
@@ -751,6 +803,9 @@ class AgenticProcessorBase(ABC):
                 )
                 turns.append(tool_turn)
                 nudge_count = 0  # Successful tool calls reset nudge counter
+                total_tool_calls += len(typed_tool_calls)
+                if any(tc.name in _COORD_MODIFYING_TOOLS for tc in typed_tool_calls):
+                    coord_space_modified = True
                 continue
             # Detect truncated responses before attempting JSON parsing
             if gen_log.finish_reason == "length":
@@ -856,11 +911,22 @@ class AgenticProcessorBase(ABC):
 
             wants_continue = parsed.get("continue", False)
             if not isinstance(wants_continue, bool):
-                raise AgenticProcessingError(
-                    "Response field 'continue' must be boolean",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "invalid_continue_flag"},
-                )
+                # Some models return "true"/"false" strings instead of booleans.
+                # Coerce on intermediate turns; only crash on the final turn where
+                # strict schema enforcement is expected.
+                if isinstance(wants_continue, str) and wants_continue.lower() in ("true", "false"):
+                    wants_continue = wants_continue.lower() == "true"
+                    parsed["continue"] = wants_continue
+                    logger.warning(
+                        f"Turn {turn_idx + 1}: coerced string 'continue' "
+                        f"value {wants_continue!r} to bool"
+                    )
+                else:
+                    raise AgenticProcessingError(
+                        "Response field 'continue' must be boolean",
+                        turns_completed=turn_idx + 1,
+                        partial_response={"error": "invalid_continue_flag"},
+                    )
 
             if not wants_continue:
                 # Model says it's done — but if the response is incomplete
@@ -897,6 +963,28 @@ class AgenticProcessorBase(ABC):
                 final_response = parsed
                 logger.info("Max turns reached, forcing completion")
                 break
+
+            # Early termination: if tools are available but the model hasn't
+            # used any after several turns, force finalize to avoid token waste.
+            # After the first nudge, if the model *still* doesn't use tools,
+            # force-accept whatever it returned rather than burning more turns.
+            if self.use_tools and total_tool_calls == 0 and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1:
+                if idle_tool_nudged:
+                    # Already nudged once — accept this response as final.
+                    logger.warning(
+                        f"Turn {turn_idx + 1}: Still no tools after idle-tool nudge. "
+                        f"Force-accepting current response."
+                    )
+                    parsed["continue"] = False
+                    final_response = parsed
+                    break
+                logger.warning(
+                    f"Turn {turn_idx + 1}: No tools used after {turn_idx + 1} turns "
+                    f"in agentic mode. Force-finalizing to avoid token waste."
+                )
+                messages.append({"role": "user", "content": _force_finalize_message()})
+                idle_tool_nudged = True
+                continue
 
             # Model wants to continue - add warning on penultimate turn
             if turn_idx == self.max_turns - 2:

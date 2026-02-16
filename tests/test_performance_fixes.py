@@ -19,7 +19,6 @@ from radiant_harness.base import ImageInput
 from radiant_harness.tools.registry import ToolRegistry
 from radiant_harness.tools.visual import create_visual_tools
 
-
 # =====================================================================
 # 1. _strip_stale_images tests
 # =====================================================================
@@ -97,9 +96,7 @@ class TestStripStaleImages:
         # The last tool message (round 2) should still have image_url
         last_tool = messages[-1]
         assert last_tool["role"] == "tool"
-        has_image = any(
-            p.get("type") == "image_url" for p in last_tool["content"]
-        )
+        has_image = any(p.get("type") == "image_url" for p in last_tool["content"])
         assert has_image, "Latest tool image should be preserved"
 
         # Earlier tool messages (round 0, 1) should have placeholders
@@ -109,9 +106,7 @@ class TestStripStaleImages:
             if msg is last_tool:
                 continue
             for part in msg["content"]:
-                assert part["type"] != "image_url", (
-                    f"Stale image_url should be stripped: {part}"
-                )
+                assert part["type"] != "image_url", f"Stale image_url should be stripped: {part}"
                 if "previous tool image omitted" in part.get("text", ""):
                     break
             else:
@@ -124,12 +119,24 @@ class TestStripStaleImages:
             {"role": "user", "content": "usr"},
             {
                 "role": "assistant",
-                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "search_web", "arguments": "{}"}}],
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "search_web", "arguments": "{}"},
+                    }
+                ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "Found 5 results"},
             {
                 "role": "assistant",
-                "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "search_web", "arguments": "{}"}}],
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "search_web", "arguments": "{}"},
+                    }
+                ],
             },
             {"role": "tool", "tool_call_id": "c2", "content": "Found 3 results"},
         ]
@@ -166,7 +173,11 @@ class TestStripStaleImages:
             {
                 "role": "assistant",
                 "tool_calls": [
-                    {"id": "c1", "type": "function", "function": {"name": "zoom", "arguments": '{"factor": 2.0}'}},
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "zoom", "arguments": '{"factor": 2.0}'},
+                    },
                 ],
             },
             {
@@ -299,16 +310,16 @@ class TestImageInputFromPil:
         assert inp.path == custom_path
 
     def test_load_is_noop_when_already_loaded(self) -> None:
-        """Calling load() on a from_pil input does not re-read from disk."""
+        """Calling load() on a from_pil input returns self (already loaded)."""
         img = Image.new("RGB", (32, 32))
         inp = ImageInput.from_pil(img)
-        original_encoded = inp.encoded
 
-        # load() should be a no-op — no disk path to read from
-        inp.load()
+        # load() returns self when already loaded — no disk path to read from
+        loaded = inp.load()
 
-        assert inp.encoded is original_encoded
-        assert inp.pil_image is img
+        assert loaded is inp
+        assert loaded.encoded is inp.encoded
+        assert loaded.pil_image is img
 
     def test_from_pil_rejects_oversized_image(self) -> None:
         """from_pil validates max dimension just like load()."""

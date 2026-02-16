@@ -6,8 +6,10 @@ All previously hardcoded values are now configurable via these dataclasses.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import threading
+from collections.abc import Iterator
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
@@ -49,6 +51,8 @@ class ImageProcessingConfig:
     max_morphological_iterations: int = 5
     min_clahe_clip_limit: float = 1.0
     max_clahe_clip_limit: float = 10.0
+    max_clahe_tile_size: int = 32
+    min_window_width: int = 2
 
     def __post_init__(self) -> None:
         if self.min_image_size < 1:
@@ -109,6 +113,12 @@ class ImageProcessingConfig:
                 f"min_clahe_clip_limit ({self.min_clahe_clip_limit}) "
                 f"must be < max_clahe_clip_limit ({self.max_clahe_clip_limit})"
             )
+        if not 2 <= self.max_clahe_tile_size <= 64:
+            raise ValueError(
+                f"max_clahe_tile_size must be between 2 and 64, got {self.max_clahe_tile_size}"
+            )
+        if self.min_window_width < 1:
+            raise ValueError(f"min_window_width must be >= 1, got {self.min_window_width}")
 
 
 @dataclass(frozen=True)
@@ -271,7 +281,7 @@ class AgenticConfig:
     default_max_turns: int = 10
     default_max_tokens: int = 16384
     default_temperature: float = 0.0
-    max_consecutive_nudges: int = 3
+    max_consecutive_nudges: int = 2
 
     def __post_init__(self) -> None:
         if self.max_turns_limit < 1:
@@ -376,3 +386,41 @@ def set_config(config: HarnessConfig) -> None:
         set_config(custom_config)
     """
     _ConfigHolder.set(config)
+
+
+def reset_config() -> None:
+    """Reset the global configuration to defaults.
+
+    Convenience wrapper that restores a fresh ``HarnessConfig()``.
+    Useful in test teardown to prevent config leakage between tests.
+    """
+    _ConfigHolder.set(HarnessConfig())
+
+
+@contextlib.contextmanager
+def config_context(config: HarnessConfig) -> Iterator[HarnessConfig]:
+    """Temporarily replace the global configuration.
+
+    Saves the current config, applies *config*, and restores the
+    original on exit — even if the body raises.
+
+    Args:
+        config: Temporary configuration to use inside the block.
+
+    Yields:
+        The temporary configuration (same object as *config*).
+
+    Example:
+        from radiant_harness.config import config_context, HarnessConfig, CacheConfig
+
+        with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=1000))):
+            # get_config() returns the temporary config here
+            ...
+        # original config is restored here
+    """
+    previous = _ConfigHolder.get()
+    _ConfigHolder.set(config)
+    try:
+        yield config
+    finally:
+        _ConfigHolder.set(previous)

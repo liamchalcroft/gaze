@@ -12,6 +12,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,30 @@ _BODY_PART_KEYWORDS = {
     "heart": "cardiac",
     "cardiac": "cardiac",
 }
+
+# ---------------------------------------------------------------------------
+# Module-level temp-dir tracking for atexit cleanup
+# ---------------------------------------------------------------------------
+# Instead of registering a bound method per MedicalImageSearchManager
+# instance (which holds a strong reference to *self* and prevents GC),
+# we track just the Path objects and register a single atexit handler.
+_temp_dirs_lock = threading.Lock()
+_temp_dirs: set[Path] = set()
+
+
+def _atexit_cleanup_temp_dirs() -> None:
+    """Remove all tracked temporary directories at interpreter shutdown."""
+    with _temp_dirs_lock:
+        for dir_path in list(_temp_dirs):
+            try:
+                if dir_path.exists():
+                    shutil.rmtree(dir_path)
+            except OSError:
+                pass  # best-effort at shutdown
+        _temp_dirs.clear()
+
+
+atexit.register(_atexit_cleanup_temp_dirs)
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
@@ -354,8 +379,9 @@ class MedicalImageSearchManager:
             # Ensure directory has restricted permissions
             self.download_dir.chmod(0o700)
             self._created_temp_dir = True
-            # Register cleanup on exit
-            atexit.register(self._cleanup_temp_dir)
+            # Track for module-level atexit cleanup (no strong ref to self)
+            with _temp_dirs_lock:
+                _temp_dirs.add(self.download_dir)
 
         self.engines: list[ImageSearchEngine] = []
         engines = engines or ["openi"]
@@ -391,6 +417,9 @@ class MedicalImageSearchManager:
         # Clean up temporary directory if we created it
         if self._created_temp_dir:
             self._cleanup_temp_dir()
+            # Remove from module-level tracker so atexit won't double-clean
+            with _temp_dirs_lock:
+                _temp_dirs.discard(self.download_dir)
 
     def _cleanup_temp_dir(self) -> None:
         """Clean up temporary directory and its contents."""

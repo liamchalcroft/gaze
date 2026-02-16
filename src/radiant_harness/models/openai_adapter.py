@@ -13,6 +13,8 @@ from openai import APITimeoutError
 from openai import AsyncOpenAI
 from openai import OpenAIError
 from openai import RateLimitError
+
+import httpx
 from tenacity import retry
 from tenacity import retry_if_exception_type
 from tenacity import stop_after_attempt
@@ -131,7 +133,12 @@ class OpenAIAdapter(AdapterProtocol):
 
             kwargs: dict[str, Any] = {
                 "api_key": api_key,
-                "timeout": 60.0,
+                "timeout": httpx.Timeout(
+                    connect=10.0,
+                    read=90.0,
+                    write=10.0,
+                    pool=30.0,
+                ),
                 "max_retries": 0,
             }
             if base_url is not None:

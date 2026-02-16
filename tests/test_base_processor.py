@@ -119,6 +119,33 @@ class _TestProcessor(AgenticProcessorBase):
         return "continue" in response and isinstance(response["continue"], bool)
 
 
+class TestImageInputImmutability:
+    """ImageInput must be frozen (immutable)."""
+
+    def test_cannot_assign_to_fields(self) -> None:
+        """Assigning to any field on a frozen dataclass raises FrozenInstanceError."""
+        inp = ImageInput(path=Path("/fake/img.png"))
+        with pytest.raises(AttributeError):
+            inp.width = 42  # type: ignore[misc]
+
+    def test_load_returns_new_instance(self, tmp_path: Path) -> None:
+        """load() returns a distinct ImageInput; original is untouched."""
+        image_path = tmp_path / "test.png"
+        Image.new("RGB", (50, 50), color="red").save(image_path)
+
+        original = ImageInput(path=image_path)
+        loaded = original.load()
+
+        assert loaded is not original
+        assert loaded.width == 50
+        assert original.width == 0
+
+    def test_load_returns_self_when_already_loaded(self) -> None:
+        """load() on an already-loaded instance returns the same object."""
+        inp = ImageInput.from_pil(Image.new("RGB", (10, 10)))
+        assert inp.load() is inp
+
+
 class TestImageInputLoad:
     """Test ImageInput.load() behavior."""
 
@@ -126,13 +153,9 @@ class TestImageInputLoad:
         """load() raises ValueError when image exceeds max_image_dimension."""
         from radiant_harness.config import HarnessConfig
         from radiant_harness.config import ImageProcessingConfig
-        from radiant_harness.config import get_config
-        from radiant_harness.config import set_config
+        from radiant_harness.config import config_context
 
-        original = get_config()
-        try:
-            set_config(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50)))
-
+        with config_context(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50))):
             image_path = tmp_path / "large.png"
             img = Image.new("RGB", (100, 100), color="red")
             img.save(image_path)
@@ -140,8 +163,6 @@ class TestImageInputLoad:
             image_input = ImageInput(path=image_path)
             with pytest.raises(ValueError, match="exceed maximum"):
                 image_input.load()
-        finally:
-            set_config(original)
 
     def test_load_accepts_image_within_limits(self, tmp_path: Path) -> None:
         """load() succeeds for images within max_image_dimension."""
@@ -150,11 +171,14 @@ class TestImageInputLoad:
         img.save(image_path)
 
         image_input = ImageInput(path=image_path)
-        image_input.load()
+        loaded = image_input.load()
 
-        assert image_input.width == 100
-        assert image_input.height == 100
-        assert image_input.encoded is not None
+        assert loaded.width == 100
+        assert loaded.height == 100
+        assert loaded.encoded is not None
+        # Original is unchanged — frozen dataclass
+        assert image_input.width == 0
+        assert image_input.encoded is None
 
 
 class TestImageInputAload:
@@ -162,26 +186,28 @@ class TestImageInputAload:
 
     @pytest.mark.asyncio
     async def test_aload_populates_fields(self, tmp_path: Path) -> None:
-        """aload() populates dimensions and encoding like sync load()."""
+        """aload() returns a new ImageInput with dimensions and encoding."""
         image_path = tmp_path / "test.png"
         Image.new("RGB", (80, 60), color="blue").save(image_path)
 
         image_input = ImageInput(path=image_path)
-        await image_input.aload()
+        loaded = await image_input.aload()
 
-        assert image_input.width == 80
-        assert image_input.height == 60
-        assert image_input.encoded is not None
-        assert image_input.pil_image is not None
+        assert loaded.width == 80
+        assert loaded.height == 60
+        assert loaded.encoded is not None
+        assert loaded.pil_image is not None
+        # Original is unchanged
+        assert image_input.width == 0
 
     @pytest.mark.asyncio
     async def test_aload_is_noop_when_already_loaded(self) -> None:
-        """aload() is a no-op for images created via from_pil."""
+        """aload() returns self for images created via from_pil."""
         pil = Image.new("RGB", (32, 32), color="red")
         image_input = ImageInput.from_pil(pil)
-        # Should not raise or change anything
-        await image_input.aload()
-        assert image_input.width == 32
+        loaded = await image_input.aload()
+        assert loaded is image_input
+        assert loaded.width == 32
 
     @pytest.mark.asyncio
     async def test_aload_concurrent_multiple_images(self, tmp_path: Path) -> None:
@@ -192,9 +218,9 @@ class TestImageInputAload:
             Image.new("RGB", (64, 64), color="green").save(p)
             inputs.append(ImageInput(path=p))
 
-        await asyncio.gather(*(inp.aload() for inp in inputs))
+        loaded = list(await asyncio.gather(*(inp.aload() for inp in inputs)))
 
-        for inp in inputs:
+        for inp in loaded:
             assert inp.width == 64
             assert inp.encoded is not None
 
@@ -203,17 +229,12 @@ class TestImageInputAload:
         """aload() propagates ValueError for oversized images."""
         from radiant_harness.config import HarnessConfig
         from radiant_harness.config import ImageProcessingConfig
-        from radiant_harness.config import get_config
-        from radiant_harness.config import set_config
+        from radiant_harness.config import config_context
 
-        original = get_config()
-        try:
-            set_config(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50)))
+        with config_context(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50))):
             image_path = tmp_path / "big.png"
             Image.new("RGB", (100, 100), color="red").save(image_path)
 
             image_input = ImageInput(path=image_path)
             with pytest.raises(ValueError, match="exceed maximum"):
                 await image_input.aload()
-        finally:
-            set_config(original)

@@ -37,7 +37,9 @@ from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
+from radiant_harness.config import config_context
 from radiant_harness.config import get_config
+from radiant_harness.config import reset_config
 from radiant_harness.config import set_config
 from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.exceptions import APIError
@@ -89,7 +91,9 @@ __all__ = [
     "SearchConfig",
     "ImageProcessingConfig",
     "RankingWeights",
+    "config_context",
     "get_config",
+    "reset_config",
     "set_config",
     # Result types
     "AgenticResult",

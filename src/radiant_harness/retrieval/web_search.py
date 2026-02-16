@@ -8,14 +8,15 @@ import functools
 import hashlib
 import os
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
 from urllib.parse import urlparse
 
 import aiohttp
+import defusedxml.ElementTree as ET  # noqa: N817
 from beartype import beartype
+from defusedxml import DefusedXmlException
 from loguru import logger
 
 from radiant_harness.cache import TTLCache
@@ -156,6 +157,26 @@ def _get_ncbi_email() -> str | None:
 class PubMedSearchEngine(SearchEngine):
     """Enhanced PubMed search with better error handling and metadata extraction."""
 
+    @beartype
+    def _get_headers(self) -> dict[str, str]:
+        """NCBI-compliant headers for PubMed E-utilities.
+
+        NCBI guidelines require tools to identify themselves honestly via
+        User-Agent rather than impersonating a browser.  The ``tool`` and
+        ``email`` query parameters are already included in each request;
+        the User-Agent header reinforces the identification.
+        """
+        import radiant_harness
+
+        ua = f"radiant_harness/{radiant_harness.__version__}"
+        email = _get_ncbi_email()
+        if email:
+            ua += f" (mailto:{email})"
+        return {
+            "User-Agent": ua,
+            "Accept": "application/json, application/xml, text/xml",
+        }
+
     # Default medical entity patterns
     MEDICAL_ENTITY_PATTERNS: list[str] = [
         r"\b(?:tumor|mass|lesion|cyst|hemorrhage|infarct|edema)\b",
@@ -224,6 +245,12 @@ class PubMedSearchEngine(SearchEngine):
         not return abstract text).  The two requests are independent so we
         fire them concurrently via asyncio.gather to halve the wait time.
         """
+        # Rate-limit: single delay after esearch, before the concurrent fetches.
+        # Previously each fetch slept independently, but since they run via
+        # asyncio.gather the sleeps overlapped and both requests fired at the
+        # same instant — defeating the stagger intent.
+        await asyncio.sleep(self._rate_limit_delay)
+
         # Run esummary and efetch concurrently — they share no data dependency
         summary_data, abstracts = await asyncio.gather(
             self._fetch_summary(pmid_list),
@@ -306,8 +333,6 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             summary_params["api_key"] = self.api_key
 
-        await asyncio.sleep(self._rate_limit_delay)
-
         session = await self._get_session()
         async with session.get(summary_url, params=summary_params) as response:
             if response.status != 200:
@@ -336,8 +361,6 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             fetch_params["api_key"] = self.api_key
 
-        await asyncio.sleep(self._rate_limit_delay)
-
         session = await self._get_session()
         try:
             async with session.get(fetch_url, params=fetch_params) as response:
@@ -357,15 +380,15 @@ class PubMedSearchEngine(SearchEngine):
     def _parse_abstracts_xml(self, xml_text: str) -> dict[str, str]:
         """Parse efetch PubMed XML to extract PMID → abstract mappings.
 
-        Uses xml.etree.ElementTree (stdlib) for correct XML parsing.
+        Uses defusedxml.ElementTree for safe XML parsing (XXE protection).
         The PubMed XML structure wraps each article in <PubmedArticle> with
         a <PMID> element and <AbstractText> elements inside <Abstract>.
         """
         abstracts: dict[str, str] = {}
 
         try:
-            root = ET.fromstring(xml_text)  # noqa: S314
-        except ET.ParseError:
+            root = ET.fromstring(xml_text)
+        except (ET.ParseError, DefusedXmlException):
             logger.warning("Failed to parse PubMed XML; proceeding without abstracts")
             return {}
 
@@ -442,7 +465,7 @@ class PubMedSearchEngine(SearchEngine):
         return snippet.strip()
 
     @beartype
-    def _extract_medical_entities(self, text: str) -> list[str]:
+    def _extract_medical_entities(self, text: str) -> tuple[str, ...]:
         """Extract medical entities from text using configurable patterns.
 
         Override MEDICAL_ENTITY_PATTERNS class attribute to customize.
@@ -451,7 +474,7 @@ class PubMedSearchEngine(SearchEngine):
             text: Text to extract entities from
 
         Returns:
-            Sorted list of unique medical entities found
+            Sorted tuple of unique medical entities found
         """
         entities: set[str] = set()
         text_lower = text.lower()
@@ -460,7 +483,7 @@ class PubMedSearchEngine(SearchEngine):
             matches = re.findall(pattern, text_lower)
             entities.update(matches)
 
-        return sorted(entities)
+        return tuple(sorted(entities))
 
 
 class WebSearchManager:
@@ -774,7 +797,11 @@ class WebSearchManager:
                 content_matches * weights.content_match_weight
             )
 
-            entity_matches = sum(1 for entity in result.extracted_entities if entity in query_lower)
+            entity_matches = sum(
+                1
+                for entity in result.extracted_entities
+                if re.search(r"\b" + re.escape(entity) + r"\b", query_lower)
+            )
             score += entity_matches * weights.entity_match_weight
 
             raw_scores.append(score)
