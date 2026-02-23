@@ -24,7 +24,7 @@ src/radiant_harness/
     tools/
         tool.py                 # Tool class
         registry.py             # ToolRegistry, ToolDocumenter, EncodedImage
-        visual.py               # zoom, crop, contrast, threshold, flip, rotate, reset
+        visual.py               # zoom, crop, adjust_contrast, adjust_brightness, adjust_sharpness, threshold, window_level, equalize_histogram, adaptive_equalize, detect_edges, denoise, morphological, get_intensity_stats, intensity_profile, symmetry_diff, invert, annotate_region, flip_horizontal, flip_vertical, rotate, show_grid, measure, reset
         search.py               # search_web (PubMed), search_images (Open-i)
         image_manager.py        # Image loading and transformation state
     retrieval/
@@ -107,7 +107,7 @@ Entry point: `await processor.analyze(images, metadata, image_labels)` returns `
 ### Tool System
 
 Tools registered via `ToolRegistry`:
-- **Visual**: zoom, crop, contrast, threshold, flip, rotate, reset
+- **Visual**: zoom, crop, adjust_contrast, adjust_brightness, adjust_sharpness, threshold, window_level, equalize_histogram, adaptive_equalize, detect_edges, denoise, morphological, get_intensity_stats, intensity_profile, symmetry_diff, invert, annotate_region, flip_horizontal, flip_vertical, rotate, show_grid, measure, reset
 - **Search**: search_web (PubMed), search_images (Open-i)
 
 ### Response Format

@@ -11,6 +11,33 @@ from collections.abc import Sequence
 
 from beartype import beartype
 
+_BINARY_YES = frozenset({"yes", "y", "true", "1"})
+_BINARY_NO = frozenset({"no", "n", "false", "0"})
+
+
+@beartype
+def normalize_binary(answer: str) -> str | None:
+    """Normalize a closed-ended answer to 'yes' or 'no'.
+
+    Handles common variations (y/n, true/false, 1/0) after stripping
+    punctuation and whitespace.
+
+    Args:
+        answer: Raw answer string
+
+    Returns:
+        'yes', 'no', or None if the answer is not a recognized binary value
+    """
+    normalized = normalize_answer(answer)
+    # After normalization, take the first token only so that
+    # "yes, the image shows..." still maps to "yes".
+    first_token = normalized.split()[0] if normalized else ""
+    if first_token in _BINARY_YES:
+        return "yes"
+    if first_token in _BINARY_NO:
+        return "no"
+    return None
+
 
 @beartype
 def normalize_answer(answer: str) -> str:
@@ -114,13 +141,9 @@ def evaluate_vqa_rad(
 
     # Compute overall metrics
     exact_matches = [
-        compute_exact_match(p, r)
-        for p, r in zip(predictions, references, strict=True)
+        compute_exact_match(p, r) for p, r in zip(predictions, references, strict=True)
     ]
-    token_f1s = [
-        compute_token_f1(p, r)
-        for p, r in zip(predictions, references, strict=True)
-    ]
+    token_f1s = [compute_token_f1(p, r) for p, r in zip(predictions, references, strict=True)]
 
     metrics: dict[str, float] = {
         "exact_match": sum(exact_matches) / len(exact_matches),
@@ -137,9 +160,7 @@ def evaluate_vqa_rad(
         open_matches = []
         open_f1s = []
 
-        for i, (_, _, t) in enumerate(
-            zip(predictions, references, answer_types, strict=True)
-        ):
+        for i, (_, _, t) in enumerate(zip(predictions, references, answer_types, strict=True)):
             if t == "closed":
                 closed_matches.append(exact_matches[i])
             else:
@@ -179,23 +200,11 @@ def evaluate_closed_only(
     Returns:
         Dictionary with yes/no accuracy metrics
     """
-    # Normalize to yes/no
-    def to_binary(s: str) -> str:
-        s = s.lower().strip()
-        if s in ("yes", "y", "true", "1"):
-            return "yes"
-        if s in ("no", "n", "false", "0"):
-            return "no"
-        return s
+    preds_binary = [normalize_binary(p) for p in predictions]
+    refs_binary = [normalize_binary(r) for r in references]
 
-    preds_binary = [to_binary(p) for p in predictions]
-    refs_binary = [to_binary(r) for r in references]
-
-    # Filter to valid yes/no pairs
-    valid_pairs = [
-        (p, r) for p, r in zip(preds_binary, refs_binary, strict=True)
-        if r in ("yes", "no")
-    ]
+    # Filter to valid yes/no pairs (both ref and pred must be recognized)
+    valid_pairs = [(p, r) for p, r in zip(preds_binary, refs_binary, strict=True) if r is not None]
 
     if not valid_pairs:
         return {"accuracy": 0.0, "num_samples": 0.0}

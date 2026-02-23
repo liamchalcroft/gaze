@@ -20,6 +20,8 @@ from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
 from radiant_harness.verifiers import extract_completion_text
 
+from .evaluation import normalize_answer
+from .evaluation import normalize_binary
 from .schemas import VQA_RAD_SCHEMA
 from .schemas import validate_vqa_rad_response
 
@@ -71,39 +73,35 @@ class VQARadVerifiersReward(BaseRewardFunction):
 
     def _compute_closed_reward(self, prediction: str, reference: str) -> float:
         """Compute exact match reward for closed questions."""
-        pred_norm = prediction.lower().strip()
-        ref_norm = reference.lower().strip()
+        pred_norm = normalize_binary(prediction)
+        ref_norm = normalize_binary(reference)
 
-        # Normalize yes/no variations
-        if pred_norm in {"yes", "y", "true"}:
-            pred_norm = "yes"
-        elif pred_norm in {"no", "n", "false"}:
-            pred_norm = "no"
-
-        if ref_norm in {"yes", "y", "true"}:
-            ref_norm = "yes"
-        elif ref_norm in {"no", "n", "false"}:
-            ref_norm = "no"
+        if pred_norm is None or ref_norm is None:
+            return 0.0
 
         return 1.0 if pred_norm == ref_norm else 0.0
 
     def _compute_open_reward(self, prediction: str, reference: str) -> float:
-        """Compute token F1 reward for open questions."""
+        """Compute token F1 reward for open questions.
+
+        Uses the same normalize_answer() as evaluation to ensure the RL
+        reward signal is consistent with reported metrics.
+        """
         if not prediction or not reference:
             return 0.0
 
-        pred_tokens = set(prediction.lower().split())
-        ref_tokens = set(reference.lower().split())
+        pred_tokens = set(normalize_answer(prediction).split())
+        ref_tokens = set(normalize_answer(reference).split())
 
-        if not ref_tokens:
-            return 0.0
+        if not pred_tokens or not ref_tokens:
+            return 1.0 if pred_tokens == ref_tokens else 0.0
 
         intersection = pred_tokens & ref_tokens
-        precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
-        recall = len(intersection) / len(ref_tokens)
-
-        if precision + recall == 0:
+        if not intersection:
             return 0.0
+
+        precision = len(intersection) / len(pred_tokens)
+        recall = len(intersection) / len(ref_tokens)
 
         return 2 * precision * recall / (precision + recall)
 
@@ -112,12 +110,12 @@ class VQARadVerifiersReward(BaseRewardFunction):
         return extract_completion_text(completion)
 
     def _extract_json_response(self, text: str) -> dict[str, Any] | None:
-        """Extract JSON response from text."""
-        result = extract_json_from_text(text)
-        if result is not None:
-            return result
-        # Fallback: treat entire text as answer
-        return {"answer": text.strip()}
+        """Extract JSON response from text.
+
+        Returns None when no valid JSON is found, so malformed completions
+        receive a 0.0 reward rather than being silently accepted.
+        """
+        return extract_json_from_text(text)
 
 
 class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
@@ -199,29 +197,33 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         ]
 
         if self.use_tools:
-            prompt_parts.extend([
-                "You have access to visual tools to examine the image more closely:",
-                "- Use 'zoom' to magnify regions of interest",
-                "- Use 'crop' to focus on specific areas",
-                "- Use 'adjust_brightness'/'adjust_contrast' for window level/width control",
-                "- Use 'adjust_sharpness' for edge enhancement",
-                "- Use 'window_level' with clinical presets (brain, bone, soft_tissue, etc.)",
-                "- Use 'threshold' to highlight intensity ranges",
-                "- Use 'equalize_histogram'/'adaptive_equalize' for contrast equalization",
-                "- Use 'detect_edges' for lesion boundary detection",
-                "- Use 'get_intensity_stats' for quantitative analysis",
-                "- Use 'measure' to measure distances between points",
-                "- Use 'show_grid' for spatial reference",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "You have access to visual tools to examine the image more closely:",
+                    "- Use 'zoom' to magnify regions of interest",
+                    "- Use 'crop' to focus on specific areas",
+                    "- Use 'adjust_brightness'/'adjust_contrast' for window level/width control",
+                    "- Use 'adjust_sharpness' for edge enhancement",
+                    "- Use 'window_level' with clinical presets (brain, bone, soft_tissue, etc.)",
+                    "- Use 'threshold' to highlight intensity ranges",
+                    "- Use 'equalize_histogram'/'adaptive_equalize' for contrast equalization",
+                    "- Use 'detect_edges' for lesion boundary detection",
+                    "- Use 'get_intensity_stats' for quantitative analysis",
+                    "- Use 'measure' to measure distances between points",
+                    "- Use 'show_grid' for spatial reference",
+                    "",
+                ]
+            )
 
         if self.use_web_search:
-            prompt_parts.extend([
-                "You can also search medical literature for reference:",
-                "- Use 'search_web' to find relevant diagnostic criteria",
-                "- Use 'search_images' to find similar reference cases",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "You can also search medical literature for reference:",
+                    "- Use 'search_web' to find relevant diagnostic criteria",
+                    "- Use 'search_images' to find similar reference cases",
+                    "",
+                ]
+            )
 
         # Add image dimensions if available
         if images:
@@ -274,16 +276,28 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
 
         # Bonus for using visual tools (shows thorough examination)
         visual_tools = {
-            "zoom", "crop", "adjust_contrast", "adjust_brightness",
-            "adjust_sharpness", "threshold", "window_level",
-            "equalize_histogram", "adaptive_equalize", "detect_edges",
-            "get_intensity_stats", "measure", "show_grid",
-            "symmetry_diff", "annotate_region", "intensity_profile",
-            "denoise", "morphological", "invert",
+            "zoom",
+            "crop",
+            "adjust_contrast",
+            "adjust_brightness",
+            "adjust_sharpness",
+            "threshold",
+            "window_level",
+            "equalize_histogram",
+            "adaptive_equalize",
+            "detect_edges",
+            "get_intensity_stats",
+            "measure",
+            "show_grid",
+            "symmetry_diff",
+            "annotate_region",
+            "intensity_profile",
+            "denoise",
+            "morphological",
+            "invert",
         }
         tool_turns = sum(
-            1 for t in turns
-            if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
+            1 for t in turns if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
         )
         tool_bonus = min(tool_turns * 0.05, 0.15)
 

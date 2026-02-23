@@ -26,8 +26,6 @@ VQA_RAD_SCHEMA: dict[str, Any] = {
                 },
                 "confidence": {
                     "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
                     "description": "Confidence in the answer (0.0-1.0)",
                 },
                 "reasoning": {
@@ -52,6 +50,7 @@ VQA_RAD_SCHEMA: dict[str, Any] = {
                         },
                     },
                     "required": ["description", "location"],
+                    "additionalProperties": False,
                     "description": "Region of the image most relevant to the answer",
                 },
                 "continue": {
@@ -59,7 +58,15 @@ VQA_RAD_SCHEMA: dict[str, Any] = {
                     "description": "true if more analysis needed, false when complete",
                 },
             },
-            "required": ["answer", "answer_type", "confidence", "reasoning", "continue"],
+            "required": [
+                "answer",
+                "answer_type",
+                "confidence",
+                "reasoning",
+                "image_observations",
+                "region_of_interest",
+                "continue",
+            ],
             "additionalProperties": False,
         },
     },
@@ -75,7 +82,15 @@ def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
     Returns:
         True if all required fields present and valid
     """
-    required = ["answer", "answer_type", "confidence", "reasoning", "continue"]
+    required = [
+        "answer",
+        "answer_type",
+        "confidence",
+        "reasoning",
+        "image_observations",
+        "region_of_interest",
+        "continue",
+    ]
     if not all(field in response for field in required):
         return False
 

@@ -14,6 +14,8 @@ from beartype import beartype
 from datasets import load_dataset
 from PIL import Image
 
+from .evaluation import normalize_binary
+
 
 @beartype
 class VQARadDataset:
@@ -122,9 +124,8 @@ class VQARadDataset:
         question = item.get("question", "")
         answer = item.get("answer", "")
 
-        # Determine answer type (closed vs open)
-        answer_lower = answer.lower().strip()
-        is_closed = answer_lower in ("yes", "no")
+        # Determine answer type (closed vs open) using centralized normalization
+        is_closed = normalize_binary(answer) is not None
 
         return {
             "image_path": image_path,

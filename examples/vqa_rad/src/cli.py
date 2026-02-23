@@ -31,7 +31,7 @@ async def run_evaluation(
     max_turns: int,
     output_dir: Path,
     reasoning: bool,
-) -> dict[str, object]:
+) -> dict[str, float]:
     """Run VQA-RAD evaluation.
 
     Args:
@@ -71,6 +71,7 @@ async def run_evaluation(
     predictions: list[str] = []
     references: list[str] = []
     answer_types: list[str] = []
+    num_failures = 0
 
     for i, sample in enumerate(dataset):
         logger.info(f"Processing sample {i + 1}/{len(dataset)}")
@@ -117,19 +118,28 @@ async def run_evaluation(
 
         except Exception as e:
             logger.error(f"Failed to process sample {i}: {e}")
-            predictions.append("")
-            references.append(sample["answer"])
-            answer_types.append(sample["answer_type"])
+            num_failures += 1
 
-    # Compute metrics
+    # Compute metrics (failures are excluded — only successful predictions counted)
     logger.info("Computing evaluation metrics...")
-    metrics = evaluate_vqa_rad(predictions, references, answer_types)
+    if not predictions:
+        logger.warning("No successful predictions to evaluate")
+        metrics: dict[str, float] = {
+            "num_failures": float(num_failures),
+            "num_samples": 0.0,
+        }
+    else:
+        metrics = evaluate_vqa_rad(predictions, references, answer_types)
+        metrics["num_failures"] = float(num_failures)
 
-    # Also compute closed-only metrics
-    closed_metrics = evaluate_closed_only(predictions, references)
-    metrics["closed_binary_accuracy"] = closed_metrics["accuracy"]
-    metrics["closed_yes_accuracy"] = closed_metrics["yes_accuracy"]
-    metrics["closed_no_accuracy"] = closed_metrics["no_accuracy"]
+        # Compute closed-only metrics using the same answer_types used above
+        closed_preds = [p for p, t in zip(predictions, answer_types, strict=True) if t == "closed"]
+        closed_refs = [r for r, t in zip(references, answer_types, strict=True) if t == "closed"]
+        if closed_preds:
+            closed_metrics = evaluate_closed_only(closed_preds, closed_refs)
+            metrics["closed_binary_accuracy"] = closed_metrics["accuracy"]
+            metrics["closed_yes_accuracy"] = closed_metrics["yes_accuracy"]
+            metrics["closed_no_accuracy"] = closed_metrics["no_accuracy"]
 
     # Save summary
     summary_file = output_dir / "summary.json"
@@ -144,6 +154,7 @@ async def run_evaluation(
                     "max_turns": max_turns,
                 },
                 "num_samples": len(results),
+                "num_failures": num_failures,
                 "metrics": metrics,
             },
             f,
@@ -243,13 +254,19 @@ def main() -> None:
             )
         )
         print("\n=== VQA-RAD Results ===")  # noqa: T201
-        print(f"Exact Match: {metrics['exact_match']:.3f}")  # noqa: T201
-        print(f"Token F1:    {metrics['token_f1']:.3f}")  # noqa: T201
+        if "exact_match" in metrics:
+            print(f"Exact Match: {metrics['exact_match']:.3f}")  # noqa: T201
+            print(f"Token F1:    {metrics['token_f1']:.3f}")  # noqa: T201
         if "closed_accuracy" in metrics:
-            print(f"Closed Acc:  {metrics['closed_accuracy']:.3f} ({int(metrics['num_closed'])} samples)")  # noqa: T201
+            n = int(metrics["num_closed"])
+            print(f"Closed Acc:  {metrics['closed_accuracy']:.3f} ({n} samples)")  # noqa: T201
         if "open_accuracy" in metrics:
-            print(f"Open Acc:    {metrics['open_accuracy']:.3f} ({int(metrics['num_open'])} samples)")  # noqa: T201
+            n = int(metrics["num_open"])
+            print(f"Open Acc:    {metrics['open_accuracy']:.3f} ({n} samples)")  # noqa: T201
             print(f"Open F1:     {metrics['open_f1']:.3f}")  # noqa: T201
+        num_failures = int(metrics.get("num_failures", 0))
+        if num_failures:
+            print(f"Failures:    {num_failures}")  # noqa: T201
     except KeyboardInterrupt:
         logger.info("Evaluation interrupted by user")
     except Exception as e:
