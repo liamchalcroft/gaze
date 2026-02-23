@@ -26,7 +26,7 @@ from typing import Any
 NOVA_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
-        "name": "nova_unified_response",
+        "name": "nova_response",
         "strict": True,
         "schema": {
             "type": "object",

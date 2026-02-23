@@ -97,7 +97,7 @@ def zoom_image(
         new_w = max(min_sz, int(safe_w * scale_up))
         new_h = max(min_sz, int(safe_h * scale_up))
 
-    return image.resize((new_w, new_h), Image.LANCZOS)
+    return image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
 
 @beartype

@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 from beartype import beartype
 from loguru import logger
 from openai import APIStatusError
@@ -13,8 +14,6 @@ from openai import APITimeoutError
 from openai import AsyncOpenAI
 from openai import OpenAIError
 from openai import RateLimitError
-
-import httpx
 from tenacity import retry
 from tenacity import retry_if_exception_type
 from tenacity import stop_after_attempt

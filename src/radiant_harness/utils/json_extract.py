@@ -44,9 +44,8 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
     try:
         result = json.loads(text)
         if isinstance(result, dict):
-            # Cast through intermediate variable for pyright
-            typed: dict[str, Any] = result
-            return typed
+            typed_direct: dict[str, Any] = result
+            return typed_direct
         return None
     except json.JSONDecodeError:
         pass
@@ -60,9 +59,8 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
         try:
             result, _ = decoder.raw_decode(text, i)
             if isinstance(result, dict):
-                # Cast through intermediate variable for pyright
-                typed: dict[str, Any] = result
-                return typed
+                typed_decoded: dict[str, Any] = result
+                return typed_decoded
         except json.JSONDecodeError:
             continue
 

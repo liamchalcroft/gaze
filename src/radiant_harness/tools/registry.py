@@ -76,13 +76,13 @@ def encode_image(
     # JPEG only supports RGB and L modes.  Medical images may use I (32-bit
     # int), I;16 (16-bit int from DICOM-converted PNGs), or F (float32).
     # Alpha modes (RGBA, LA, PA) and palette mode (P) also need conversion.
-    _JPEG_SAFE_MODES = {"RGB", "L"}
-    if fmt == "JPEG" and image.mode not in _JPEG_SAFE_MODES:
+    jpeg_safe_modes = {"RGB", "L"}
+    if fmt == "JPEG" and image.mode not in jpeg_safe_modes:
         image = image.convert("RGB")
 
     # PNG cannot save mode F (float32).  Convert to L for lossless grayscale.
-    _PNG_UNSAFE_MODES = {"F"}
-    if fmt == "PNG" and image.mode in _PNG_UNSAFE_MODES:
+    png_unsafe_modes = {"F"}
+    if fmt == "PNG" and image.mode in png_unsafe_modes:
         image = image.convert("L")
 
     buffer = BytesIO()

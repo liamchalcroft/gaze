@@ -16,6 +16,8 @@ from dataclasses import field
 from types import MappingProxyType
 from urllib.parse import urlparse
 
+from beartype import beartype
+
 
 @dataclass(frozen=True)
 class ImageProcessingConfig:
@@ -376,6 +378,7 @@ class _ConfigHolder:
             cls._config = config
 
 
+@beartype
 def get_config() -> HarnessConfig:
     """Get the current default configuration.
 
@@ -387,6 +390,7 @@ def get_config() -> HarnessConfig:
     return _ConfigHolder.get()
 
 
+@beartype
 def set_config(config: HarnessConfig) -> None:
     """Set the global default configuration.
 
@@ -406,6 +410,7 @@ def set_config(config: HarnessConfig) -> None:
     _ConfigHolder.set(config)
 
 
+@beartype
 def reset_config() -> None:
     """Reset the global configuration to defaults.
 

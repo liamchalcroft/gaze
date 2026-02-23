@@ -19,7 +19,6 @@ from types import MappingProxyType
 from typing import Any
 
 from loguru import logger
-from PIL import Image
 
 from radiant_harness import AgenticResult
 
@@ -216,7 +215,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             return_exceptions=True,
         )
         # Separate successes from failures
-        for item, idx in zip(raw, work_items):
+        for item, idx in zip(raw, work_items, strict=True):
             if isinstance(item, BaseException):
                 logger.error(f"Sample {idx} failed: {item}")
                 failed_samples.append((idx, str(item)))
@@ -301,12 +300,12 @@ async def compute_metrics(
         )
 
     # Map task names to enum members for lookup
-    _TASK_BY_NAME = {t.value: t for t in TaskType}
+    task_by_name = {t.value: t for t in TaskType}
 
     def _should_compute(task_name: str) -> bool:
         if eval_tasks is not None:
             return task_name in eval_tasks
-        return task in (TaskType.ALL, _TASK_BY_NAME[task_name])
+        return task in (TaskType.ALL, task_by_name[task_name])
 
     metrics: dict[str, object] = {}
     predictions = [r.final_response for r in results]

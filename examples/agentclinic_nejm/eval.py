@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from src import load_environment
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Evaluate AgentClinic NEJM model")
     parser.add_argument(
         "--dataset",
@@ -70,7 +74,7 @@ def main() -> None:
     if args.num_samples > 0 and args.num_samples < len(dataset):
         dataset = dataset.select(range(args.num_samples))
 
-    print(f"Evaluating on {len(dataset)} samples with model {args.model}")
+    logger.info("Evaluating on %d samples with model %s", len(dataset), args.model)
 
     # Evaluate (placeholder for actual evaluation loop)
     results = {
@@ -95,13 +99,15 @@ def main() -> None:
     with open(results_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
-    print(f"Results saved to {results_file}")
-    print("\nNote: Actual evaluation requires verifiers package integration")
-    print("This script shows the evaluation structure.")
-    print("\nTo run evaluation:")
-    print("1. Ensure dependencies are installed (verifiers is core): `uv sync` or `pip install -e .`")
-    print("2. Use verifiers evaluation loop with the loaded environment")
-    print("3. The environment includes the accuracy_reward function")
+    logger.info("Results saved to %s", results_file)
+    logger.info("Note: Actual evaluation requires verifiers package integration")
+    logger.info("This script shows the evaluation structure.")
+    logger.info("To run evaluation:")
+    logger.info(
+        "1. Ensure dependencies are installed (verifiers is core): uv sync or pip install -e ."
+    )
+    logger.info("2. Use verifiers evaluation loop with the loaded environment")
+    logger.info("3. The environment includes the accuracy_reward function")
 
 
 if __name__ == "__main__":

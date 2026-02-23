@@ -10,7 +10,6 @@ import argparse
 import json
 from pathlib import Path
 
-from src import GEMeXRewardFunction
 from src import RewardWeights
 from src import load_environment
 
@@ -86,9 +85,6 @@ def main() -> None:
         dataset = dataset.select(range(args.num_samples))
 
     print(f"Evaluating on {len(dataset)} samples with model {args.model}")
-
-    # Initialize reward function for detailed metrics
-    reward_fn = GEMeXRewardFunction(weights=reward_weights)
 
     # Evaluate (placeholder for actual evaluation loop)
     results = {

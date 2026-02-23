@@ -12,11 +12,13 @@ from abc import ABC
 from abc import abstractmethod
 from typing import Any
 
+from beartype import beartype
 from loguru import logger
 
 from radiant_harness.utils.iou import compute_iou
 
 
+@beartype
 def extract_completion_text(completion: Any) -> str:
     """Extract text content from a verifiers completion.
 

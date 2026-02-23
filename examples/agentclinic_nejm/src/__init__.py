@@ -4,7 +4,7 @@ This example implements the AgentClinic NEJM environment using the
 verifiers package for multi-turn clinical case evaluation.
 
 The assistant acts as a clinician, gathering information from a
-simulated patient through HISTORY, EXAM, TESTS, and IMAGE requests
+simulated patient through HISTORY, EXAM_AND_TESTS, and IMAGE requests
 before making a final diagnosis.
 
 Based on: https://github.com/SamuelSchmidgall/AgentClinic

@@ -163,9 +163,6 @@ async def run_evaluation(
     env = env_cls()
     print(f"Loaded {len(env.dataset)} evaluation cases")
 
-    # Get reward function for computing metrics
-    reward_fn = processor.get_reward_function()
-
     # Run evaluation episodes
     results = []
     total_reward = 0.0
@@ -231,10 +228,6 @@ def run_training(
     """
     env = env_cls()
     print(f"Loaded {len(env.dataset)} training cases")
-
-    # Create rubric from processor reward
-    reward_fn = processor.get_reward_function()
-    rubric = vf.Rubric(funcs=[reward_fn], weights=[1.0])
 
     # Save config
     output_dir.mkdir(parents=True, exist_ok=True)
