@@ -366,11 +366,17 @@ class HuggingFaceAdapter(AdapterProtocol):
 
         # Generate with memory optimizations — offload to thread to avoid
         # blocking the event loop during CPU/GPU-bound inference.
+        # When temperature <= 0, use greedy decoding (do_sample=False).
+        # HF ignores the temperature value when do_sample=False, so we pass
+        # 1.0 as a safe placeholder to avoid any division-by-zero in custom
+        # samplers.  This matches OpenAI behaviour where temperature=0 means
+        # deterministic (greedy) output.
+        greedy = temperature <= 0
         gen_kwargs = {
             **inputs,
             "max_new_tokens": max_tokens,
-            "temperature": max(temperature, 0.01),  # Avoid division by zero
-            "do_sample": temperature > 0,
+            "temperature": 1.0 if greedy else temperature,
+            "do_sample": not greedy,
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
             "use_cache": True,
@@ -661,11 +667,13 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         input_length = input_ids.shape[1]
 
         # Generate — offload to thread to avoid blocking the event loop
+        # Greedy decoding when temperature <= 0 (parity with OpenAI adapter).
+        greedy = temperature <= 0
         gen_kwargs = {
             **inputs,
             "max_new_tokens": max_tokens,
-            "temperature": max(temperature, 0.01),
-            "do_sample": temperature > 0,
+            "temperature": 1.0 if greedy else temperature,
+            "do_sample": not greedy,
             "pad_token_id": self.processor.tokenizer.pad_token_id,
             "eos_token_id": self.processor.tokenizer.eos_token_id,
             "use_cache": True,
@@ -735,6 +743,11 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                     if url.startswith("data:"):
                         # Base64 encoded image
                         # Format: data:image/png;base64,<data>
+                        if not url.startswith("data:image/"):
+                            logger.warning(
+                                f"Skipping non-image data URI: {url[:40]}..."
+                            )
+                            continue
                         _, data = url.split(",", 1)
                         image_data = base64.b64decode(data)
                         image = PILImage.open(BytesIO(image_data))

@@ -283,7 +283,7 @@ class OpenISearchEngine(ImageSearchEngine):
                 skipped_no_image += 1
                 continue
 
-            thumbnail_url = item.get("imgThumb", "")
+            thumbnail_url = item.get("imgThumb") or None
 
             # Ensure absolute URLs
             if not image_url.startswith("http"):
@@ -322,7 +322,7 @@ class OpenISearchEngine(ImageSearchEngine):
                 article_title=article_title,
                 authors=item.get("authors", ""),
                 publication_date=item.get("pubDate", ""),
-                license=item.get("license", "Open Access"),
+                license=item.get("license") or None,
                 reliability_score=0.90,
                 metadata={
                     "pmcid": pmcid,
@@ -335,9 +335,7 @@ class OpenISearchEngine(ImageSearchEngine):
         if skipped_no_image > 0:
             logger.debug(f"Skipped {skipped_no_image} Open-i results without image URLs")
         if skipped_non_https > 0:
-            logger.warning(
-                f"Skipped {skipped_non_https} Open-i results with non-HTTPS image URLs"
-            )
+            logger.warning(f"Skipped {skipped_non_https} Open-i results with non-HTTPS image URLs")
         return results
 
     @beartype

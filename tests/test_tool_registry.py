@@ -208,6 +208,58 @@ class TestEncodeImage:
         assert result.mime_type == "image/jpeg"
         assert len(result.data) > 0
 
+    # ── Medical image modes (Patch Set #5) ────────────────────────
+
+    def test_mode_I_jpeg(self) -> None:
+        """32-bit integer (I) mode must encode to JPEG via RGB conversion."""
+        img = Image.new("I", (32, 32), color=1000)
+        result = encode_image(img, format="JPEG")
+        assert result.mime_type == "image/jpeg"
+        assert len(result.data) > 0
+
+    def test_mode_I_png(self) -> None:
+        """32-bit integer (I) mode must encode to PNG."""
+        img = Image.new("I", (32, 32), color=1000)
+        result = encode_image(img, format="PNG")
+        assert result.mime_type == "image/png"
+        assert len(result.data) > 0
+
+    def test_mode_F_jpeg(self) -> None:
+        """Float32 (F) mode must encode to JPEG via RGB conversion."""
+        img = Image.new("F", (32, 32), color=0.5)
+        result = encode_image(img, format="JPEG")
+        assert result.mime_type == "image/jpeg"
+        assert len(result.data) > 0
+
+    def test_mode_F_png(self) -> None:
+        """Float32 (F) mode must encode to PNG via L conversion."""
+        img = Image.new("F", (32, 32), color=0.5)
+        result = encode_image(img, format="PNG")
+        assert result.mime_type == "image/png"
+        assert len(result.data) > 0
+
+    def test_mode_I16_jpeg(self) -> None:
+        """16-bit integer (I;16) mode — common from DICOM PNGs — must encode to JPEG."""
+        import numpy as np
+
+        arr = np.full((32, 32), 30000, dtype=np.uint16)
+        img = Image.fromarray(arr)
+        assert img.mode in ("I;16", "I"), f"Expected I;16 or I mode, got {img.mode}"
+        result = encode_image(img, format="JPEG")
+        assert result.mime_type == "image/jpeg"
+        assert len(result.data) > 0
+
+    def test_mode_I16_png(self) -> None:
+        """16-bit integer (I;16) mode must encode to PNG."""
+        import numpy as np
+
+        arr = np.full((32, 32), 30000, dtype=np.uint16)
+        img = Image.fromarray(arr)
+        assert img.mode in ("I;16", "I"), f"Expected I;16 or I mode, got {img.mode}"
+        result = encode_image(img, format="PNG")
+        assert result.mime_type == "image/png"
+        assert len(result.data) > 0
+
 
 @pytest.mark.asyncio
 async def test_execute_wraps_type_error() -> None:

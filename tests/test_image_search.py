@@ -185,6 +185,76 @@ class TestAtexitTempDirCleanup:
         assert test_dir not in _temp_dirs
 
 
+class TestThumbnailUrlNone:
+    """thumbnail_url must be None (not empty string) when imgThumb is absent."""
+
+    def test_missing_thumb_is_none(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "No thumb",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC789",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].thumbnail_url is None
+
+    def test_empty_string_thumb_is_none(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Empty thumb",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "imgThumb": "",
+                    "pmcid": "PMC790",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].thumbnail_url is None
+
+
+class TestLicenseDefault:
+    """License must not default to 'Open Access' when field is missing."""
+
+    def test_missing_license_is_none(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "No license",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC791",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].license is None
+
+    def test_explicit_license_preserved(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Has license",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC792",
+                    "license": "CC-BY-4.0",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].license == "CC-BY-4.0"
+
+
 class TestExtensionFromUrl:
     """_get_extension_from_url must use path suffix, not substring."""
 

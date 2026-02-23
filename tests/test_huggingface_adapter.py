@@ -490,3 +490,132 @@ class TestVLMGenKwargsParity:
             "Base adapter still uses deprecated torch.cuda.amp.autocast"
         )
         assert "torch.amp.autocast" in source, "Base adapter is missing torch.amp.autocast"
+
+
+# ---------------------------------------------------------------------------
+# Patch Set #5: temperature=0 greedy decoding parity
+# ---------------------------------------------------------------------------
+
+
+class TestTemperatureZeroGreedyParity:
+    """Verify temperature=0 produces greedy (do_sample=False) gen_kwargs.
+
+    OpenAI treats temperature=0 as deterministic/greedy.  The HuggingFace
+    adapters must match: do_sample=False and a safe temperature placeholder
+    (1.0) rather than clamping to 0.01 which enables sampling.
+    """
+
+    def test_base_adapter_greedy_source(self) -> None:
+        """Base generate_chat must set do_sample=False when temperature <= 0."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceAdapter.generate_chat)
+        # The old broken pattern: max(temperature, 0.01)
+        assert "max(temperature, 0.01)" not in source, (
+            "Base adapter still clamps temperature to 0.01 instead of greedy decoding"
+        )
+        assert "do_sample" in source
+
+    def test_vlm_adapter_greedy_source(self) -> None:
+        """VLM generate_chat must set do_sample=False when temperature <= 0."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert "max(temperature, 0.01)" not in source, (
+            "VLM adapter still clamps temperature to 0.01 instead of greedy decoding"
+        )
+        assert "do_sample" in source
+
+    def test_base_greedy_flag_logic(self) -> None:
+        """Verify the greedy flag: temperature <= 0 → do_sample = not greedy = False."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceAdapter.generate_chat)
+        assert "greedy = temperature <= 0" in source
+        assert '"do_sample": not greedy' in source
+
+    def test_vlm_greedy_flag_logic(self) -> None:
+        """Verify VLM uses the same greedy logic."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert "greedy = temperature <= 0" in source
+        assert '"do_sample": not greedy' in source
+
+
+# ---------------------------------------------------------------------------
+# Patch Set #5: data URI MIME type validation in _extract_images
+# ---------------------------------------------------------------------------
+
+
+class TestExtractImagesMimeValidation:
+    """Verify _extract_images rejects non-image data URIs."""
+
+    def test_rejects_text_html_data_uri(self) -> None:
+        """A data:text/html;base64,... URI must be skipped, not decoded."""
+        import base64
+
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        html_b64 = base64.b64encode(b"<h1>hello</h1>").decode()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:text/html;base64,{html_b64}"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert images == [], "Non-image data URI should have been rejected"
+
+    def test_accepts_image_png_data_uri(self) -> None:
+        """A valid data:image/png;base64,... URI must be accepted."""
+        import base64
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        # Create a tiny valid PNG
+        img = PILImage.new("RGB", (2, 2), color="red")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        png_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{png_b64}"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert len(images) == 1
+        assert images[0].size == (2, 2)
+
+    def test_rejects_application_json_data_uri(self) -> None:
+        """data:application/json must be rejected."""
+        import base64
+
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        json_b64 = base64.b64encode(b'{"key": "value"}').decode()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:application/json;base64,{json_b64}"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert images == []

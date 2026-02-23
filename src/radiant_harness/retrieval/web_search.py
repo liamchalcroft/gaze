@@ -113,7 +113,7 @@ class SearchEngine(BaseSearchEngine[SearchResult, SearchError]):
         # Use endswith for proper TLD matching
         if domain.endswith(".edu") or domain.endswith(".ac.uk"):
             return 0.80
-        if ".nih.gov" in domain or domain.endswith(".gov"):
+        if domain.endswith(".nih.gov") or domain.endswith(".gov"):
             return 0.80
 
         # Medical publisher domains (check if domain contains publisher name)
@@ -294,6 +294,13 @@ class PubMedSearchEngine(SearchEngine):
             tier_adj = EVIDENCE_TIER_ADJUSTMENTS.get(content_type, 0.0)
             reliability = max(0.0, min(1.0, base_reliability + tier_adj))
 
+            # Derive medical relevance from content signals rather than
+            # hardcoding.  Base 0.7 (all PubMed is medical) + entity
+            # density bonus (up to 0.2) + abstract presence bonus (0.1).
+            entity_bonus = min(0.2, len(entities) * 0.04)
+            abstract_bonus = 0.1 if abstract else 0.0
+            medical_relevance = min(1.0, 0.7 + entity_bonus + abstract_bonus)
+
             result = SearchResult(
                 title=title,
                 url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
@@ -306,7 +313,7 @@ class PubMedSearchEngine(SearchEngine):
                 journal=journal,
                 doi=doi,
                 content_type=content_type,
-                medical_relevance=0.9,  # PubMed is highly relevant for medical
+                medical_relevance=medical_relevance,
                 extracted_entities=entities,
                 open_access=open_access,
             )
@@ -463,6 +470,10 @@ class PubMedSearchEngine(SearchEngine):
         if sentence_end > max_len // 2:  # Prefer sentence boundaries
             snippet = snippet[: sentence_end + 1]
         elif len(snippet) < len(content):
+            # Prefer word boundary over mid-word truncation
+            space_end = snippet.rfind(" ")
+            if space_end > max_len // 2:
+                snippet = snippet[:space_end]
             snippet += "..."
 
         return snippet.strip()
@@ -511,16 +522,17 @@ class WebSearchManager:
         "differential",
     }
 
-    # Query enhancement templates by search type - can be overridden
+    # Query enhancement templates by search type - can be overridden.
+    # Limited to 2 appended terms to avoid diluting PubMed relevance.
     QUERY_ENHANCEMENTS: dict[str, str] = {
-        "diagnosis": "{query} diagnosis imaging findings",
-        "guidelines": "{query} clinical guidelines protocol",
-        "research": "{query} recent research study findings",
-        "anatomy": "{query} anatomy normal variants imaging",
-        "treatment": "{query} treatment therapy response imaging",
-        "differential": "{query} differential diagnosis imaging",
+        "diagnosis": "{query} diagnosis imaging",
+        "guidelines": "{query} clinical guidelines",
+        "research": "{query} research findings",
+        "anatomy": "{query} anatomy imaging",
+        "treatment": "{query} treatment imaging",
+        "differential": "{query} differential diagnosis",
     }
-    DEFAULT_ENHANCEMENT = "{query} medical imaging findings"
+    DEFAULT_ENHANCEMENT = "{query} medical imaging"
 
     @beartype
     def __init__(
@@ -762,6 +774,11 @@ class WebSearchManager:
         query_lower = query.lower()
         query_terms = query_lower.split()
         query_term_patterns = [re.compile(r"\b" + re.escape(t) + r"\b") for t in query_terms]
+        # Bigram phrase patterns for compound medical terms (e.g. "white matter")
+        query_bigrams = [
+            f"{query_terms[i]} {query_terms[i + 1]}" for i in range(len(query_terms) - 1)
+        ]
+        bigram_patterns = [re.compile(r"\b" + re.escape(bg) + r"\b") for bg in query_bigrams]
         current_year = datetime.now().year
         weights = self._ranking_weights
         content_type_boosts = weights.content_type_boosts.get(search_type, {})
@@ -799,6 +816,14 @@ class WebSearchManager:
             score += (title_matches * weights.title_match_weight) + (
                 content_matches * weights.content_match_weight
             )
+
+            # Bigram phrase matching — rewards results that contain compound
+            # terms together (e.g. "white matter") over results that merely
+            # contain the individual words in unrelated contexts.
+            phrase_matches = sum(
+                1 for pat in bigram_patterns if pat.search(title_lower) or pat.search(content_lower)
+            )
+            score += phrase_matches * weights.phrase_match_weight
 
             entity_matches = sum(
                 1

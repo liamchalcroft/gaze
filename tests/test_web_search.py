@@ -617,6 +617,55 @@ class TestRateLimitSingleDelay:
         )
 
 
+class TestDiagnosisContentTypeBoosts:
+    """For diagnosis queries, guidelines/reviews must outrank case reports."""
+
+    def test_guideline_beats_case_report_for_diagnosis(self) -> None:
+        """Guidelines should get a higher content-type boost than case reports."""
+        manager = WebSearchManager()
+
+        guideline = SearchResult(
+            title="Brain lesion imaging guideline protocol",
+            url="https://pubmed.ncbi.nlm.nih.gov/800/",
+            content="Clinical practice guideline for brain lesion imaging.",
+            snippet="Guideline",
+            source="pubmed",
+            reliability_score=0.95,
+            content_type="guidelines",
+            medical_relevance=0.9,
+        )
+        case_report = SearchResult(
+            title="Brain lesion imaging case report findings",
+            url="https://pubmed.ncbi.nlm.nih.gov/801/",
+            content="A single case report of brain lesion imaging.",
+            snippet="Case report",
+            source="pubmed",
+            reliability_score=0.95,
+            content_type="case_report",
+            medical_relevance=0.9,
+        )
+
+        ranked = manager._rank_results(
+            [case_report, guideline],
+            query="brain lesion imaging",
+            search_type="diagnosis",
+        )
+
+        assert ranked[0].url.endswith("/800/"), (
+            "Guideline should rank above case report for diagnosis queries"
+        )
+        assert ranked[0].ranking_score > ranked[1].ranking_score
+
+    def test_diagnosis_boosts_follow_evidence_hierarchy(self) -> None:
+        """content_type_boosts for 'diagnosis': guidelines > review > article > case_report."""
+        from radiant_harness.config import get_config
+
+        boosts = get_config().ranking.content_type_boosts["diagnosis"]
+        assert boosts["guidelines"] > boosts["review"]
+        assert boosts["review"] > boosts["article"]
+        assert boosts["article"] > boosts["case_report"]
+
+
 class TestCreateSnippetUsesInstanceConfig:
     """_create_snippet must use self._config, not get_config()."""
 
@@ -640,3 +689,197 @@ class TestCreateSnippetUsesInstanceConfig:
         content = "B" * 200
         snippet = engine._create_snippet(title, content)
         assert len(snippet) > 23  # longer than the 20-char test above
+
+
+class TestNihGovDomainSuffix:
+    """_calculate_reliability must use suffix matching for .nih.gov domains."""
+
+    def test_legitimate_nih_subdomain(self) -> None:
+        """Real NIH subdomain should get 0.80 reliability."""
+        engine = PubMedSearchEngine()
+        score = engine._calculate_reliability("https://some.service.nih.gov/page")
+        assert score == 0.80
+
+    def test_spoofed_nih_domain_rejected(self) -> None:
+        """evil.nih.gov.attacker.com must NOT match the .nih.gov rule."""
+        engine = PubMedSearchEngine()
+        score = engine._calculate_reliability("https://evil.nih.gov.attacker.com/page")
+        # Should fall through to the general web default (0.60)
+        assert score == 0.60
+
+    def test_exact_high_reliability_still_works(self) -> None:
+        """Exact domain match (pubmed.ncbi.nlm.nih.gov) still gets 0.95."""
+        engine = PubMedSearchEngine()
+        score = engine._calculate_reliability("https://pubmed.ncbi.nlm.nih.gov/12345/")
+        assert score == 0.95
+
+
+class TestSnippetWordBoundary:
+    """Snippets should truncate at word boundaries, not mid-word."""
+
+    def test_truncates_at_word_boundary(self) -> None:
+        engine = PubMedSearchEngine(config=SearchConfig(max_snippet_length=30))
+        content = "The glioblastoma multiforme is a highly aggressive tumor type."
+        snippet = engine._create_snippet("Title", content)
+        # Should not cut "multiforme" mid-word
+        assert not snippet.rstrip(".").endswith("multifo")
+        assert snippet.endswith("...")
+
+    def test_sentence_boundary_still_preferred(self) -> None:
+        engine = PubMedSearchEngine(config=SearchConfig(max_snippet_length=50))
+        content = "Brain MRI shows hyperintensity. Further analysis needed for diagnosis."
+        snippet = engine._create_snippet("Title", content)
+        # Should prefer the sentence boundary at "."
+        assert snippet.endswith("hyperintensity.")
+
+
+class TestQueryEnhancementReduced:
+    """Query enhancement should append at most 2 terms."""
+
+    def test_diagnosis_enhancement_concise(self) -> None:
+        manager = WebSearchManager()
+        enhanced = manager._enhance_query("glioblastoma", "diagnosis")
+        extra_terms = enhanced.replace("glioblastoma", "").strip().split()
+        assert len(extra_terms) <= 2
+
+    def test_treatment_enhancement_concise(self) -> None:
+        manager = WebSearchManager()
+        enhanced = manager._enhance_query("glioblastoma", "treatment")
+        extra_terms = enhanced.replace("glioblastoma", "").strip().split()
+        assert len(extra_terms) <= 2
+
+    def test_all_enhancements_max_two_terms(self) -> None:
+        """Every search type should append at most 2 terms."""
+        manager = WebSearchManager()
+        for search_type in WebSearchManager.ALLOWED_SEARCH_TYPES:
+            enhanced = manager._enhance_query("test", search_type)
+            extra_terms = enhanced.replace("test", "").strip().split()
+            assert len(extra_terms) <= 2, (
+                f"search_type '{search_type}' appends {len(extra_terms)} terms: {extra_terms}"
+            )
+
+
+class TestMedicalRelevanceDerived:
+    """medical_relevance should vary based on entity count and abstract presence."""
+
+    def test_rich_article_gets_high_relevance(self) -> None:
+        """Article with 5+ entities and abstract should score ~1.0."""
+        engine = PubMedSearchEngine()
+
+        xml = """
+        <PubmedArticleSet>
+          <PubmedArticle>
+            <MedlineCitation>
+              <PMID>90001</PMID>
+              <Article>
+                <Abstract>
+                  <AbstractText>Brain MRI shows tumor with edema and enhancement near the cortex and ventricle.</AbstractText>
+                </Abstract>
+              </Article>
+            </MedlineCitation>
+          </PubmedArticle>
+        </PubmedArticleSet>
+        """
+        abstracts = engine._parse_abstracts_xml(xml)
+        entities = engine._extract_medical_entities(
+            "Brain MRI tumor edema enhancement cortex ventricle"
+        )
+
+        # Simulate the calculation from _fetch_article_details
+        entity_bonus = min(0.2, len(entities) * 0.04)
+        abstract_bonus = 0.1 if abstracts.get("90001") else 0.0
+        relevance = min(1.0, 0.7 + entity_bonus + abstract_bonus)
+
+        assert relevance >= 0.9
+        assert len(entities) >= 5
+
+    def test_sparse_article_gets_lower_relevance(self) -> None:
+        """Article with no entities and no abstract should score 0.7."""
+        engine = PubMedSearchEngine()
+        entities = engine._extract_medical_entities("General observations")
+
+        entity_bonus = min(0.2, len(entities) * 0.04)
+        abstract_bonus = 0.0  # no abstract
+        relevance = min(1.0, 0.7 + entity_bonus + abstract_bonus)
+
+        assert relevance == 0.7
+        assert len(entities) == 0
+
+    def test_relevance_is_not_hardcoded(self) -> None:
+        """Two articles with different entity counts must get different relevance."""
+        engine = PubMedSearchEngine()
+        rich = engine._extract_medical_entities("Brain MRI shows tumor with edema near cortex")
+        sparse = engine._extract_medical_entities("Some general text")
+
+        rich_relevance = min(1.0, 0.7 + min(0.2, len(rich) * 0.04) + 0.1)
+        sparse_relevance = min(1.0, 0.7 + min(0.2, len(sparse) * 0.04) + 0.0)
+
+        assert rich_relevance > sparse_relevance
+
+
+class TestBigramPhraseMatching:
+    """Compound medical terms should be matched as phrases via bigrams."""
+
+    def test_white_matter_phrase_beats_separate_words(self) -> None:
+        """Article with 'white matter' together should rank above one with
+        'white' and 'matter' in separate contexts."""
+        manager = WebSearchManager()
+
+        together = SearchResult(
+            title="White matter hyperintensity in aging",
+            url="https://pubmed.ncbi.nlm.nih.gov/900/",
+            content="White matter lesions are common in elderly patients.",
+            snippet="WM",
+            source="pubmed",
+            reliability_score=0.95,
+            medical_relevance=0.9,
+        )
+        separate = SearchResult(
+            title="White blood cell count in matter of hours",
+            url="https://pubmed.ncbi.nlm.nih.gov/901/",
+            content="The white blood cells were elevated. This matter requires attention.",
+            snippet="WBC",
+            source="pubmed",
+            reliability_score=0.95,
+            medical_relevance=0.9,
+        )
+
+        ranked = manager._rank_results(
+            [separate, together],
+            query="white matter hyperintensity",
+            search_type="general",
+        )
+
+        assert ranked[0].url.endswith("/900/"), (
+            "Phrase 'white matter' should rank above separate 'white' and 'matter'"
+        )
+        assert ranked[0].ranking_score > ranked[1].ranking_score
+
+    def test_single_word_query_no_bigrams(self) -> None:
+        """Single-word query should produce no bigrams and not crash."""
+        manager = WebSearchManager()
+        result = SearchResult(
+            title="Tumor study",
+            url="https://pubmed.ncbi.nlm.nih.gov/902/",
+            content="Content",
+            snippet="S",
+            source="pubmed",
+            reliability_score=0.95,
+        )
+        ranked = manager._rank_results([result], query="tumor", search_type="general")
+        assert len(ranked) == 1
+        assert ranked[0].ranking_score == 1.0
+
+    def test_phrase_match_weight_in_config(self) -> None:
+        """phrase_match_weight must be a positive float in RankingWeights."""
+        from radiant_harness.config import RankingWeights
+
+        weights = RankingWeights()
+        assert weights.phrase_match_weight > 0
+
+    def test_phrase_match_weight_negative_raises(self) -> None:
+        """Negative phrase_match_weight should raise ValueError."""
+        from radiant_harness.config import RankingWeights
+
+        with pytest.raises(ValueError, match="phrase_match_weight"):
+            RankingWeights(phrase_match_weight=-0.1)
