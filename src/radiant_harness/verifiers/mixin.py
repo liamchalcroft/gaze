@@ -15,6 +15,34 @@ from beartype import beartype
 
 from radiant_harness.verifiers.rewards import BaseRewardFunction
 
+
+def _safe_resolve_image_path(base: Path, relative: str) -> str:
+    """Resolve a relative image path, ensuring it stays within *base*.
+
+    Prevents path traversal attacks where a malicious ``image_path`` like
+    ``../../etc/passwd`` could escape the intended image directory.
+
+    Args:
+        base: The trusted base directory for images.
+        relative: The untrusted relative path from user/dataset input.
+
+    Returns:
+        The resolved absolute path as a string.
+
+    Raises:
+        ValueError: If the resolved path escapes *base*.
+    """
+    resolved = (base / relative).resolve()
+    base_resolved = base.resolve()
+    # The resolved path must either *be* the base directory or start with
+    # it followed by a separator (to avoid prefix confusion like
+    # /data/images vs /data/images_evil).
+    if resolved != base_resolved and not str(resolved).startswith(str(base_resolved) + "/"):
+        raise ValueError(
+            f"Image path traversal blocked: '{relative}' resolves outside base directory"
+        )
+    return str(resolved)
+
 if TYPE_CHECKING:
     import verifiers as vf
 
@@ -132,9 +160,11 @@ class VerifiableProcessorMixin:
                 image_path = case.get("image_path") or case.get("image")
 
                 if image_path:
-                    # Resolve relative paths
+                    # Resolve relative paths safely (prevent traversal)
                     if self._image_base_path and not Path(image_path).is_absolute():
-                        image_path = str(self._image_base_path / image_path)
+                        image_path = _safe_resolve_image_path(
+                            self._image_base_path, image_path
+                        )
 
                     # Build multimodal message
                     text_content = self._processor.get_user_message(
@@ -165,7 +195,9 @@ class VerifiableProcessorMixin:
                 image_path = info.get("image_path") or info.get("image")
                 if image_path:
                     if self._image_base_path and not Path(image_path).is_absolute():
-                        image_path = str(self._image_base_path / image_path)
+                        image_path = _safe_resolve_image_path(
+                            self._image_base_path, image_path
+                        )
                     state["image_path"] = image_path
 
                 return state

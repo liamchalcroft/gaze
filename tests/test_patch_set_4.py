@@ -1,12 +1,17 @@
-"""Tests for Patch Set 4: LLM diagnosis evaluation judgment logging & majority vote."""
+"""Tests for Patch Set 4: LLM diagnosis judgment logging, evidence-tier reliability, path traversal."""
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+
+from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+from radiant_harness.retrieval.web_search import PubMedSearchEngine
+from radiant_harness.verifiers.mixin import _safe_resolve_image_path
 
 # Guard imports that chain through evaluation/__init__.py → detection.py → torch
 try:
