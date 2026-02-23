@@ -311,7 +311,7 @@ def test_set_preloaded_image_avoids_disk_read(tmp_path: Path) -> None:
     assert manager.has_image
     assert manager.current_image is not None
     assert manager.image_path == image_path
-    assert manager.current_image is manager._original_image
+    assert manager.current_image is not manager._original_image  # independent copies
 
 
 def test_set_preloaded_image_reset_works(tmp_path: Path) -> None:

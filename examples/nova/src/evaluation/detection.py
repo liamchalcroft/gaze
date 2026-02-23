@@ -11,7 +11,17 @@ from torchmetrics.detection.mean_ap import MeanAveragePrecision
 from radiant_harness.utils.iou import compute_iou
 
 # NOVA benchmark IoU thresholds
-IOU_THRESHOLD_LOOSE = 0.3  # Permissive threshold for partial matches
+#
+# Clinical context for brain MRI localization:
+# At IOU_THRESHOLD_LOOSE = 0.3, a predicted box needs only 30% overlap with
+# ground truth to count as a match.  For a small brain lesion (e.g. 5 mm in a
+# 240 mm FOV, ~10 px box), this tolerates ~15 mm spatial error — roughly the
+# width of a gyrus.  While appropriate for screening-level "did the model find
+# the right hemisphere/lobe?", it is too permissive for lesion-level precision.
+# IOU_THRESHOLD_STANDARD = 0.5 is the recommended threshold for clinical
+# evaluation; the 0.3 threshold is retained for NOVA protocol compatibility and
+# as a lenient secondary metric.
+IOU_THRESHOLD_LOOSE = 0.3  # Permissive — see clinical context above
 IOU_THRESHOLD_STANDARD = 0.5  # Standard COCO-style threshold
 
 # mAP@[50:95] range as floats — produces [0.5, 0.55, ..., 0.95] (10 thresholds)
@@ -48,12 +58,19 @@ def clamp_and_validate_box(
 def rescale_and_clamp_box(
     box: list[int | float], width: int | float, height: int | float
 ) -> list[float]:
-    """Rescale out-of-bounds coordinates proportionally, then clamp.
+    """Rescale out-of-bounds coordinates per-axis, then clamp.
 
     When a model outputs coordinates in a different coordinate space (e.g.
     [238, 223, 760, 479] for a 480x480 image), simple clamping squishes the
-    box.  This function detects the implicit coordinate range and rescales
-    all coordinates proportionally before clamping.
+    box.  This function detects the implicit coordinate range on each axis
+    independently and rescales accordingly.
+
+    Per-axis scaling is used instead of uniform scaling because the model may
+    be operating in a non-square coordinate space (e.g. it thinks the image
+    is 1000x500 when it is actually 480x480).  Uniform scaling with
+    ``min(scale_x, scale_y)`` would needlessly shift coordinates on the axis
+    that was already within bounds, degrading spatial accuracy for lesion
+    localization.
 
     Args:
         box: [x1, y1, x2, y2] bounding box coordinates.
@@ -72,19 +89,16 @@ def rescale_and_clamp_box(
     w = float(width)
     h = float(height)
 
-    # Detect if coordinates exceed image bounds — rescale proportionally
+    # Detect if coordinates exceed image bounds — rescale per-axis
     max_x = max(x1, x2)
     max_y = max(y1, y2)
     if max_x > w or max_y > h:
-        # Use uniform scale factor to preserve aspect ratio.
-        # Per-axis scaling distorts the box when only one axis overflows.
         scale_x = w / max_x if max_x > w else 1.0
         scale_y = h / max_y if max_y > h else 1.0
-        scale = min(scale_x, scale_y)
-        x1 *= scale
-        x2 *= scale
-        y1 *= scale
-        y2 *= scale
+        x1 *= scale_x
+        x2 *= scale_x
+        y1 *= scale_y
+        y2 *= scale_y
 
     # Final clamp to be safe
     x1 = max(0.0, min(x1, w))

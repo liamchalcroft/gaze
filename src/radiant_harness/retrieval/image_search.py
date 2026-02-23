@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import hashlib
+import ipaddress
 import json
 import shutil
 import tempfile
@@ -20,6 +21,7 @@ from types import MappingProxyType
 from types import TracebackType
 from typing import Any
 from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import aiohttp
 from beartype import beartype
@@ -32,46 +34,61 @@ from radiant_harness.config import get_config
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError
 
-_MODALITY_KEYWORDS = {
-    "mri": "MRI",
-    "magnetic resonance": "MRI",
-    "ct scan": "CT",
-    "computed tomography": "CT",
-    "x-ray": "X-ray",
-    "radiograph": "X-ray",
-    "ultrasound": "Ultrasound",
-    "sonography": "Ultrasound",
-    "pet": "PET",
-    "positron emission": "PET",
-    "flair": "MRI",
-    "t1-weighted": "MRI",
-    "t2-weighted": "MRI",
-    "dwi": "MRI",
-    "mammograph": "Mammography",
-}
+# Pre-sorted by keyword length (longest first) so longer, more specific
+# keywords are matched before shorter substrings (e.g. "ct scan" before "ct").
+# Sorted once at import time to avoid re-sorting on every extraction call.
+_MODALITY_KEYWORDS: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        {
+            "mri": "MRI",
+            "magnetic resonance": "MRI",
+            "ct scan": "CT",
+            "computed tomography": "CT",
+            "x-ray": "X-ray",
+            "radiograph": "X-ray",
+            "ultrasound": "Ultrasound",
+            "sonography": "Ultrasound",
+            "pet": "PET",
+            "positron emission": "PET",
+            "flair": "MRI",
+            "t1-weighted": "MRI",
+            "t2-weighted": "MRI",
+            "dwi": "MRI",
+            "mammograph": "Mammography",
+        }.items(),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+)
 
-_BODY_PART_KEYWORDS = {
-    "brain": "brain",
-    "cerebral": "brain",
-    "head": "head",
-    "chest": "chest",
-    "thorax": "chest",
-    "lung": "chest",
-    "pulmonary": "chest",
-    "abdomen": "abdomen",
-    "abdominal": "abdomen",
-    "liver": "abdomen",
-    "kidney": "abdomen",
-    "spine": "spine",
-    "spinal": "spine",
-    "vertebr": "spine",
-    "pelvis": "pelvis",
-    "hip": "pelvis",
-    "knee": "knee",
-    "shoulder": "shoulder",
-    "heart": "cardiac",
-    "cardiac": "cardiac",
-}
+_BODY_PART_KEYWORDS: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        {
+            "brain": "brain",
+            "cerebral": "brain",
+            "head": "head",
+            "chest": "chest",
+            "thorax": "chest",
+            "lung": "chest",
+            "pulmonary": "chest",
+            "abdomen": "abdomen",
+            "abdominal": "abdomen",
+            "liver": "abdomen",
+            "kidney": "abdomen",
+            "spine": "spine",
+            "spinal": "spine",
+            "vertebr": "spine",
+            "pelvis": "pelvis",
+            "hip": "pelvis",
+            "knee": "knee",
+            "shoulder": "shoulder",
+            "heart": "cardiac",
+            "cardiac": "cardiac",
+        }.items(),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+)
 
 # ---------------------------------------------------------------------------
 # Module-level temp-dir tracking for atexit cleanup
@@ -145,25 +162,52 @@ class ImageDownloadError(SearchEngineError):
         super().__init__("ImageDownload", f"Failed to download {url}: {message}", original_error)
 
 
+def _validate_download_url(url: str) -> None:
+    """Validate a download URL against SSRF attacks.
+
+    Enforces HTTPS scheme and rejects private, loopback, and link-local
+    addresses.  Called before fetching untrusted image URLs that originate
+    from external API responses (e.g. Open-i).
+
+    Raises:
+        ImageDownloadError: If the URL fails validation.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ImageDownloadError(
+            url,
+            f"Only HTTPS URLs are allowed for image downloads, got {parsed.scheme!r}",
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ImageDownloadError(url, "URL has no hostname")
+
+    # Reject well-known loopback hostnames
+    if hostname in ("localhost", "0.0.0.0"):  # noqa: S104
+        raise ImageDownloadError(
+            url,
+            f"Downloads from loopback addresses are not allowed: {hostname}",
+        )
+
+    # Reject bare-IP private/loopback/link-local addresses
+    try:
+        addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        return  # hostname is a regular DNS name — fine
+    if addr.is_private or addr.is_loopback or addr.is_link_local:
+        raise ImageDownloadError(
+            url,
+            f"Downloads from private/loopback addresses are not allowed: {hostname}",
+        )
+
+
 class ImageSearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
     """Base class for image search engines.
 
-    Inherits session management and retry logic from :class:`BaseSearchEngine`.
-    Adds image-search-specific Accept header.
+    Inherits session management, retry logic, and honest bot User-Agent
+    from :class:`BaseSearchEngine`.
     """
-
-    @beartype
-    def _get_headers(self) -> dict[str, str]:
-        """Get headers suited for JSON image-search APIs."""
-        return {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json, text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
 
     def _make_error(
         self,
@@ -189,7 +233,10 @@ class OpenISearchEngine(ImageSearchEngine):
         """
         super().__init__("Open-i", config=config)
         self.base_url = self._config.openi_base_url
-        self.openi_base_url = "https://openi.nlm.nih.gov/"  # For URL joining
+        # Derive the origin from the configured API URL for resolving
+        # relative image paths, instead of hardcoding a separate URL.
+        parsed = urlparse(self._config.openi_base_url)
+        self.openi_base_url = f"{parsed.scheme}://{parsed.netloc}/"
 
     async def _search_impl(self, query: str, max_results: int) -> list[ImageSearchResult]:
         params = {
@@ -227,6 +274,7 @@ class OpenISearchEngine(ImageSearchEngine):
         results: list[ImageSearchResult] = []
         items = data.get("list", [])
         skipped_no_image = 0
+        skipped_non_https = 0
 
         for item in items:
             # Get image URL - require at least one
@@ -242,6 +290,11 @@ class OpenISearchEngine(ImageSearchEngine):
                 image_url = urljoin(self.openi_base_url, image_url)
             if thumbnail_url and not thumbnail_url.startswith("http"):
                 thumbnail_url = urljoin(self.openi_base_url, thumbnail_url)
+
+            # Reject non-HTTPS image URLs from untrusted API responses
+            if not image_url.startswith("https://"):
+                skipped_non_https += 1
+                continue
 
             title = item.get("title") or "Medical Image"
             caption = item.get("caption", "")
@@ -281,15 +334,17 @@ class OpenISearchEngine(ImageSearchEngine):
 
         if skipped_no_image > 0:
             logger.debug(f"Skipped {skipped_no_image} Open-i results without image URLs")
+        if skipped_non_https > 0:
+            logger.warning(
+                f"Skipped {skipped_non_https} Open-i results with non-HTTPS image URLs"
+            )
         return results
 
     @beartype
     def _extract_modality(self, text: str) -> str | None:
         text_lower = text.lower()
-        # Check longer keywords first so "ct scan" matches before "ct" substring
-        for keyword, modality in sorted(
-            _MODALITY_KEYWORDS.items(), key=lambda kv: len(kv[0]), reverse=True
-        ):
+        # _MODALITY_KEYWORDS is pre-sorted longest-first at module level.
+        for keyword, modality in _MODALITY_KEYWORDS:
             if keyword in text_lower:
                 return modality
         return None
@@ -297,10 +352,8 @@ class OpenISearchEngine(ImageSearchEngine):
     @beartype
     def _extract_body_part(self, text: str) -> str | None:
         text_lower = text.lower()
-        # Check longer keywords first for more specific matches
-        for keyword, part in sorted(
-            _BODY_PART_KEYWORDS.items(), key=lambda kv: len(kv[0]), reverse=True
-        ):
+        # _BODY_PART_KEYWORDS is pre-sorted longest-first at module level.
+        for keyword, part in _BODY_PART_KEYWORDS:
             if keyword in text_lower:
                 return part
         return None
@@ -592,9 +645,15 @@ class MedicalImageSearchManager:
         """Perform the actual image download using the provided session.
 
         Raises:
-            ImageDownloadError: If download fails due to HTTP error, invalid
-                content type, failed magic-byte check, or oversized response.
+            ImageDownloadError: If download fails due to SSRF validation,
+                HTTP error, invalid content type, failed magic-byte check,
+                or oversized response.
         """
+        # SSRF gate: reject non-HTTPS, private, and loopback URLs before
+        # making any network request.  The URL originates from an untrusted
+        # external API response (e.g. Open-i).
+        _validate_download_url(result.image_url)
+
         async with session.get(
             result.image_url,
             timeout=aiohttp.ClientTimeout(total=30),

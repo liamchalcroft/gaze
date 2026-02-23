@@ -34,8 +34,22 @@ class LMStudioAdapter(OpenAIAdapter):
     supports_multipart_tool_content: bool = False
 
     @staticmethod
-    def _validate_base_url(_url: str) -> None:
-        """Allow any URL scheme — LM Studio uses HTTP by default."""
+    def _validate_base_url(url: str) -> None:
+        """Allow HTTP and HTTPS — LM Studio uses HTTP by default.
+
+        Rejects other schemes (file://, ftp://, etc.) to prevent SSRF or
+        unintended local file access through the OpenAI SDK.
+        """
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            from radiant_harness.exceptions import ModelError
+
+            raise ModelError(
+                f"LM Studio base_url must use http:// or https://, got {parsed.scheme!r}",
+                model_name=None,
+            )
 
     @beartype
     def __init__(

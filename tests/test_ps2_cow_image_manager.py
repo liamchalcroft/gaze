@@ -1,4 +1,4 @@
-"""Tests for copy-on-write ImageManager."""
+"""Tests for ImageManager copy isolation (original and current are independent)."""
 
 from __future__ import annotations
 
@@ -17,11 +17,14 @@ def _create_image(tmp_path: Path, name: str = "test.png", size: tuple[int, int] 
 
 
 class TestCOWSetImage:
-    def test_current_is_original_after_set_image(self, tmp_path: Path) -> None:
+    def test_current_independent_from_original_after_set_image(self, tmp_path: Path) -> None:
         path = _create_image(tmp_path)
         mgr = ImageManager()
         mgr.set_image(path)
-        assert mgr.current_image is mgr._original_image
+        # Current and original must be independent copies
+        assert mgr.current_image is not mgr._original_image
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == mgr._original_image.size
 
     def test_current_diverges_after_transform(self, tmp_path: Path) -> None:
         path = _create_image(tmp_path, size=(100, 100))
@@ -38,7 +41,7 @@ class TestCOWSetImage:
 
 
 class TestCOWSetPreloaded:
-    def test_current_is_original_after_preload(self, tmp_path: Path) -> None:
+    def test_preloaded_copies_are_independent(self, tmp_path: Path) -> None:
         path = _create_image(tmp_path)
         img = Image.open(path)
         img.load()
@@ -46,8 +49,10 @@ class TestCOWSetPreloaded:
         mgr = ImageManager()
         mgr.set_preloaded_image(img, path)
 
-        assert mgr.current_image is mgr._original_image
-        assert mgr.current_image is img
+        # Manager copies the input; caller retains ownership
+        assert mgr.current_image is not mgr._original_image
+        assert mgr.current_image is not img
+        assert mgr._original_image is not img
 
     def test_preload_then_transform_preserves_original(self, tmp_path: Path) -> None:
         path = _create_image(tmp_path, size=(80, 80))
@@ -66,13 +71,13 @@ class TestCOWSetPreloaded:
 
 class TestCOWEnsureLoaded:
     @pytest.mark.asyncio
-    async def test_ensure_loaded_cow(self, tmp_path: Path) -> None:
+    async def test_ensure_loaded_creates_independent_copies(self, tmp_path: Path) -> None:
         path = _create_image(tmp_path)
         mgr = ImageManager()
         mgr._image_path = path.resolve()
 
         await mgr.ensure_loaded()
-        assert mgr.current_image is mgr._original_image
+        assert mgr.current_image is not mgr._original_image
 
 
 class TestCOWClose:
@@ -104,17 +109,20 @@ class TestCOWClose:
 
 
 class TestCOWReset:
-    def test_reset_noop_in_cow_state(self, tmp_path: Path) -> None:
-        """When no transform has happened, reset is a no-op."""
+    def test_reset_always_creates_fresh_copy(self, tmp_path: Path) -> None:
+        """Reset always creates a new copy of the original, even without prior transform."""
         path = _create_image(tmp_path, size=(100, 100))
         mgr = ImageManager()
         mgr.set_image(path)
 
-        original_ref = mgr._original_image
+        old_current = mgr.current_image
         mgr.reset_to_original()
 
-        assert mgr.current_image is original_ref
-        assert mgr._original_image is original_ref
+        # After reset, current is a fresh copy of original
+        assert mgr.current_image is not mgr._original_image
+        assert mgr.current_image is not old_current
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (100, 100)
 
     def test_reset_after_transform_copies_original(self, tmp_path: Path) -> None:
         """After a transform, reset creates a new copy of the original."""

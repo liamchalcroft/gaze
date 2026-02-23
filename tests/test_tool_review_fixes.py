@@ -120,11 +120,17 @@ class TestWindowLevelMinWidth:
         with pytest.raises(ValueError, match="width must be >= "):
             apply_window_level(img, center=128, width=1)
 
-    def test_width_2_succeeds(self) -> None:
-        """width=2 (the new default minimum) must work."""
+    def test_width_10_succeeds(self) -> None:
+        """width=10 (the default minimum) must work."""
         img = Image.new("L", (32, 32), color=128)
-        result = apply_window_level(img, center=128, width=2)
+        result = apply_window_level(img, center=128, width=10)
         assert result.size == (32, 32)
+
+    def test_width_below_minimum_fails(self) -> None:
+        """width below min_window_width=10 must be rejected."""
+        img = Image.new("L", (32, 32), color=128)
+        with pytest.raises(ValueError, match="width must be >= "):
+            apply_window_level(img, center=128, width=2)
 
     def test_preset_stroke_still_works(self) -> None:
         """The 'stroke' preset has width=8, must still work."""
@@ -215,3 +221,114 @@ class TestEnumSchemaSync:
                         f"{name}.{pname} enum mismatch: "
                         f"schema={set(pdef['enum'])} vs expected={expected_enums[key]}"
                     )
+
+
+# ── Patch Set #2: window_level float division ────────────────────
+
+
+class TestWindowLevelFloatDivision:
+    """Verify apply_window_level uses float (not integer) division for bounds."""
+
+    def test_odd_width_not_lossy(self) -> None:
+        """With center=128, width=11, effective window should be exactly 11, not 10."""
+        import numpy as np
+
+        img = Image.new("L", (32, 32), color=128)
+        result = apply_window_level(img, center=128, width=11)
+        arr = np.array(result)
+        # center=128, width=11 → lower=122.5, upper=133.5
+        # pixel=128 is within [122.5, 133.5] and should map to ~128
+        # With old integer division: lower=123, upper=133 (window=10, asymmetric)
+        # With float division: lower=122.5, upper=133.5 (window=11, symmetric)
+        assert arr.max() > 0, "Odd-width window should not produce all-black"
+        # The center pixel (128) should map to approximately the midpoint
+        expected_mid = int((128 - 122.5) / 11 * 255)
+        assert abs(int(arr[0, 0]) - expected_mid) <= 1
+
+    def test_symmetric_windowing(self) -> None:
+        """Window bounds should be symmetric around center for any width."""
+        import numpy as np
+
+        # Pixel at center-5 and center+5 should map to symmetric output
+        img_data = np.full((1, 11), 0, dtype=np.uint8)
+        for i in range(11):
+            img_data[0, i] = 95 + i  # 95..105
+        img = Image.fromarray(img_data, mode="L")
+        result = apply_window_level(img, center=100, width=11)
+        arr = np.array(result, dtype=np.float64)
+        # lower=94.5, upper=105.5 → all pixels within range
+        # pixel 95 → (95-94.5)/11*255 ≈ 11.6
+        # pixel 105 → (105-94.5)/11*255 ≈ 243.4
+        # Values at equal distance from center should be symmetric
+        mid = 5  # center pixel (value=100)
+        for offset in range(1, 5):
+            lo_val = arr[0, mid - offset]
+            hi_val = arr[0, mid + offset]
+            assert abs(lo_val + hi_val - 255) <= 2, (
+                f"offset={offset}: lo={lo_val}, hi={hi_val}, sum={lo_val + hi_val} != ~255"
+            )
+
+
+# ── Patch Set #3: config min_window_width >= 2 ──────────────────
+
+
+class TestMinWindowWidthConfig:
+    """Verify config rejects min_window_width < 2."""
+
+    def test_min_window_width_1_rejected(self) -> None:
+        """min_window_width=1 would produce degenerate output; config must reject it."""
+        with pytest.raises(ValueError, match="min_window_width must be >= 2"):
+            ImageProcessingConfig(min_window_width=1)
+
+    def test_min_window_width_0_rejected(self) -> None:
+        with pytest.raises(ValueError, match="min_window_width must be >= 2"):
+            ImageProcessingConfig(min_window_width=0)
+
+    def test_min_window_width_2_accepted(self) -> None:
+        cfg = ImageProcessingConfig(min_window_width=2)
+        assert cfg.min_window_width == 2
+
+
+# ── Patch Set #4: schema "default": null not emitted ─────────────
+
+
+class TestSchemaNoNullDefault:
+    """Verify that 'default': None parameters don't emit 'default': null in schemas."""
+
+    def test_no_null_defaults_in_any_schema(self) -> None:
+        """No generated schema property should contain 'default': null."""
+        tools = create_visual_tools()
+        doc = ToolDocumenter(tools)
+        schemas = doc.get_tool_schemas()
+
+        violations: list[str] = []
+        for schema in schemas:
+            fn = schema["function"]
+            name = fn["name"]
+            for pname, pdef in fn["parameters"]["properties"].items():
+                if "default" in pdef and pdef["default"] is None:
+                    violations.append(f"{name}.{pname}")
+
+        assert not violations, (
+            f"Schema properties with 'default': null (invalid for typed fields): {violations}"
+        )
+
+    def test_window_level_center_not_required(self) -> None:
+        """center param should be optional (not in required) but without null default."""
+        tools = create_visual_tools()
+        doc = ToolDocumenter(tools)
+        schemas = doc.get_tool_schemas()
+        wl = next(s for s in schemas if s["function"]["name"] == "window_level")
+        params = wl["function"]["parameters"]
+        assert "center" not in params["required"]
+        assert "default" not in params["properties"]["center"]
+
+    def test_morphological_threshold_value_not_required(self) -> None:
+        """threshold_value param should be optional without null default."""
+        tools = create_visual_tools()
+        doc = ToolDocumenter(tools)
+        schemas = doc.get_tool_schemas()
+        morph = next(s for s in schemas if s["function"]["name"] == "morphological")
+        params = morph["function"]["parameters"]
+        assert "threshold_value" not in params["required"]
+        assert "default" not in params["properties"]["threshold_value"]

@@ -280,9 +280,21 @@ class IoUReward(BaseRewardFunction):
         # For pixel coords, image_area must be supplied via info dict.
         if self.area_penalty_start < 1.0:
             if self.normalized:
-                # Only apply when coords are actually in [0,1] range.
                 coords_in_range = all(0.0 <= c <= 1.0 for c in pred_floats)
-                image_area = 1.0 if coords_in_range else 0.0
+                if coords_in_range:
+                    image_area = 1.0
+                else:
+                    # Coords are pixel-scale despite normalized=True.
+                    # Infer image area from info or max coordinate extent so
+                    # the area penalty still applies — prevents reward hacking
+                    # by outputting full-image pixel boxes.
+                    image_area = float(
+                        info.get(
+                            "image_area",
+                            max(pred_floats[2], pred_floats[0])
+                            * max(pred_floats[3], pred_floats[1]),
+                        )
+                    )
             else:
                 image_area = float(info.get("image_area", 0.0))
             if image_area > 0:

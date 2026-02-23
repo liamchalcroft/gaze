@@ -256,3 +256,49 @@ class TestContentLengthMalformed:
         with patch("aiohttp.ClientSession", return_value=mock_session):
             filepath = await mgr.download_image(result)
             assert filepath.exists()
+
+
+class TestKeywordMapsPreSorted:
+    """Module-level keyword maps must be pre-sorted tuples (not dicts)."""
+
+    def test_modality_keywords_is_tuple(self) -> None:
+        from radiant_harness.retrieval.image_search import _MODALITY_KEYWORDS
+
+        assert isinstance(_MODALITY_KEYWORDS, tuple)
+        # Each element should be a (keyword, modality) pair
+        for item in _MODALITY_KEYWORDS:
+            assert isinstance(item, tuple) and len(item) == 2
+
+    def test_body_part_keywords_is_tuple(self) -> None:
+        from radiant_harness.retrieval.image_search import _BODY_PART_KEYWORDS
+
+        assert isinstance(_BODY_PART_KEYWORDS, tuple)
+        for item in _BODY_PART_KEYWORDS:
+            assert isinstance(item, tuple) and len(item) == 2
+
+    def test_modality_keywords_sorted_longest_first(self) -> None:
+        from radiant_harness.retrieval.image_search import _MODALITY_KEYWORDS
+
+        lengths = [len(kw) for kw, _ in _MODALITY_KEYWORDS]
+        assert lengths == sorted(lengths, reverse=True)
+
+    def test_body_part_keywords_sorted_longest_first(self) -> None:
+        from radiant_harness.retrieval.image_search import _BODY_PART_KEYWORDS
+
+        lengths = [len(kw) for kw, _ in _BODY_PART_KEYWORDS]
+        assert lengths == sorted(lengths, reverse=True)
+
+
+class TestOpeniBaseUrlDerived:
+    """openi_base_url for relative URL resolution must derive from config."""
+
+    def test_default_config_derives_origin(self) -> None:
+        engine = OpenISearchEngine()
+        assert engine.openi_base_url == "https://openi.nlm.nih.gov/"
+
+    def test_custom_config_derives_origin(self) -> None:
+        from radiant_harness.config import SearchConfig
+
+        config = SearchConfig(openi_base_url="https://custom.example.com:8080/api/search")
+        engine = OpenISearchEngine(config=config)
+        assert engine.openi_base_url == "https://custom.example.com:8080/"

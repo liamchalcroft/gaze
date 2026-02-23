@@ -615,3 +615,28 @@ class TestRateLimitSingleDelay:
         assert len(rate_limit_sleeps) == 1, (
             f"Expected 1 rate-limit sleep, got {len(rate_limit_sleeps)}: {sleep_calls}"
         )
+
+
+class TestCreateSnippetUsesInstanceConfig:
+    """_create_snippet must use self._config, not get_config()."""
+
+    def test_snippet_respects_engine_config(self) -> None:
+        """Snippet length should be driven by the engine's SearchConfig,
+        not the global default.
+        """
+        config = SearchConfig(max_snippet_length=20)
+        engine = PubMedSearchEngine(config=config)
+
+        title = "Title"
+        content = "A" * 100
+        snippet = engine._create_snippet(title, content)
+        # With max_snippet_length=20, snippet cannot exceed 20 + "..."
+        assert len(snippet) <= 23  # 20 chars + "..."
+
+    def test_snippet_default_config_allows_longer(self) -> None:
+        """Default config (100 chars) should produce a longer snippet."""
+        engine = PubMedSearchEngine()  # default max_snippet_length=100
+        title = "Title"
+        content = "B" * 200
+        snippet = engine._create_snippet(title, content)
+        assert len(snippet) > 23  # longer than the 20-char test above

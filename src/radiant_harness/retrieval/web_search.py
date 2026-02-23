@@ -26,6 +26,7 @@ from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError
+from radiant_harness.retrieval.base import _sanitize_exception_message
 
 # Note: SSL verification is enabled by default for security.
 # If you encounter SSL issues with specific endpoints, handle them explicitly
@@ -68,26 +69,9 @@ class SearchEngine(BaseSearchEngine[SearchResult, SearchError]):
     """Base class for web search engines.
 
     Inherits session management and retry logic from :class:`BaseSearchEngine`.
-    Adds web-specific headers and reliability scoring.
+    Inherits honest bot User-Agent from :class:`BaseSearchEngine`.
+    Adds reliability scoring.
     """
-
-    @beartype
-    def _get_headers(self) -> dict[str, str]:
-        """Get standard headers for web requests."""
-        user_agent = (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-        return {
-            "User-Agent": user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-        }
 
     def _make_error(
         self,
@@ -371,7 +355,10 @@ class PubMedSearchEngine(SearchEngine):
                     return {}
                 xml_text = await response.text()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.warning(f"efetch request failed ({exc}); proceeding without abstracts")
+            logger.warning(
+                f"efetch request failed ({_sanitize_exception_message(exc)}); "
+                "proceeding without abstracts"
+            )
             return {}
 
         return self._parse_abstracts_xml(xml_text)
@@ -453,11 +440,10 @@ class PubMedSearchEngine(SearchEngine):
         if not content or content == title:
             return title
 
-        config = get_config()
-        # First configured number of characters of content, or first sentence
-        snippet = content[: config.search.max_snippet_length]
+        max_len = self._config.max_snippet_length
+        snippet = content[:max_len]
         sentence_end = snippet.rfind(".")
-        if sentence_end > config.search.max_snippet_length // 2:  # Prefer sentence boundaries
+        if sentence_end > max_len // 2:  # Prefer sentence boundaries
             snippet = snippet[: sentence_end + 1]
         elif len(snippet) < len(content):
             snippet += "..."

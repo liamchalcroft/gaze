@@ -7,10 +7,16 @@ NOTE: This schema uses OpenAI strict mode ("strict": true), which requires:
   - Every object must have "additionalProperties": false
   - Every property in an object must be listed in "required"
   - No optional properties (use nullable types instead if needed)
+
+OpenAI strict mode does NOT support: minItems, maxItems, minimum, maximum,
+minLength, maxLength, pattern, format, uniqueItems.  Semantic constraints
+(e.g. bounding_box has exactly 4 elements, confidence in [0,1]) are enforced
+by validate_nova_response() instead.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 # NOVA Unified Response Schema for all three tasks
@@ -195,46 +201,109 @@ def get_required_fields() -> list[str]:
     return ["caption", "diagnosis", "localization", "continue"]
 
 
+def _is_valid_confidence(value: object) -> bool:
+    """Check that a confidence value is a finite number in [0.0, 1.0]."""
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, int | float):
+        return False
+    f = float(value)
+    if math.isnan(f) or math.isinf(f):
+        return False
+    return 0.0 <= f <= 1.0
+
+
+def _is_valid_bbox(value: object) -> bool:
+    """Check that a bounding box is a list of exactly 4 finite numbers."""
+    if not isinstance(value, list) or len(value) != 4:
+        return False
+    for coord in value:
+        if isinstance(coord, bool):
+            return False
+        if not isinstance(coord, int | float):
+            return False
+        f = float(coord)
+        if math.isnan(f) or math.isinf(f):
+            return False
+    return True
+
+
 def validate_nova_response(response: dict[str, Any]) -> bool:
     """Validate that a response has required NOVA fields with correct types.
 
-    Checks both top-level field presence and basic nested structure to catch
-    malformed outputs that would silently produce garbage evaluation scores.
+    Checks top-level presence, nested structure, and semantic constraints
+    that OpenAI strict mode cannot enforce (element counts, numeric bounds).
+    This catches malformed outputs that would silently produce garbage
+    evaluation scores.
 
     Args:
         response: Parsed JSON response
 
     Returns:
-        True if all required fields present with correct types
+        True if all required fields present with correct types and values
     """
     required = get_required_fields()
     if not all(field in response for field in required):
         return False
 
-    # Validate nested structure — each section must be a dict
+    # --- caption ---
     caption = response.get("caption")
     if not isinstance(caption, dict):
         return False
-    # caption.description is required for evaluation
     if not isinstance(caption.get("description"), str):
         return False
+    cap_conf = caption.get("confidence")
+    if cap_conf is not None and not _is_valid_confidence(cap_conf):
+        return False
 
+    # --- diagnosis ---
     diagnosis = response.get("diagnosis")
     if not isinstance(diagnosis, dict):
         return False
-    # diagnosis.primary_diagnosis is required for evaluation
     if not isinstance(diagnosis.get("primary_diagnosis"), str):
         return False
+    diag_conf = diagnosis.get("confidence")
+    if diag_conf is not None and not _is_valid_confidence(diag_conf):
+        return False
+    # evidence must be a list of strings when present
+    evidence = diagnosis.get("evidence")
+    if evidence is not None:
+        if not isinstance(evidence, list):
+            return False
+        if not all(isinstance(e, str) for e in evidence):
+            return False
+    # differential_diagnoses element validation
+    diffs = diagnosis.get("differential_diagnoses")
+    if diffs is not None:
+        if not isinstance(diffs, list):
+            return False
+        for diff in diffs:
+            if not isinstance(diff, dict):
+                return False
+            if not isinstance(diff.get("diagnosis"), str):
+                return False
+            if not _is_valid_confidence(diff.get("confidence")):
+                return False
 
+    # --- localization ---
     localization = response.get("localization")
     if not isinstance(localization, dict):
         return False
-    # localization.localizations must be a list
-    if not isinstance(localization.get("localizations"), list):
+    localizations_list = localization.get("localizations")
+    if not isinstance(localizations_list, list):
         return False
+    # Validate each localization element
+    for loc in localizations_list:
+        if not isinstance(loc, dict):
+            return False
+        if not isinstance(loc.get("finding"), str):
+            return False
+        if not _is_valid_bbox(loc.get("bounding_box")):
+            return False
+        if not isinstance(loc.get("anatomical_location"), str):
+            return False
+        if not _is_valid_confidence(loc.get("confidence")):
+            return False
 
-    # continue must be bool
-    if not isinstance(response.get("continue"), bool):
-        return False
-
-    return True
+    # --- continue ---
+    return isinstance(response.get("continue"), bool)

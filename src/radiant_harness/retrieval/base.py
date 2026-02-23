@@ -8,6 +8,7 @@ handling that was duplicated between ``SearchEngine`` (web) and
 from __future__ import annotations
 
 import asyncio
+import re
 from abc import ABC
 from abc import abstractmethod
 from typing import Generic
@@ -20,6 +21,23 @@ from loguru import logger
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import HarnessError
+
+# ---------------------------------------------------------------------------
+# Credential scrubbing
+# ---------------------------------------------------------------------------
+_SENSITIVE_QS_RE = re.compile(r"(api_key=)[^&\s)\"']+")
+
+
+def _sanitize_exception_message(exc: Exception) -> str:
+    """Produce a safe string from *exc*, redacting sensitive URL query params.
+
+    aiohttp exceptions may embed the full request URL (including query
+    parameters like ``api_key``) in their string representation.  This helper
+    replaces known sensitive parameter values with ``[REDACTED]`` so that
+    credentials are never written to log files.
+    """
+    return _SENSITIVE_QS_RE.sub(r"\1[REDACTED]", str(exc))
+
 
 # ---------------------------------------------------------------------------
 # Generic type variables
@@ -110,17 +128,20 @@ class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
 
     @beartype
     def _get_headers(self) -> dict[str, str]:
-        """Return default HTTP headers.
+        """Return default HTTP headers with an honest bot User-Agent.
 
-        Subclasses may override to supply engine-specific headers.
+        Automated tools should identify themselves honestly rather than
+        impersonating browsers.  This helps API operators apply appropriate
+        rate-limiting and avoids violating terms of service.
+
+        Subclasses may override to supply engine-specific headers (e.g.
+        PubMed adds ``mailto:`` and version information).
         """
+        import radiant_harness
+
         return {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": f"radiant_harness/{radiant_harness.__version__}",
+            "Accept": "application/json, application/xml, text/html;q=0.9, */*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
 
@@ -142,7 +163,10 @@ class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
                 return await self._search_impl(query, max_results)
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
                 last_error = e
-                logger.warning(f"Search attempt {attempt + 1} failed for {self.name}: {e}")
+                logger.warning(
+                    f"Search attempt {attempt + 1} failed for {self.name}: "
+                    f"{_sanitize_exception_message(e)}"
+                )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2**attempt)
 

@@ -72,35 +72,23 @@ class NovaDataset:
     def __len__(self) -> int:
         return len(self._df)
 
-    @beartype
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Get complete sample with image, metadata, and ground truth."""
-        if idx < 0 or idx >= len(self._df):
-            raise IndexError(f"Index {idx} out of range [0, {len(self._df)})")
+    def _extract_row_metadata(self, idx: int) -> dict[str, Any]:
+        """Extract metadata and ground truth from a dataframe row.
 
+        Shared by ``__getitem__`` and ``get_sample_metadata`` to avoid
+        duplicating field-extraction logic.
+        """
         row = self._df.iloc[idx]
-
-        # Load image from repo
-        image_path = self._repo_dir / row["image_path"]
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
-        image = Image.open(image_path).convert("RGB")
-
-        if self.transform:
-            image = self.transform(image)
 
         filename = row["filename"]
         case_id = row["case_id"]
         scan_id = row["scan_id"]
         caption = row["caption_text"]
 
-        # Extract metadata from the 'meta' dict
         meta = row["meta"] if isinstance(row["meta"], dict) else {}
         clinical_history = meta.get("clinical_history", "")
         final_diagnosis = meta.get("final_diagnosis", "")
 
-        # Extract gold-standard bounding boxes
         bboxes_raw = row["bboxes"] if row["bboxes"] is not None else []
         localizations = []
         for bbox in bboxes_raw:
@@ -112,11 +100,12 @@ class NovaDataset:
             y = float(bbox["y"])
             w = float(bbox["width"])
             h = float(bbox["height"])
-            # Convert (x, y, width, height) to (x1, y1, x2, y2)
             localizations.append({"bbox": (x, y, x + w, y + h)})
 
+        image_path = self._repo_dir / row["image_path"]
+
         return {
-            "image": image,
+            "image_path": image_path,
             "metadata": {
                 "image_id": idx,
                 "filename": filename,
@@ -139,6 +128,53 @@ class NovaDataset:
             "hf_index": idx,
             "has_ground_truth": True,
         }
+
+    @beartype
+    def get_sample_metadata(self, idx: int) -> dict[str, Any]:
+        """Get sample metadata and ground truth without decoding pixel data.
+
+        Reads image dimensions from the file header (no full pixel decode),
+        making this much cheaper than ``__getitem__`` for pre-validation
+        loops that don't need the actual image tensor.
+
+        Returns:
+            Dict with ``image_path``, ``image_size``, ``metadata``,
+            ``ground_truth``, ``hf_index``, and ``has_ground_truth``.
+        """
+        if idx < 0 or idx >= len(self._df):
+            raise IndexError(f"Index {idx} out of range [0, {len(self._df)})")
+
+        info = self._extract_row_metadata(idx)
+        image_path: Path = info["image_path"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        # PIL reads only the file header here — no pixel decode.
+        with Image.open(image_path) as img:
+            info["image_size"] = img.size
+
+        return info
+
+    @beartype
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Get complete sample with image, metadata, and ground truth."""
+        if idx < 0 or idx >= len(self._df):
+            raise IndexError(f"Index {idx} out of range [0, {len(self._df)})")
+
+        info = self._extract_row_metadata(idx)
+        image_path: Path = info["image_path"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        image = Image.open(image_path).convert("RGB")
+
+        if self.transform:
+            image = self.transform(image)
+
+        info["image"] = image
+        # Remove internal-only key not part of __getitem__ contract
+        del info["image_path"]
+        return info
 
 
 @beartype

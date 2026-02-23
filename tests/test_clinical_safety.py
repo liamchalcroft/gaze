@@ -4,6 +4,8 @@ Tests cover:
 1. Diagnosis matching — no clinically wrong equivalences
 2. Threshold tool — minimum window width prevents destructive windowing
 3. Schema validation — nested structure validation catches malformed outputs
+4. IoU area penalty — reward hacking prevention via coordinate range evasion
+5. Config bounds — safe defaults for medical imaging
 """
 
 from __future__ import annotations
@@ -147,16 +149,16 @@ class TestThresholdWindowSafety:
         assert result.size == (100, 100)
 
     def test_minimum_valid_window(self) -> None:
-        """Window exactly at minimum (default=30) should succeed."""
+        """Window exactly at minimum (default=50) should succeed."""
         img = self._make_gray_image()
-        result = apply_intensity_threshold(img, 100, 130)
+        result = apply_intensity_threshold(img, 100, 150)
         assert result.size == (100, 100)
 
     def test_one_below_minimum_fails(self) -> None:
         """Window one below minimum should fail."""
         img = self._make_gray_image()
         with pytest.raises(ValueError, match="below minimum"):
-            apply_intensity_threshold(img, 100, 129)
+            apply_intensity_threshold(img, 100, 149)
 
     def test_config_validation(self) -> None:
         """min_threshold_window must be in [1, 255]."""
@@ -254,4 +256,344 @@ class TestSchemaValidationSafety:
     def test_continue_true_is_valid(self) -> None:
         resp = _make_valid_response()
         resp["continue"] = True
+        assert validate_nova_response(resp) is True
+
+
+# =====================================================================
+# 4. IoU area penalty — reward hacking prevention
+# =====================================================================
+
+
+class TestIoUAreaPenaltyBypass:
+    """Verify the area penalty cannot be evaded by coordinate range mismatch.
+
+    Before fix: IoUReward(normalized=True) with pixel-scale coords set
+    image_area=0 and silently skipped the penalty.  A model could game
+    reward by predicting full-image pixel boxes.
+    """
+
+    def test_normalized_mode_pixel_coords_still_penalized(self) -> None:
+        """When normalized=True but model outputs pixel coords,
+        the area penalty must still apply."""
+        from radiant_harness.verifiers.rewards import IoUReward
+
+        reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
+
+        info = {"bbox": [0, 0, 512, 512]}
+        completion = "[0, 0, 512, 512]"
+        reward = reward_fn("prompt", completion, info)
+
+        # IoU=1.0, area_ratio≈1.0 → penalty should drive reward near 0
+        assert reward < 0.5, (
+            f"Full-image pixel box got reward={reward} in normalized mode. "
+            f"Area penalty was bypassed."
+        )
+
+    def test_normalized_mode_valid_coords_penalized(self) -> None:
+        """Full-image box in [0,1] range gets full penalty."""
+        from radiant_harness.verifiers.rewards import IoUReward
+
+        reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
+
+        info = {"bbox": [0.0, 0.0, 1.0, 1.0]}
+        completion = "[0.0, 0.0, 1.0, 1.0]"
+        reward = reward_fn("prompt", completion, info)
+
+        assert reward == 0.0, (
+            f"Full-image normalized box should get reward=0.0, got {reward}"
+        )
+
+    def test_normalized_mode_small_box_no_penalty(self) -> None:
+        """Small boxes below penalty_start should not be penalized."""
+        from radiant_harness.verifiers.rewards import IoUReward
+
+        reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
+
+        info = {"bbox": [0.2, 0.2, 0.3, 0.3]}
+        completion = "[0.2, 0.2, 0.3, 0.3]"
+        reward = reward_fn("prompt", completion, info)
+
+        assert reward == 1.0, (
+            f"Small box with perfect IoU should get reward=1.0, got {reward}"
+        )
+
+
+# =====================================================================
+# 5. Config bounds — safe defaults for medical imaging
+# =====================================================================
+
+
+class TestConfigBoundsDefaults:
+    """Verify default config bounds prevent diagnostic information destruction."""
+
+    def test_min_threshold_window_default_at_least_50(self) -> None:
+        """A 30-unit window (11.8% of 8-bit range) destroys subtle lesion
+        contrast. Default must be >= 50 for brain MRI safety."""
+        from radiant_harness.config import get_config
+
+        cfg = get_config()
+        assert cfg.image.min_threshold_window >= 50
+
+    def test_min_window_width_default_at_least_10(self) -> None:
+        """A 2-unit window reduces 8-bit images to near-binary."""
+        from radiant_harness.config import get_config
+
+        cfg = get_config()
+        assert cfg.image.min_window_width >= 10
+
+
+# =====================================================================
+# 6. Schema validation — element-level localization checks (Patch Set 2)
+# =====================================================================
+
+
+class TestSchemaValidationLocalizationElements:
+    """Verify that validate_nova_response catches malformed localization elements.
+
+    Before PS2: localizations could be any list — [{"garbage": 1}] passed.
+    After PS2: each element must have finding (str), bounding_box (4 nums),
+    anatomical_location (str), confidence (0-1 float).
+    """
+
+    def test_empty_localizations_list_passes(self) -> None:
+        """Empty list is valid — model found no abnormalities."""
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = []
+        assert validate_nova_response(resp) is True
+
+    def test_garbage_element_rejected(self) -> None:
+        """An element without required keys must fail."""
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = [{"garbage": True}]
+        assert validate_nova_response(resp) is False
+
+    def test_missing_finding_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = [
+            {
+                "bounding_box": [10, 20, 50, 60],
+                "anatomical_location": "frontal lobe",
+                "confidence": 0.8,
+            }
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_missing_bounding_box_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = [
+            {
+                "finding": "mass",
+                "anatomical_location": "frontal lobe",
+                "confidence": 0.8,
+            }
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_missing_anatomical_location_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = [
+            {
+                "finding": "mass",
+                "bounding_box": [10, 20, 50, 60],
+                "confidence": 0.8,
+            }
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_missing_confidence_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"] = [
+            {
+                "finding": "mass",
+                "bounding_box": [10, 20, 50, 60],
+                "anatomical_location": "frontal lobe",
+            }
+        ]
+        assert validate_nova_response(resp) is False
+
+
+class TestSchemaValidationBoundingBox:
+    """Verify bounding_box must be exactly 4 finite numbers."""
+
+    def test_three_element_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10, 20, 50]
+        assert validate_nova_response(resp) is False
+
+    def test_five_element_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10, 20, 50, 60, 99]
+        assert validate_nova_response(resp) is False
+
+    def test_one_element_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10]
+        assert validate_nova_response(resp) is False
+
+    def test_empty_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = []
+        assert validate_nova_response(resp) is False
+
+    def test_string_in_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10, "twenty", 50, 60]
+        assert validate_nova_response(resp) is False
+
+    def test_nan_in_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10, float("nan"), 50, 60]
+        assert validate_nova_response(resp) is False
+
+    def test_inf_in_bbox_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10, float("inf"), 50, 60]
+        assert validate_nova_response(resp) is False
+
+    def test_bool_in_bbox_rejected(self) -> None:
+        """bool is technically a subclass of int in Python — must be excluded."""
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [True, False, True, False]
+        assert validate_nova_response(resp) is False
+
+    def test_valid_four_element_bbox_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [0, 0, 512, 512]
+        assert validate_nova_response(resp) is True
+
+    def test_float_bbox_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["bounding_box"] = [10.5, 20.3, 50.7, 60.1]
+        assert validate_nova_response(resp) is True
+
+
+class TestSchemaValidationConfidence:
+    """Verify confidence must be a finite number in [0.0, 1.0]."""
+
+    def test_confidence_above_one_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = 1.5
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_negative_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = -0.1
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_ninety_nine_rejected(self) -> None:
+        """Model outputting confidence: 99.0 (percentage) must be caught."""
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = 99.0
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_nan_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = float("nan")
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_inf_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = float("inf")
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_bool_rejected(self) -> None:
+        """bool is technically int in Python — confidence: True should fail."""
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = True
+        assert validate_nova_response(resp) is False
+
+    def test_confidence_zero_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = 0.0
+        assert validate_nova_response(resp) is True
+
+    def test_confidence_one_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["localization"]["localizations"][0]["confidence"] = 1.0
+        assert validate_nova_response(resp) is True
+
+    def test_caption_confidence_above_one_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["caption"]["confidence"] = 5.0
+        assert validate_nova_response(resp) is False
+
+    def test_diagnosis_confidence_above_one_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["confidence"] = 2.0
+        assert validate_nova_response(resp) is False
+
+    def test_caption_confidence_none_allowed(self) -> None:
+        """confidence is optional in caption — None should pass."""
+        resp = _make_valid_response()
+        del resp["caption"]["confidence"]
+        assert validate_nova_response(resp) is True
+
+
+class TestSchemaValidationDifferentialDiagnoses:
+    """Verify differential_diagnoses elements are validated."""
+
+    def test_diff_missing_diagnosis_string_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["differential_diagnoses"] = [
+            {"confidence": 0.5}
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_diff_missing_confidence_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["differential_diagnoses"] = [
+            {"diagnosis": "meningioma"}
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_diff_confidence_above_one_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["differential_diagnoses"] = [
+            {"diagnosis": "meningioma", "confidence": 1.5}
+        ]
+        assert validate_nova_response(resp) is False
+
+    def test_diff_not_a_dict_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["differential_diagnoses"] = ["meningioma"]
+        assert validate_nova_response(resp) is False
+
+    def test_valid_differential_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["differential_diagnoses"] = [
+            {"diagnosis": "meningioma", "confidence": 0.3},
+            {"diagnosis": "metastasis", "confidence": 0.2},
+        ]
+        assert validate_nova_response(resp) is True
+
+    def test_no_differentials_passes(self) -> None:
+        """differential_diagnoses is optional — absent should pass."""
+        resp = _make_valid_response()
+        # Not present in _make_valid_response by default
+        assert "differential_diagnoses" not in resp["diagnosis"]
+        assert validate_nova_response(resp) is True
+
+
+class TestSchemaValidationEvidence:
+    """Verify evidence list elements are validated."""
+
+    def test_evidence_with_non_string_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["evidence"] = ["ring enhancement", 42]
+        assert validate_nova_response(resp) is False
+
+    def test_evidence_not_a_list_rejected(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["evidence"] = "ring enhancement"
+        assert validate_nova_response(resp) is False
+
+    def test_evidence_empty_list_passes(self) -> None:
+        resp = _make_valid_response()
+        resp["diagnosis"]["evidence"] = []
+        assert validate_nova_response(resp) is True
+
+    def test_evidence_absent_passes(self) -> None:
+        """evidence is optional — absent should pass."""
+        resp = _make_valid_response()
+        del resp["diagnosis"]["evidence"]
         assert validate_nova_response(resp) is True

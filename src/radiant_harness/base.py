@@ -53,7 +53,10 @@ _IDLE_TOOL_TURNS_LIMIT = 3
 
 # Tools that modify the image coordinate space. After these, bounding box
 # coordinates no longer correspond to the original image.
-_COORD_MODIFYING_TOOLS = frozenset({"crop", "zoom"})
+# - crop/zoom: viewport changes to a subregion/magnified area
+# - rotate: pixel coordinates shift (90/270° also swaps dimensions)
+# - flip_horizontal/flip_vertical: mirrors coordinate axes
+_COORD_MODIFYING_TOOLS = frozenset({"crop", "zoom", "rotate", "flip_horizontal", "flip_vertical"})
 
 
 def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
@@ -575,12 +578,11 @@ class AgenticProcessorBase(ABC):
             # On the last turn, inject a schema reminder so models that don't
             # fully support response_format still know the expected output.
             if is_last_turn and turn_idx > 0:
-                # Reset image to original so model sees untransformed view
-                if tool_registry is not None:
-                    try:
-                        tool_registry.get_image_manager().reset_to_original()
-                    except ToolExecutionError:
-                        logger.warning("Failed to reset image on final turn")
+                # NOTE: No reset_to_original() here — the original images are
+                # re-injected below from ImageInput.encoded (which always holds
+                # the original encoding), so resetting the ImageManager is
+                # wasted work.  The image manager is closed in the finally
+                # block of analyze() and never read after this point.
 
                 # Build final-turn message with original image + schema reminder
                 final_parts: list[dict[str, Any]] = []
@@ -787,6 +789,12 @@ class AgenticProcessorBase(ABC):
                             raw = f"{raw}\nError: {result.error}"
                         if formatted := result.formatted_results:
                             raw = f"{raw}\n{formatted}"
+                        if image_data_url and not multipart_ok:
+                            raw = (
+                                f"{raw}\n[Image produced but cannot be displayed "
+                                f"in this adapter's tool messages. Use the visual "
+                                f"information from the text description above.]"
+                            )
                         tool_content = _sanitize_tool_content(raw)
 
                     messages.append(
@@ -901,6 +909,28 @@ class AgenticProcessorBase(ABC):
                 parsed_obj = fallback
 
             if not isinstance(parsed_obj, dict):
+                if not is_last_turn:
+                    nudge_count += 1
+                    logger.warning(
+                        f"Turn {turn_idx + 1} returned non-object JSON "
+                        f"(got {type(parsed_obj).__name__}). "
+                        f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
+                    )
+                    if nudge_count >= self._config.max_consecutive_nudges:
+                        messages.append({"role": "user", "content": _force_finalize_message()})
+                    else:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[System: Your response was a JSON "
+                                    f"{type(parsed_obj).__name__}, not an object. "
+                                    "Please respond with a JSON object including "
+                                    "a 'continue' field.]"
+                                ),
+                            }
+                        )
+                    continue
                 raise AgenticProcessingError(
                     "Model response must be a JSON object",
                     turns_completed=turn_idx + 1,
@@ -916,11 +946,12 @@ class AgenticProcessorBase(ABC):
                 # Coerce on intermediate turns; only crash on the final turn where
                 # strict schema enforcement is expected.
                 if isinstance(wants_continue, str) and wants_continue.lower() in ("true", "false"):
+                    original_value = wants_continue
                     wants_continue = wants_continue.lower() == "true"
                     parsed["continue"] = wants_continue
                     logger.warning(
                         f"Turn {turn_idx + 1}: coerced string 'continue' "
-                        f"value {wants_continue!r} to bool"
+                        f"value {original_value!r} to bool {wants_continue!r}"
                     )
                 else:
                     raise AgenticProcessingError(
@@ -1061,9 +1092,9 @@ class AgenticProcessorBase(ABC):
     ) -> ToolResult:
         """Execute a single tool call with error handling.
 
-        Recoverable errors (tool execution failures, unexpected crashes)
-        return a ``ToolResult`` with an error description so the model can
-        adapt.  Only structural errors (unknown tool name) are fatal.
+        All tool errors — including unknown tool names — return a
+        ``ToolResult`` with an error description so the model can
+        self-correct on subsequent turns.
         """
         tool_args = self._parse_tool_args(tool_call, turn_idx)
         logger.debug(f"Executing: {tool_call.name}({tool_args})")
@@ -1071,13 +1102,21 @@ class AgenticProcessorBase(ABC):
         try:
             return await tool_registry.execute(tool_call.name, **tool_args)
         except UnknownToolError as e:
-            # Structural error: model hallucinated a tool name — fatal.
-            logger.error(f"Unknown tool requested on turn {turn_idx + 1}: {tool_call.name}")
-            raise AgenticProcessingError(
-                f"Tool '{tool_call.name}' is not registered",
-                turns_completed=turn_idx + 1,
-                partial_response={"error": "unknown_tool", "tool": tool_call.name},
-            ) from e
+            # Model hallucinated a tool name. Return an error ToolResult so it
+            # can self-correct on the next turn instead of crashing the loop.
+            available = ", ".join(sorted(e.available_tools)) if e.available_tools else "none"
+            logger.warning(
+                f"Unknown tool '{tool_call.name}' on turn {turn_idx + 1}. "
+                f"Available: {available}",
+            )
+            return ToolResult(
+                tool_name=tool_call.name,
+                description=f"Tool '{tool_call.name}' does not exist",
+                error=(
+                    f"Unknown tool '{tool_call.name}'. "
+                    f"Available tools: {available}"
+                ),
+            )
         except ToolExecutionError as e:
             logger.warning(f"Tool '{tool_call.name}' failed on turn {turn_idx + 1}: {e}")
             return ToolResult(

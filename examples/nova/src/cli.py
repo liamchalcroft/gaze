@@ -99,12 +99,15 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
 
     # Pre-validate and collect work items; load cached results for skipped samples.
     # max_samples caps the TOTAL samples considered (cached + new).
+    # Uses get_sample_metadata() to avoid loading all images into memory upfront;
+    # images are loaded on-demand inside _process_sample instead.
     sample_limit = config.max_samples if config.max_samples > 0 else len(dataset)
-    work_items: list[tuple[int, dict[str, Any]]] = []
+    work_items: list[int] = []
     cached_count = 0
-    for i, sample in enumerate(dataset):
+    for i in range(len(dataset)):
         if cached_count + len(work_items) >= sample_limit:
             break
+        sample_meta = dataset.get_sample_metadata(i)
         if config.skip_existing:
             result_file = config.output_dir / f"sample_{i}.json"
             if result_file.exists():
@@ -120,11 +123,10 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                             confidence=cached.get("confidence", 0.0),
                         )
                     )
-                    gt = dict(sample["ground_truth"])
-                    image = sample["image"]
-                    if isinstance(image, Image.Image):
-                        gt["image_width"] = image.width
-                        gt["image_height"] = image.height
+                    gt = dict(sample_meta["ground_truth"])
+                    img_w, img_h = sample_meta["image_size"]
+                    gt["image_width"] = img_w
+                    gt["image_height"] = img_h
                     ground_truth.append(gt)
                     cached_count += 1
                 except (json.JSONDecodeError, KeyError) as exc:
@@ -132,21 +134,21 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     # Fall through to re-process this sample
                 else:
                     continue
-        if "ground_truth" not in sample:
+        if "ground_truth" not in sample_meta:
             raise KeyError(f"Sample {i} missing ground truth data")
-        image = sample["image"]
-        if not isinstance(image, Image.Image):
-            raise TypeError(f"Sample {i} image must be a PIL Image, got {type(image).__name__}")
-        work_items.append((i, sample))
+        work_items.append(i)
 
     if cached_count:
         print(f"  Loaded {cached_count} cached results from previous run")  # noqa: T201
 
     async def _process_sample(
-        idx: int, sample: dict[str, Any]
+        idx: int,
     ) -> tuple[int, AgenticResult, dict[str, Any]]:
         async with semaphore:
             logger.info(f"Processing sample {idx + 1}/{len(dataset)}")
+            # Load image on demand — keeps peak memory at O(batch_size)
+            # instead of O(N) when all images were pre-loaded.
+            sample = dataset[idx]
             image = sample["image"]
             metadata = dict(sample.get("metadata", {}))
             metadata.setdefault("clinical_history", "")
@@ -210,11 +212,11 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     failed_samples: list[tuple[int, str]] = []
     if work_items:
         raw = await asyncio.gather(
-            *(_process_sample(idx, sample) for idx, sample in work_items),
+            *(_process_sample(idx) for idx in work_items),
             return_exceptions=True,
         )
         # Separate successes from failures
-        for item, (idx, _sample) in zip(raw, work_items):
+        for item, idx in zip(raw, work_items):
             if isinstance(item, BaseException):
                 logger.error(f"Sample {idx} failed: {item}")
                 failed_samples.append((idx, str(item)))

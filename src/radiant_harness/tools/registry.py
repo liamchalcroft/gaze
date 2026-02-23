@@ -190,7 +190,13 @@ class ToolDocumenter:
                     "format",
                 ):
                     if key in param_def:
-                        prop[key] = param_def[key]
+                        value = param_def[key]
+                        # Skip "default": None — emitting {"type": "integer", "default": null}
+                        # is invalid JSON Schema.  The parameter is already marked optional
+                        # (not in required) via the "default" key presence check below.
+                        if key == "default" and value is None:
+                            continue
+                        prop[key] = value
 
                 # Handle array item types
                 if param_def.get("type") == "array" and "items" in param_def:

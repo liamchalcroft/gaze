@@ -668,24 +668,28 @@ def apply_window_level(
     Raises:
         ValueError: If neither preset nor center+width provided, or invalid preset
     """
+    is_preset = False
     if preset is not None:
         if preset not in WINDOW_PRESETS:
             raise ValueError(
                 f"Unknown preset {preset!r}. Available: {sorted(WINDOW_PRESETS.keys())}"
             )
         center, width = WINDOW_PRESETS[preset]
+        is_preset = True
     elif center is None or width is None:
         raise ValueError("Must provide either preset or both center and width")
 
+    # Clinical presets are curated settings — exempt from minimum width.
+    # Freeform center+width must respect the safety floor.
     cfg = _get_image_config()
-    if width < cfg.min_window_width:
+    if not is_preset and width < cfg.min_window_width:
         raise ValueError(
             f"width must be >= {cfg.min_window_width}, got {width}. "
             f"Very narrow windows destroy diagnostic information."
         )
 
-    lower = center - width // 2
-    upper = center + width // 2
+    lower = center - width / 2
+    upper = center + width / 2
 
     gray = np.array(image.convert("L"), dtype=np.float64)
     gray = np.clip(gray, lower, upper)
@@ -832,15 +836,17 @@ def compute_intensity_profile(
     xs = np.clip(xs, 0, w - 1)
     ys = np.clip(ys, 0, h - 1)
 
-    intensities = [int(gray[y, x]) for y, x in zip(ys, xs, strict=True)]
+    # Vectorized fancy-index lookup — avoids per-pixel Python overhead.
+    intensity_arr = gray[ys, xs]
+    intensities = intensity_arr.tolist()
 
     return {
         "profile": intensities,
         "n_samples": n_samples,
-        "mean": float(np.mean(intensities)),
-        "std": float(np.std(intensities)),
-        "min": int(np.min(intensities)),
-        "max": int(np.max(intensities)),
+        "mean": float(np.mean(intensity_arr)),
+        "std": float(np.std(intensity_arr)),
+        "min": int(np.min(intensity_arr)),
+        "max": int(np.max(intensity_arr)),
         "point1_pixels": (x0, y0),
         "point2_pixels": (x1, y1),
     }

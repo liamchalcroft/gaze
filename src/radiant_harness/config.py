@@ -39,7 +39,7 @@ class ImageProcessingConfig:
     max_zoom_factor: float = 4.0
     min_contrast_factor: float = 0.5
     max_contrast_factor: float = 3.0
-    min_threshold_window: int = 30
+    min_threshold_window: int = 50
     default_jpeg_quality: int = 85
     min_brightness_factor: float = 0.5
     max_brightness_factor: float = 3.0
@@ -52,7 +52,7 @@ class ImageProcessingConfig:
     min_clahe_clip_limit: float = 1.0
     max_clahe_clip_limit: float = 10.0
     max_clahe_tile_size: int = 32
-    min_window_width: int = 2
+    min_window_width: int = 10
 
     def __post_init__(self) -> None:
         if self.min_image_size < 1:
@@ -117,8 +117,8 @@ class ImageProcessingConfig:
             raise ValueError(
                 f"max_clahe_tile_size must be between 2 and 64, got {self.max_clahe_tile_size}"
             )
-        if self.min_window_width < 1:
-            raise ValueError(f"min_window_width must be >= 1, got {self.min_window_width}")
+        if self.min_window_width < 2:
+            raise ValueError(f"min_window_width must be >= 2, got {self.min_window_width}")
 
 
 @dataclass(frozen=True)

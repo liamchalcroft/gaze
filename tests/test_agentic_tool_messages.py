@@ -190,6 +190,35 @@ async def test_tool_message_includes_image_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_image_tool_text_fallback_when_multipart_disabled() -> None:
+    """When adapter.supports_multipart_tool_content=False, image results should
+    include a text note about the unavailable image rather than silently dropping it.
+    """
+
+    class TextOnlyAdapter(RecordingAdapter):
+        supports_multipart_tool_content: bool = False
+
+    adapter = TextOnlyAdapter(tool_calls=[{"id": "call-1", "name": "image", "arguments": {}}])
+    tool = Tool(
+        name="image",
+        description="image",
+        parameters={},
+        execute=_image_tool,
+        requires_image=False,
+    )
+    processor = InlineToolProcessor(adapter=adapter, tool=tool)
+
+    await processor.analyze(images=None, metadata={"history": "hx"})
+
+    tool_message = next(msg for msg in adapter.messages_history[1] if msg.get("role") == "tool")
+    # Content must be a plain string (not multipart list)
+    assert isinstance(tool_message["content"], str)
+    # Must contain both the tool description and the image unavailability note
+    assert "image tool" in tool_message["content"]
+    assert "cannot be displayed" in tool_message["content"].lower()
+
+
+@pytest.mark.asyncio
 async def test_search_web_tool_message_includes_formatted_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

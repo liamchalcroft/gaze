@@ -207,15 +207,19 @@ class TestIoURewardContinuous:
         assert reward.continuous is True
 
     def test_continuous_returns_raw_iou(self) -> None:
-        """In continuous mode, should return the raw IoU value."""
-        reward = IoUReward(continuous=True)
+        """In continuous mode, should return the raw IoU value.
+
+        Uses normalized=False for pixel-coordinate tests to avoid the area
+        penalty (which is designed to prevent reward hacking with full-image boxes).
+        """
+        reward = IoUReward(continuous=True, normalized=False)
         # Perfect overlap
         score = reward("", self._make_completion([0, 0, 100, 100]), self._make_info([0, 0, 100, 100]))
         assert score == 1.0
 
     def test_continuous_partial_overlap(self) -> None:
         """Partial overlap returns raw IoU, not 1.0 or 0.0."""
-        reward = IoUReward(continuous=True, iou_threshold=0.5)
+        reward = IoUReward(continuous=True, iou_threshold=0.5, normalized=False)
         # Two 100x100 boxes offset by 50 pixels
         # Box1: (0,0)-(100,100), Box2: (50,50)-(150,150)
         # Intersection: 50*50 = 2500
@@ -230,7 +234,7 @@ class TestIoURewardContinuous:
 
     def test_continuous_above_threshold_not_clipped(self) -> None:
         """IoU above threshold should NOT be clipped to 1.0 in continuous mode."""
-        reward = IoUReward(continuous=True, iou_threshold=0.3)
+        reward = IoUReward(continuous=True, iou_threshold=0.3, normalized=False)
         # Two 100x100 boxes offset by 20 pixels
         # Box1: (0,0)-(100,100), Box2: (20,20)-(120,120)
         # Intersection: 80*80 = 6400
@@ -246,7 +250,7 @@ class TestIoURewardContinuous:
 
     def test_step_mode_binary(self) -> None:
         """Step mode returns 1.0 above threshold, 0.0 below."""
-        reward = IoUReward(continuous=False, iou_threshold=0.5)
+        reward = IoUReward(continuous=False, iou_threshold=0.5, normalized=False)
 
         # Perfect overlap → 1.0
         score_perfect = reward(
@@ -266,7 +270,7 @@ class TestIoURewardContinuous:
         The old buggy code returned raw IoU below threshold, which was
         inconsistent with the step function above threshold.
         """
-        reward = IoUReward(continuous=False, iou_threshold=0.5)
+        reward = IoUReward(continuous=False, iou_threshold=0.5, normalized=False)
         # Slight overlap (IoU ≈ 0.14) → should be 0.0 in step mode
         score = reward(
             "", self._make_completion([0, 0, 100, 100]), self._make_info([50, 50, 150, 150])

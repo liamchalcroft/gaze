@@ -142,3 +142,77 @@ class TestImageManagerInitialState:
         assert not mgr.has_image
         assert mgr.current_image is None
         assert mgr.image_path is None
+
+
+class TestImageManagerCopyIsolation:
+    """Verify that original and current images are independent copies."""
+
+    def test_set_image_creates_independent_copies(self, tmp_path: Path) -> None:
+        """After set_image, current and original must be distinct objects."""
+        path = _create_image(tmp_path, size=(40, 40))
+        mgr = ImageManager()
+        mgr.set_image(path)
+        assert mgr.current_image is not mgr._original_image  # noqa: SLF001
+
+    def test_transform_does_not_corrupt_original(self, tmp_path: Path) -> None:
+        """Transforming current must leave original pixel data untouched."""
+        path = _create_image(tmp_path, size=(80, 80))
+        mgr = ImageManager()
+        mgr.set_image(path)
+
+        original_size = mgr._original_image.size  # noqa: SLF001
+        mgr.transform_image(lambda img: img.resize((20, 20)))
+
+        assert mgr._original_image.size == original_size  # noqa: SLF001
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (20, 20)
+
+    def test_set_preloaded_copies_incoming_image(self, tmp_path: Path) -> None:
+        """set_preloaded_image must copy the input so caller retains ownership."""
+        path = _create_image(tmp_path, size=(60, 60))
+        caller_img = Image.new("RGB", (60, 60), color=(255, 0, 0))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(caller_img, path)
+
+        # Caller's image should be independent from manager's copies
+        assert mgr._original_image is not caller_img  # noqa: SLF001
+        assert mgr.current_image is not caller_img
+        assert mgr.current_image is not mgr._original_image  # noqa: SLF001
+
+    def test_close_does_not_affect_caller_image(self, tmp_path: Path) -> None:
+        """Closing the manager after set_preloaded must not close caller's image."""
+        path = _create_image(tmp_path, size=(60, 60))
+        caller_img = Image.new("RGB", (60, 60), color=(0, 255, 0))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(caller_img, path)
+        mgr.close()
+
+        # Caller's image should still be usable
+        assert caller_img.size == (60, 60)
+        _ = caller_img.getpixel((0, 0))  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_ensure_loaded_creates_independent_copies(self, tmp_path: Path) -> None:
+        """ensure_loaded must also create independent current/original copies."""
+        path = _create_image(tmp_path, size=(50, 50))
+        mgr = ImageManager()
+        mgr._image_path = path  # noqa: SLF001
+        await mgr.ensure_loaded()
+        assert mgr.current_image is not mgr._original_image  # noqa: SLF001
+
+    def test_reset_after_transform_preserves_original(self, tmp_path: Path) -> None:
+        """Transform → reset cycle must produce a fresh copy of the original."""
+        path = _create_image(tmp_path, size=(100, 100))
+        mgr = ImageManager()
+        mgr.set_image(path)
+
+        mgr.transform_image(lambda img: img.resize((10, 10)))
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (10, 10)
+
+        mgr.reset_to_original()
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (100, 100)
+        assert mgr.current_image is not mgr._original_image  # noqa: SLF001

@@ -119,9 +119,13 @@ class TestInheritance:
         assert hasattr(adapter, "model_name")
 
     def test_validate_base_url_override_allows_http(self) -> None:
-        """LMStudioAdapter._validate_base_url must be a no-op so HTTP works."""
+        """LMStudioAdapter._validate_base_url allows HTTP for local inference."""
         # Should not raise — HTTP is valid for local inference
         LMStudioAdapter._validate_base_url("http://localhost:1234/v1")
+
+    def test_validate_base_url_override_allows_https(self) -> None:
+        """LMStudioAdapter._validate_base_url also allows HTTPS."""
+        LMStudioAdapter._validate_base_url("https://localhost:1234/v1")
 
     def test_parent_validate_base_url_rejects_http(self) -> None:
         """OpenAIAdapter._validate_base_url must reject HTTP (sanity check)."""
@@ -129,3 +133,31 @@ class TestInheritance:
 
         with pytest.raises(ModelError, match="HTTPS"):
             OpenAIAdapter._validate_base_url("http://localhost:1234/v1")
+
+
+class TestURLSchemeValidation:
+    """Verify LMStudio rejects dangerous URL schemes."""
+
+    def test_file_scheme_rejected(self) -> None:
+        from radiant_harness.exceptions import ModelError
+
+        with pytest.raises(ModelError, match="http://.*https://"):
+            LMStudioAdapter._validate_base_url("file:///etc/passwd")
+
+    def test_ftp_scheme_rejected(self) -> None:
+        from radiant_harness.exceptions import ModelError
+
+        with pytest.raises(ModelError, match="http://.*https://"):
+            LMStudioAdapter._validate_base_url("ftp://evil.com/model")
+
+    def test_empty_scheme_rejected(self) -> None:
+        from radiant_harness.exceptions import ModelError
+
+        with pytest.raises(ModelError):
+            LMStudioAdapter._validate_base_url("localhost:1234/v1")
+
+    def test_constructor_rejects_file_url(self) -> None:
+        from radiant_harness.exceptions import ModelError
+
+        with pytest.raises(ModelError, match="http://.*https://"):
+            LMStudioAdapter(model_name="test", base_url="file:///etc/passwd")

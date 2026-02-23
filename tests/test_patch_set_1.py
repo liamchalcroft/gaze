@@ -97,9 +97,7 @@ class TestLocalizationRewardAreaPenalty:
         pred = [[0, 0, 100, 100]]
         image_area = 100.0 * 100.0
 
-        reward_with_penalty = compute_localization_reward(
-            pred, gt, image_area=image_area
-        )
+        reward_with_penalty = compute_localization_reward(pred, gt, image_area=image_area)
         reward_without = compute_localization_reward(pred, gt, image_area=0.0)
 
         # Without penalty, high IoU → nonzero reward
@@ -222,13 +220,13 @@ class TestIoURewardAreaPenalty:
 
 
 # =====================================================================
-# 4. rescale_and_clamp_box — uniform scale factor
+# 4. rescale_and_clamp_box — per-axis scaling
 # =====================================================================
 
 
 @pytest.mark.skipif(not DETECTION_AVAILABLE, reason="detection module not available")
-class TestRescaleAndClampBoxUniform:
-    """Verify rescale_and_clamp_box preserves aspect ratio."""
+class TestRescaleAndClampBoxPerAxis:
+    """Verify rescale_and_clamp_box uses per-axis scaling for spatial accuracy."""
 
     def test_within_bounds_unchanged(self) -> None:
         """Box within bounds should pass through unchanged."""
@@ -236,47 +234,50 @@ class TestRescaleAndClampBoxUniform:
         result = rescale_and_clamp_box(box, 480, 480)
         assert result == [10.0, 20.0, 100.0, 200.0]
 
-    def test_single_axis_overflow_uniform_scale(self) -> None:
-        """When only x-axis overflows, both axes should be scaled uniformly.
+    def test_single_axis_overflow_per_axis_scale(self) -> None:
+        """When only x-axis overflows, y-axis should remain untouched.
 
-        Old behavior: per-axis scaling would leave y untouched and only
-        scale x, distorting the aspect ratio.
-        New behavior: min(scale_x, scale_y) is used for both axes.
+        Per-axis scaling preserves spatial accuracy on the non-overflowing
+        axis, which is critical for lesion localization.
         """
         # Box: [0, 0, 960, 240] in a 480x480 image
         # max_x=960 > 480 → scale_x = 480/960 = 0.5
         # max_y=240 < 480 → scale_y = 1.0
-        # Uniform: scale = min(0.5, 1.0) = 0.5
-        # Expected output: [0, 0, 480, 120]  # noqa: ERA001
+        # Per-axis: x scaled by 0.5, y unchanged
+        # Expected: [0, 0, 480, 240]  # noqa: ERA001
         result = rescale_and_clamp_box([0, 0, 960, 240], 480, 480)
-        assert result == [0.0, 0.0, 480.0, 120.0]
+        assert result == [0.0, 0.0, 480.0, 240.0]
 
-    def test_both_axes_overflow(self) -> None:
-        """Both axes overflow — min scale should be used."""
+    def test_only_y_overflow_x_untouched(self) -> None:
+        """When only y-axis overflows, x-axis should remain untouched."""
+        # Box: [0, 0, 240, 960] in a 480x480 image
+        # max_x=240 < 480 → scale_x = 1.0
+        # max_y=960 > 480 → scale_y = 480/960 = 0.5
+        # Per-axis: x unchanged, y scaled by 0.5
+        # Expected: [0, 0, 240, 480]  # noqa: ERA001
+        result = rescale_and_clamp_box([0, 0, 240, 960], 480, 480)
+        assert result == [0.0, 0.0, 240.0, 480.0]
+
+    def test_both_axes_overflow_independent_scales(self) -> None:
+        """Both axes overflow — each axis scaled independently."""
         # Box: [0, 0, 960, 720] in 480x480
         # scale_x = 480/960 = 0.5, scale_y = 480/720 = 0.667
-        # Uniform: scale = min(0.5, 0.667) = 0.5
-        # Expected output: [0, 0, 480, 360]  # noqa: ERA001
+        # Per-axis: x *= 0.5, y *= 0.667
+        # Expected: [0, 0, 480, 480]  # noqa: ERA001
         result = rescale_and_clamp_box([0, 0, 960, 720], 480, 480)
-        assert result == [0.0, 0.0, 480.0, 360.0]
+        assert result == [0.0, 0.0, 480.0, 480.0]
 
-    def test_aspect_ratio_preserved(self) -> None:
-        """The width:height ratio of the box should be preserved after rescale."""
-        box = [100, 50, 1000, 300]
-        w, h = 480, 480
-        result = rescale_and_clamp_box(box, w, h)
+    def test_non_square_coord_space_mapping(self) -> None:
+        """Model thinks image is 1000x500 when it is actually 480x480.
 
-        original_width = box[2] - box[0]
-        original_height = box[3] - box[1]
-        original_ratio = original_width / original_height
-
-        result_width = result[2] - result[0]
-        result_height = result[3] - result[1]
-        result_ratio = result_width / result_height
-
-        assert abs(original_ratio - result_ratio) < 1e-4, (
-            f"Aspect ratio changed: {original_ratio:.4f} → {result_ratio:.4f}"
-        )
+        Per-axis scaling correctly maps each axis to the true image space.
+        """
+        # Box in model's 1000x500 space: [100, 50, 800, 400]
+        # scale_x = 480/800 = 0.6, scale_y = 480/400 = 1.2 (but max_y=400 < 480, so 1.0)
+        # Actually max_y=400 < 480 → scale_y = 1.0
+        # Expected: [60, 50, 480, 400]  # noqa: ERA001
+        result = rescale_and_clamp_box([100, 50, 800, 400], 480, 480)
+        assert result == [60.0, 50.0, 480.0, 400.0]
 
     def test_swapped_coordinates_handled(self) -> None:
         """Swapped coordinates (x1 > x2) should be fixed before scaling."""

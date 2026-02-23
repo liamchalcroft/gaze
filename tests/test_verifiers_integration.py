@@ -90,7 +90,9 @@ class TestIoUReward:
     """Test IoU reward function."""
 
     def test_perfect_overlap(self) -> None:
-        reward = IoUReward()
+        # Use normalized=False for pixel-coordinate tests to avoid the
+        # area penalty (which prevents reward hacking with full-image boxes).
+        reward = IoUReward(normalized=False)
 
         box1 = [0, 0, 10, 10]
         box2 = [0, 0, 10, 10]
@@ -104,7 +106,7 @@ class TestIoUReward:
         assert reward("", completion, {"bbox": box2}) == 1.0
 
     def test_no_overlap(self) -> None:
-        reward = IoUReward()
+        reward = IoUReward(normalized=False)
 
         box1 = [0, 0, 10, 10]
 
@@ -113,7 +115,7 @@ class TestIoUReward:
         assert score == 0.0  # No bbox found
 
     def test_partial_overlap(self) -> None:
-        reward = IoUReward()
+        reward = IoUReward(normalized=False)
 
         # 1/3 overlap (area 25 out of union 75)
         box1 = [0, 0, 10, 10]  # Area = 100

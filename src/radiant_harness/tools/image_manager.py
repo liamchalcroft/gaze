@@ -103,7 +103,7 @@ class ImageManager:
         try:
             with Image.open(resolved) as img:
                 self._original_image = img.copy()
-                self._current_image = self._original_image
+                self._current_image = self._original_image.copy()
         except FileNotFoundError as e:
             raise ToolExecutionError(f"Image file not found: {image_path}") from e
         except UnidentifiedImageError as e:
@@ -155,11 +155,14 @@ class ImageManager:
                 ) from e
 
             self._original_image = loaded
-            self._current_image = loaded
+            self._current_image = loaded.copy()
 
     @beartype
     def transform_image(self, operation: Callable[[Image.Image], Image.Image]) -> None:
         """Apply a transformation to the current image with automatic cleanup.
+
+        The previous ``_current_image`` is always closed after the operation
+        since current and original are always independent copies.
 
         This method is synchronous and does **not** acquire ``_image_lock``.
         It is safe to call from the single-threaded asyncio event loop (the
@@ -181,15 +184,16 @@ class ImageManager:
 
         old_image = self._current_image
         self._current_image = operation(old_image)
-        if old_image is not self._original_image:
+        # Safe to always close: current is never aliased to original.
+        if old_image is not self._current_image:
             old_image.close()
 
     @beartype
     def set_preloaded_image(self, image: Image.Image, image_path: Path) -> None:
         """Set a pre-loaded PIL Image, avoiding a redundant disk read.
 
-        The caller transfers ownership of *image* — it must not be modified
-        or closed afterwards.
+        The image is copied internally, so the caller retains full ownership
+        of the original and may continue to use or close it.
 
         Args:
             image: Already-loaded PIL Image (must have pixel data in memory).
@@ -200,8 +204,8 @@ class ImageManager:
         """
         resolved = self._validate_image_path(image_path)
         self.close()
-        self._original_image = image
-        self._current_image = image
+        self._original_image = image.copy()
+        self._current_image = self._original_image.copy()
         self._image_path = resolved
 
     @beartype
@@ -226,11 +230,11 @@ class ImageManager:
     @beartype
     def close(self) -> None:
         """Close and release all image resources."""
-        if self._current_image is not None and self._current_image is not self._original_image:
+        if self._current_image is not None:
             self._current_image.close()
         self._current_image = None
         if self._original_image is not None:
             self._original_image.close()
-            self._original_image = None
+        self._original_image = None
         self._image_path = None
         self._original_encoding = None

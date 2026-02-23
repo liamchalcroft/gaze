@@ -1138,3 +1138,295 @@ async def test_last_turn_still_raises_when_text_not_salvageable() -> None:
     assert "final turn" in str(exc.value).lower()
     assert exc.value.partial_response is not None
     assert exc.value.partial_response["error"] == "tools_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Unknown tool recovery
+# ---------------------------------------------------------------------------
+
+
+class UnknownToolAdapter(AdapterProtocol):
+    """Adapter that calls a non-existent tool on turn 1, then recovers on turn 2."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.messages_history: list[list[dict[str, Any]]] = []
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = max_tokens, temperature, tools, response_format
+        self.messages_history.append(list(messages or []))
+        self.calls += 1
+
+        if self.calls == 1:
+            # Call a tool that doesn't exist
+            return (
+                "",
+                [{"id": "call-1", "name": "nonexistent_tool", "arguments": "{}"}],
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+            )
+        # Turn 2: recover with a valid final response
+        return (
+            '{"continue": false, "result": "recovered after unknown tool"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+class UnknownToolProcessor(AgenticProcessorBase):
+    def __init__(self, adapter: UnknownToolAdapter) -> None:
+        super().__init__(
+            model_name="test-model",
+            use_tools=True,
+            use_web_search=False,
+            max_turns=3,
+            adapter_factory=lambda: adapter,
+        )
+
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "system"
+
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "user"
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "fake",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "continue": {"type": "boolean"},
+                        "result": {"type": "string"},
+                    },
+                    "required": ["continue", "result"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        return {"continue", "result"} <= set(response)
+
+    def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+        _ = images
+        tool = Tool(
+            name="echo",
+            description="echo back",
+            parameters={"value": {"type": "integer", "description": "value"}},
+            execute=_echo_tool,
+            requires_image=False,
+        )
+        return ToolRegistry(image_path=None, tools=[tool])
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_is_recoverable() -> None:
+    """Model calling a non-existent tool should get an error ToolResult, not crash.
+
+    The model can then self-correct on the next turn instead of losing
+    all progress in the agentic loop.
+    """
+    adapter = UnknownToolAdapter()
+    processor = UnknownToolProcessor(adapter)
+    result: AgenticResult = await processor.analyze(images=None, metadata={})
+
+    # Model recovered and produced a valid final response
+    assert result.final_response["result"] == "recovered after unknown tool"
+
+    # Verify the error message was sent back to the model (in tool_result turn)
+    tool_result_turns = [t for t in result.turns if t.role == "tool_result"]
+    assert len(tool_result_turns) == 1
+    tr = tool_result_turns[0].tool_results[0]
+    assert tr.error is not None
+    assert "nonexistent_tool" in tr.error
+    assert "echo" in tr.error  # should list available tools
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_error_lists_available_tools() -> None:
+    """The error ToolResult for an unknown tool should list what tools ARE available."""
+    adapter = UnknownToolAdapter()
+    processor = UnknownToolProcessor(adapter)
+    result: AgenticResult = await processor.analyze(images=None, metadata={})
+
+    tool_result_turns = [t for t in result.turns if t.role == "tool_result"]
+    assert len(tool_result_turns) == 1
+    error_msg = tool_result_turns[0].tool_results[0].error
+    assert error_msg is not None
+    assert "Available tools:" in error_msg
+    assert "echo" in error_msg
+
+
+# ---------------------------------------------------------------------------
+# Patch Set: _COORD_MODIFYING_TOOLS matches registered tool names
+# ---------------------------------------------------------------------------
+
+
+def test_coord_modifying_tools_match_registered_names() -> None:
+    """Every name in _COORD_MODIFYING_TOOLS must match an actual registered tool."""
+    from radiant_harness.base import _COORD_MODIFYING_TOOLS
+    from radiant_harness.tools import create_visual_tools
+
+    tools = create_visual_tools(disabled_tools=set())
+    registered_names = {t.name for t in tools}
+
+    for coord_tool in _COORD_MODIFYING_TOOLS:
+        assert coord_tool in registered_names, (
+            f"_COORD_MODIFYING_TOOLS contains '{coord_tool}' but no tool with that name "
+            f"is registered. Registered: {sorted(registered_names)}"
+        )
+
+
+def test_flip_tools_in_coord_modifying_set() -> None:
+    """flip_horizontal and flip_vertical must be in _COORD_MODIFYING_TOOLS.
+
+    These tools mirror coordinate axes, so bounding box coordinates from
+    a flipped image are invalid in the original coordinate space.
+    """
+    from radiant_harness.base import _COORD_MODIFYING_TOOLS
+
+    assert "flip_horizontal" in _COORD_MODIFYING_TOOLS
+    assert "flip_vertical" in _COORD_MODIFYING_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# Patch Set: Non-dict JSON on intermediate turn nudges instead of crashing
+# ---------------------------------------------------------------------------
+
+
+class NonDictJsonAdapter(AdapterProtocol):
+    """Adapter that returns a JSON array on turn 1, then a valid object on turn 2."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        if self.calls == 1:
+            # Return a JSON array — valid JSON but not a dict
+            return (
+                '[1, 2, 3]',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+        return (
+            '{"continue": false, "result": "recovered"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_dict_json_intermediate_turn_nudges() -> None:
+    """JSON array on intermediate turn should nudge, not crash."""
+    adapter = NonDictJsonAdapter()
+
+    class NonDictProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+    processor = NonDictProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    # Model recovered after being nudged
+    assert result.final_response["result"] == "recovered"
+    assert adapter.calls == 2
+
+
+class NonDictJsonLastTurnAdapter(AdapterProtocol):
+    """Adapter that returns a JSON array on the only (last) turn."""
+
+    supports_multipart_tool_content: bool = True
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        return (
+            '[1, 2, 3]',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_dict_json_last_turn_still_crashes() -> None:
+    """JSON array on the last turn should still raise AgenticProcessingError."""
+
+    class NonDictLastTurnProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=NonDictJsonLastTurnAdapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+    processor = NonDictLastTurnProcessor()
+    with pytest.raises(AgenticProcessingError) as exc:
+        await processor.analyze(images=None, metadata={})
+
+    assert "JSON object" in str(exc.value)
