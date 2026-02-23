@@ -32,19 +32,19 @@ class ToolExecutionError(HarnessError):
 class TemplateError(HarnessError):
     """Raised when template loading or rendering fails.
 
+    Chain with ``raise TemplateError(...) from original`` so that
+    ``__cause__`` preserves the root error automatically.
+
     Attributes:
         template_path: Path to the template that failed
-        original_error: The underlying error that caused the failure
     """
 
     def __init__(
         self,
         message: str,
         template_path: Path | str | None = None,
-        original_error: Exception | None = None,
     ) -> None:
         self.template_path = template_path
-        self.original_error = original_error
         if template_path:
             message = f"{message} (template: {template_path})"
         super().__init__(message)
@@ -55,12 +55,12 @@ class UnknownToolError(HarnessError):
 
     Attributes:
         tool_name: The name of the unknown tool
-        available_tools: List of available tool names
+        available_tools: Frozen tuple of available tool names
     """
 
     def __init__(self, tool_name: str, available_tools: list[str]) -> None:
         self.tool_name = tool_name
-        self.available_tools = available_tools
+        self.available_tools: tuple[str, ...] = tuple(available_tools)
         super().__init__(
             f"Unknown tool '{tool_name}'. Available tools: {', '.join(sorted(available_tools))}"
         )

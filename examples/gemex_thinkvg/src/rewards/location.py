@@ -55,18 +55,19 @@ ANATOMICAL_SYNONYMS: dict[str, set[str]] = {
 
 # Region hierarchy for partial matching
 REGION_HIERARCHY: dict[str, list[str]] = {
-    "bilateral lung": ["right lung", "left lung"],
+    "bilateral lung": ["right lung", "left lung", "lung apex"],
     "right lung": ["right upper lobe", "right middle lobe", "right lower lobe", "right hilum"],
     "left lung": ["left upper lobe", "lingula", "left lower lobe", "left hilum"],
     "bilateral hilum": ["right hilum", "left hilum"],
     "mediastinum": ["heart", "aorta", "trachea", "retrocardiac"],
+    "pleura": ["costophrenic angle", "right costophrenic angle", "left costophrenic angle"],
+    "diaphragm": ["right hemidiaphragm", "left hemidiaphragm"],
     "chest": [
         "bilateral lung",
         "mediastinum",
         "pleura",
         "diaphragm",
         "bilateral hilum",
-        "lung apex",
     ],
 }
 
@@ -269,7 +270,7 @@ def compute_token_match(pred: str, ref: str) -> float:
 def compute_location_reward(
     prediction: str,
     reference: str,
-) -> dict[str, float]:
+) -> dict[str, float | str | None]:
     """Compute location reference verification reward.
 
     Combines:
@@ -315,7 +316,7 @@ def compute_location_reward(
 def compute_batch_location_rewards(
     predictions: Sequence[str],
     references: Sequence[str],
-) -> list[dict[str, float]]:
+) -> list[dict[str, float | str | None]]:
     """Compute location rewards for a batch of samples.
 
     Args:

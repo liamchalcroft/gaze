@@ -238,6 +238,7 @@ class RankingWeights:
         title_match_weight: Weight per query term match in title
         content_match_weight: Weight per query term match in content
         entity_match_weight: Weight per medical entity match
+        phrase_match_weight: Weight per bigram phrase match (compound terms)
         content_type_boosts: Boosts by content type per search type
     """
 
@@ -248,9 +249,10 @@ class RankingWeights:
     title_match_weight: float = 0.2
     content_match_weight: float = 0.05
     entity_match_weight: float = 0.1
+    phrase_match_weight: float = 0.15
     content_type_boosts: Mapping[str, Mapping[str, float]] = field(
         default_factory=lambda: {
-            "diagnosis": {"case_report": 0.2, "article": 0.1},
+            "diagnosis": {"guidelines": 0.3, "review": 0.2, "article": 0.1, "case_report": 0.05},
             "guidelines": {"guidelines": 0.3, "review": 0.2},
             "research": {"article": 0.2, "review": 0.1},
             "anatomy": {"review": 0.2, "article": 0.1},
@@ -258,6 +260,20 @@ class RankingWeights:
     )
 
     def __post_init__(self) -> None:
+        for attr in (
+            "medical_relevance_weight",
+            "recency_max_boost",
+            "open_access_boost",
+            "title_match_weight",
+            "content_match_weight",
+            "entity_match_weight",
+            "phrase_match_weight",
+        ):
+            val = getattr(self, attr)
+            if val < 0:
+                raise ValueError(f"{attr} must be >= 0, got {val}")
+        if self.recency_decay_years < 1:
+            raise ValueError(f"recency_decay_years must be >= 1, got {self.recency_decay_years}")
         # Deep-freeze the nested dict to enforce immutability
         if not isinstance(self.content_type_boosts, MappingProxyType):
             frozen = MappingProxyType(
@@ -295,8 +311,10 @@ class AgenticConfig:
             )
         if self.default_max_tokens < 1:
             raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
-        if self.default_temperature < 0:
-            raise ValueError(f"default_temperature must be >= 0, got {self.default_temperature}")
+        if not 0.0 <= self.default_temperature <= 2.0:
+            raise ValueError(
+                f"default_temperature must be between 0.0 and 2.0, got {self.default_temperature}"
+            )
         if self.max_consecutive_nudges < 1:
             raise ValueError(
                 f"max_consecutive_nudges must be >= 1, got {self.max_consecutive_nudges}"

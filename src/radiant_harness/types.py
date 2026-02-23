@@ -21,6 +21,24 @@ from typing import Literal
 TurnRole = Literal["user", "assistant", "tool_result"]
 
 
+def _deep_freeze(obj: Any) -> Any:  # noqa: ANN401
+    """Recursively freeze a JSON-like structure.
+
+    - ``dict`` / ``Mapping`` → ``MappingProxyType`` with frozen values
+    - ``list`` / ``tuple`` → ``tuple`` with frozen elements
+    - Scalars (str, int, float, bool, None) pass through unchanged.
+    """
+    if isinstance(obj, MappingProxyType):
+        return obj  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(obj, Mapping):
+        return MappingProxyType(  # pyright: ignore[reportUnknownArgumentType]
+            {str(k): _deep_freeze(v) for k, v in obj.items()}  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+        )
+    if isinstance(obj, list | tuple):
+        return tuple(_deep_freeze(item) for item in obj)  # pyright: ignore[reportUnknownVariableType]
+    return obj
+
+
 @dataclass(frozen=True)
 class ToolCall:
     """Represents a tool call request from the model.
@@ -59,10 +77,9 @@ class ToolResult:
     def __post_init__(self) -> None:
         if bool(self.image_base64) != bool(self.image_mime_type):
             raise ValueError("image_base64 and image_mime_type must both be set or both be None")
-        # Freeze the metadata dict to enforce immutability contract
-        if isinstance(self.metadata, MappingProxyType):
-            return
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        # Deep-freeze the metadata dict to enforce immutability contract
+        if not isinstance(self.metadata, MappingProxyType):
+            object.__setattr__(self, "metadata", _deep_freeze(self.metadata))
 
     @property
     def success(self) -> bool:
@@ -126,9 +143,9 @@ class AgenticResult:
     confidence: float
 
     def __post_init__(self) -> None:
-        # Freeze mutable containers passed by callers.
+        # Deep-freeze mutable containers passed by callers.
         if not isinstance(self.final_response, MappingProxyType):
-            object.__setattr__(self, "final_response", MappingProxyType(dict(self.final_response)))
+            object.__setattr__(self, "final_response", _deep_freeze(self.final_response))
         if not isinstance(self.turns, tuple):
             object.__setattr__(self, "turns", tuple(self.turns))
 

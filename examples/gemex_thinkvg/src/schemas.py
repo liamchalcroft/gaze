@@ -94,6 +94,9 @@ def validate_gemex_response(response: dict[str, Any]) -> bool:
         return False
     if not all(isinstance(x, int | float) for x in bbox):
         return False
+    # Check coordinate ordering (x2 > x1, y2 > y1)
+    if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+        return False
 
     # Validate confidence range
     confidence = response.get("confidence")

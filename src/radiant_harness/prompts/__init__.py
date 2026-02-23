@@ -73,13 +73,11 @@ def load_template(
         raise TemplateError(
             f"Template file not found: {template_path}",
             template_path=template_path,
-            original_error=e,
         ) from e
     except OSError as e:
         raise TemplateError(
             f"Failed to read template file: {e}",
             template_path=template_path,
-            original_error=e,
         ) from e
 
     try:
@@ -88,7 +86,6 @@ def load_template(
         raise TemplateError(
             f"Failed to render template: {e}",
             template_path=template_path,
-            original_error=e,
         ) from e
 
 
