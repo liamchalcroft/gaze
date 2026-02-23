@@ -143,10 +143,10 @@ def _get_ncbi_email() -> str | None:
 # individual case reports.  These offsets reflect the evidence hierarchy
 # used in evidence-based medicine (EBM) pyramid.
 EVIDENCE_TIER_ADJUSTMENTS: dict[str, float] = {
-    "guidelines": 0.04,   # Highest: clinical practice guidelines
-    "review": 0.02,       # Systematic reviews / meta-analyses
-    "article": 0.0,       # Standard journal articles (baseline)
-    "case_report": -0.05, # Lower evidence: individual case reports
+    "guidelines": 0.04,  # Highest: clinical practice guidelines
+    "review": 0.02,  # Systematic reviews / meta-analyses
+    "article": 0.0,  # Standard journal articles (baseline)
+    "case_report": -0.05,  # Lower evidence: individual case reports
 }
 
 

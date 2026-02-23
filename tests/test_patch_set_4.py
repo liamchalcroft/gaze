@@ -143,9 +143,7 @@ class TestLLMSemanticMatchVoting:
             "examples.nova.src.evaluation.diagnosis._get_semantic_match_client",
             return_value=client,
         ):
-            verdict, record = asyncio.run(
-                llm_semantic_match_async("tumor", "cyst", num_votes=1)
-            )
+            verdict, record = asyncio.run(llm_semantic_match_async("tumor", "cyst", num_votes=1))
         assert verdict is False
         assert record.vote_counts == (0, 1)
 
@@ -181,9 +179,7 @@ class TestLLMSemanticMatchVoting:
             "examples.nova.src.evaluation.diagnosis._get_semantic_match_client",
             return_value=client,
         ):
-            verdict, record = asyncio.run(
-                llm_semantic_match_async("tumor", "cyst", num_votes=3)
-            )
+            verdict, record = asyncio.run(llm_semantic_match_async("tumor", "cyst", num_votes=3))
         assert verdict is False  # 1 YES < 2 NO
         assert record.vote_counts == (1, 2)
 
@@ -252,9 +248,7 @@ class TestEvaluateDiagnosisJudgmentLog:
         assert log[0]["model"] != ""
 
     def test_empty_returns_empty_log(self) -> None:
-        results = asyncio.run(
-            evaluate_diagnosis_nova_official(preds=[], refs=[])
-        )
+        results = asyncio.run(evaluate_diagnosis_nova_official(preds=[], refs=[]))
         assert results["judgment_log"] == []
 
     def test_mixed_methods_logged(self) -> None:

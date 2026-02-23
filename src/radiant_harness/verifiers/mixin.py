@@ -43,6 +43,7 @@ def _safe_resolve_image_path(base: Path, relative: str) -> str:
         )
     return str(resolved)
 
+
 if TYPE_CHECKING:
     import verifiers as vf
 
@@ -162,9 +163,7 @@ class VerifiableProcessorMixin:
                 if image_path:
                     # Resolve relative paths safely (prevent traversal)
                     if self._image_base_path and not Path(image_path).is_absolute():
-                        image_path = _safe_resolve_image_path(
-                            self._image_base_path, image_path
-                        )
+                        image_path = _safe_resolve_image_path(self._image_base_path, image_path)
 
                     # Build multimodal message
                     text_content = self._processor.get_user_message(
@@ -195,9 +194,7 @@ class VerifiableProcessorMixin:
                 image_path = info.get("image_path") or info.get("image")
                 if image_path:
                     if self._image_base_path and not Path(image_path).is_absolute():
-                        image_path = _safe_resolve_image_path(
-                            self._image_base_path, image_path
-                        )
+                        image_path = _safe_resolve_image_path(self._image_base_path, image_path)
                     state["image_path"] = image_path
 
                 return state
