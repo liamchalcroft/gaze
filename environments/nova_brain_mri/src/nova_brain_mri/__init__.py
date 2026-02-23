@@ -43,7 +43,7 @@ class NOVAEnvConfig:
     max_turns: int = 10
     use_tools: bool = True
     use_web_search: bool = False
-    iou_threshold: float = 0.3
+    iou_threshold: float = 0.5
     data_dir: str | None = None
 
 
@@ -53,7 +53,7 @@ def load(
     max_turns: int = 10,
     use_tools: bool = True,
     use_web_search: bool = False,
-    iou_threshold: float = 0.3,
+    iou_threshold: float = 0.5,
     data_dir: str | None = None,
     **kwargs: Any,
 ) -> NOVABrainMRIEnv:
@@ -164,8 +164,13 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
             if alt_path.exists():
                 data_path = alt_path
             else:
-                # Return empty for now - dataset will be provided externally
-                return []
+                msg = (
+                    f"NOVA dataset not found. Searched:\n"
+                    f"  - {data_path}\n"
+                    f"  - {alt_path}\n"
+                    f"Provide --data-dir or set NOVAEnvConfig.data_dir."
+                )
+                raise FileNotFoundError(msg)
 
         cases = []
         with open(data_path, encoding="utf-8") as f:
@@ -225,28 +230,14 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         return messages
 
     def _get_system_prompt(self) -> str:
-        """Get system prompt for brain MRI analysis."""
-        tool_instructions = ""
-        if self.config.use_tools:
-            tool_instructions = """
-You have access to visual manipulation tools:
-- zoom(factor): Zoom in/out (0.5x to 4.0x)
-- crop(x1, y1, x2, y2): Crop to region (normalized 0-1)
-- adjust_contrast(factor): Adjust contrast (0.5x to 3.0x)
-- threshold(lower, upper): Apply intensity thresholding
-- reset(): Restore original image
+        """Get system prompt for brain MRI analysis.
 
-Use these tools to examine regions of interest more closely."""
-
-        search_instructions = ""
-        if self.config.use_web_search:
-            search_instructions = """
-You can search medical literature:
-- search_web(query): Search PubMed for relevant articles
-- search_images(query, modality): Find similar reference images
-
-Use these to support your diagnostic reasoning with evidence."""
-
+        Note: use_tools and use_web_search config flags are accepted for
+        forward-compatibility but tool execution is not yet implemented in
+        this standalone MedMarks environment. The system prompt does not
+        advertise tools to avoid misleading models into wasting turns on
+        tool calls that env_response() cannot execute.
+        """
         task_description = {
             "caption": "radiological description and findings",
             "diagnosis": "primary diagnosis with differentials",
@@ -258,19 +249,15 @@ Use these to support your diagnostic reasoning with evidence."""
 
 Your task is to provide {task_description}.
 
-{tool_instructions}
-{search_instructions}
-
 Response Format:
 You must respond with valid JSON containing:
 - caption: Radiological description with sequence characteristics and orientation
 - diagnosis: Primary diagnosis with confidence, evidence, and differential diagnoses
 - localization: Abnormality locations with bounding boxes [x1, y1, x2, y2] in pixels
-- continue: true if you need more analysis (use tools), false when complete
+- continue: true if you need more turns of analysis, false when complete
 - reasoning: Your chain-of-thought analysis
 
-Be thorough and systematic. Examine the entire image before making conclusions.
-Use tools when additional detail would help your analysis."""
+Be thorough and systematic. Examine the entire image before making conclusions."""
 
     def _build_user_message(
         self,
@@ -329,14 +316,8 @@ Use tools when additional detail would help your analysis."""
         state = {
             "turn": 0,
             "info": info,
-            "tool_uses": 0,
             "is_complete": False,
         }
-
-        # Store image path for tool execution
-        image_path = info.get("image_path") or info.get("image")
-        if image_path:
-            state["image_path"] = image_path
 
         return state
 
@@ -348,7 +329,10 @@ Use tools when additional detail would help your analysis."""
     ) -> tuple[vf.Messages, vf.State]:
         """Generate environment response to assistant message.
 
-        For NOVA, this handles tool execution and state updates.
+        Checks the assistant's JSON response for a ``"continue": false``
+        completion signal and enforces the turn limit.  No tool execution
+        is performed — this standalone MedMarks environment evaluates the
+        model's single-pass analysis without tool augmentation.
 
         Args:
             messages: Conversation messages

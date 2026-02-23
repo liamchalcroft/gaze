@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "-m",
         "--model",
         type=str,
-        required=True,
+        default=None,
         help="Model name (e.g., gpt-4o, claude-3-opus)",
     )
     parser.add_argument(
@@ -114,8 +114,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--iou-threshold",
         type=float,
-        default=0.3,
-        help="IoU threshold for localization matching",
+        default=0.5,
+        help="IoU threshold for localization matching (0.5 = NOVA ACC50)",
     )
 
     # Output arguments
@@ -137,6 +137,12 @@ def parse_args() -> argparse.Namespace:
         "--stream",
         action="store_true",
         help="Stream results as they complete",
+    )
+    parser.add_argument(
+        "--schema",
+        action="store_true",
+        default=False,
+        help="Print environment configuration schema and exit",
     )
 
     return parser.parse_args()
@@ -186,7 +192,7 @@ def print_env_schema() -> None:
             "max_turns": {"type": "integer", "default": 10},
             "use_tools": {"type": "boolean", "default": True},
             "use_web_search": {"type": "boolean", "default": False},
-            "iou_threshold": {"type": "number", "default": 0.3},
+            "iou_threshold": {"type": "number", "default": 0.5},
             "data_dir": {"type": "string", "default": None},
         },
     }
@@ -268,7 +274,6 @@ async def run_evaluation(
             "case_index": idx,
             "reward": reward,
             "turns": state.get("turn", 0),
-            "tool_uses": state.get("tool_uses", 0),
         }
         results.append(result)
 
@@ -293,9 +298,13 @@ def main() -> int:
     args = parse_args()
 
     # Handle schema printing
-    if hasattr(args, "print_env_schema") and args.print_env_schema:
+    if args.schema:
         print_env_schema()
         return 0
+
+    if not args.model:
+        print("Error: --model is required (unless using --schema)", file=sys.stderr)
+        return 1
 
     # Create client
     client = get_api_client(args)

@@ -15,7 +15,6 @@ authors = [
 dependencies = [
     "verifiers>=0.1.6",
     "prime>=0.3.35",
-    "radiant-harness",
     "pillow>=10.0.0",
     "numpy>=1.24.0",
 ]

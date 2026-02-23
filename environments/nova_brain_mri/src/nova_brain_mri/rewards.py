@@ -1,28 +1,51 @@
 """Reward functions for NOVA Brain MRI MedMarks environment.
 
 Provides verifiers-compatible reward functions for:
-- Caption: Token F1 similarity
+- Caption: Token F1 similarity (multiset intersection)
 - Diagnosis: Top-k accuracy with medical term normalization
-- Localization: IoU-based detection reward
+- Localization: IoU-based detection reward with area penalty
 
 These can be used individually or combined for multi-task evaluation.
 
-All shared utilities (IoU, JSON extraction, completion text extraction) are
-imported from radiant_harness to maintain parity with the examples/ rewards.
+Utilities are inlined in _utils.py so this package is fully standalone.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any, Literal
 
 import verifiers as vf
 
-from radiant_harness.utils.iou import compute_iou
-from radiant_harness.utils.json_extract import extract_json_from_text
-from radiant_harness.verifiers.rewards import extract_completion_text
+from ._utils import compute_iou, extract_completion_text, extract_json_from_text
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
+
+# Must stay in sync with examples/nova/src/rewards.py._ABBREVIATION_MAPPING.
+_ABBREVIATION_MAPPING: dict[str, str] = {
+    "sod": "septo-optic dysplasia",
+    "acc": "agenesis of corpus callosum",
+    "cpa": "cerebellopontine angle",
+    "avm": "arteriovenous malformation",
+    "pnet": "primitive neuroectodermal tumor",
+    "gbm": "glioblastoma multiforme",
+    "mri": "magnetic resonance imaging",
+    "ct": "computed tomography",
+    "dwi": "diffusion weighted imaging",
+    "flair": "fluid attenuated inversion recovery",
+    "dc": "dermoid cyst",
+    "ec": "epidermoid cyst",
+    "ac": "arachnoid cyst",
+    "cm": "cavernous malformation",
+    "vs": "vestibular schwannoma",
+    "an": "acoustic neuroma",
+    "da": "diffuse axonal injury",
+    "sah": "subarachnoid hemorrhage",
+    "ich": "intracerebral hemorrhage",
+}
+
+_DASH_PATTERN = re.compile(r"\s*[–—]\s*")
 
 
 def _normalize_diagnosis(diagnosis: str) -> str:
@@ -31,13 +54,62 @@ def _normalize_diagnosis(diagnosis: str) -> str:
     Strips hedging modifiers (possible, probable, likely, suspected) that
     indicate uncertainty but NOT severity qualifiers (mild, moderate, severe)
     which are clinically meaningful and change the diagnosis.
+
+    Preserves hyphens (clinically meaningful, e.g. "septo-optic") and
+    expands common medical abbreviations for robust matching.
     """
-    normalized = diagnosis.lower()
-    normalized = re.sub(r"[^\w\s]", " ", normalized)
-    # Remove hedging modifiers only — severity qualifiers are clinically meaningful
+    if not diagnosis:
+        return ""
+
+    # Lowercase and normalize dashes
+    normalized = diagnosis.lower().strip()
+    normalized = _DASH_PATTERN.sub("-", normalized)
+    # Remove punctuation EXCEPT hyphens (clinically meaningful)
+    normalized = re.sub(r"[^\w\s-]", " ", normalized)
+    # Collapse whitespace
+    normalized = " ".join(normalized.split())
+
+    # Expand common abbreviations as whole words
+    for abbrev, full in _ABBREVIATION_MAPPING.items():
+        normalized = re.sub(r"\b" + re.escape(abbrev) + r"\b", full, normalized)
+
+    # Remove hedging modifiers only — use word boundaries to avoid
+    # corrupting substrings (e.g. "improbable" should not become "im able")
     for modifier in ["possible", "probable", "likely", "suspected"]:
-        normalized = normalized.replace(modifier, "")
+        normalized = re.sub(r"\b" + modifier + r"\b", "", normalized)
+
+    # Final whitespace cleanup
     return " ".join(normalized.split())
+
+
+def _area_penalty(
+    box: list[float],
+    image_area: float,
+    penalty_start: float = 0.5,
+) -> float:
+    """Compute penalty for degenerate full-image boxes.
+
+    A box covering most of the image trivially overlaps any ground-truth,
+    so we scale the reward toward 0 as predicted area grows.
+    Linear ramp: full credit at <= penalty_start coverage, zero at 100%.
+
+    Args:
+        box: [x1, y1, x2, y2] in absolute pixels.
+        image_area: Total image area (width * height).
+        penalty_start: Area ratio above which penalty begins (default 0.5).
+
+    Returns:
+        Multiplier in [0.0, 1.0].
+    """
+    if image_area <= 0:
+        return 1.0
+    if penalty_start >= 1.0:
+        return 1.0
+    pred_area = abs(box[2] - box[0]) * abs(box[3] - box[1])
+    area_ratio = pred_area / image_area
+    if area_ratio <= penalty_start:
+        return 1.0
+    return max(0.0, (1.0 - area_ratio) / (1.0 - penalty_start))
 
 
 def caption_reward(
@@ -46,6 +118,9 @@ def caption_reward(
     info: dict[str, Any],
 ) -> float:
     """Compute caption reward using token F1 similarity.
+
+    Uses multiset (Counter) intersection to preserve token frequency,
+    matching the examples/nova reference implementation.
 
     Args:
         prompt: Input prompt (unused)
@@ -72,15 +147,19 @@ def caption_reward(
     if not pred_caption or not ref_caption:
         return 0.0
 
-    pred_tokens = set(str(pred_caption).lower().split())
-    ref_tokens = set(str(ref_caption).lower().split())
+    pred_tokens = Counter(str(pred_caption).lower().split())
+    ref_tokens = Counter(str(ref_caption).lower().split())
 
     if not ref_tokens:
         return 0.0
 
-    intersection = pred_tokens & ref_tokens
-    precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
-    recall = len(intersection) / len(ref_tokens)
+    # Multiset intersection: min count for each shared token preserves frequency
+    intersection = sum((pred_tokens & ref_tokens).values())
+    pred_total = sum(pred_tokens.values())
+    ref_total = sum(ref_tokens.values())
+
+    precision = intersection / pred_total if pred_total else 0.0
+    recall = intersection / ref_total
 
     if precision + recall == 0:
         return 0.0
@@ -146,7 +225,60 @@ def diagnosis_reward(
     return 0.6 * float(top1_match) + 0.4 * coverage
 
 
-def localization_reward_factory(iou_threshold: float = 0.5):
+def _extract_pred_boxes(localization: Any) -> list[list[float]]:
+    """Extract predicted bounding boxes from localization response.
+
+    Only accepts "bounding_box" key from predictions (NOVA schema).
+    The "bbox" key is a ground-truth dataset convention and should not
+    be accepted from model predictions to enforce schema compliance.
+    """
+    pred_boxes: list[list[float]] = []
+
+    if isinstance(localization, list):
+        for loc in localization:
+            if isinstance(loc, dict) and "bounding_box" in loc:
+                box = loc["bounding_box"]
+                if isinstance(box, list) and len(box) >= 4:
+                    pred_boxes.append([float(c) for c in box[:4]])
+            elif isinstance(loc, list) and len(loc) >= 4:
+                pred_boxes.append([float(c) for c in loc[:4]])
+    elif isinstance(localization, dict):
+        localizations = localization.get("localizations", [])
+        for loc in localizations:
+            if isinstance(loc, dict):
+                box = loc.get("bounding_box")
+                if isinstance(box, list) and len(box) >= 4:
+                    pred_boxes.append([float(c) for c in box[:4]])
+
+    return pred_boxes
+
+
+def _extract_ref_boxes(info: dict[str, Any]) -> list[list[float]]:
+    """Extract reference bounding boxes from info dict.
+
+    Accepts both "bounding_box" and "bbox" keys (dataset conventions).
+    """
+    ref_source = info.get("boxes", info.get("gold_boxes", []))
+    if isinstance(ref_source, dict):
+        ref_source = ref_source.get("boxes", [])
+
+    ref_boxes: list[list[float]] = []
+    if isinstance(ref_source, list):
+        for item in ref_source:
+            if isinstance(item, dict):
+                box = item.get("bounding_box", item.get("bbox"))
+                if isinstance(box, list) and len(box) >= 4:
+                    ref_boxes.append([float(c) for c in box[:4]])
+            elif isinstance(item, list) and len(item) >= 4:
+                ref_boxes.append([float(c) for c in item[:4]])
+
+    return ref_boxes
+
+
+def localization_reward_factory(
+    iou_threshold: float = 0.5,
+    area_penalty_start: float = 0.5,
+):
     """Create localization reward function with configurable IoU threshold.
 
     Default threshold is 0.5 to align with NOVA evaluation metric
@@ -154,6 +286,7 @@ def localization_reward_factory(iou_threshold: float = 0.5):
 
     Args:
         iou_threshold: Minimum IoU for positive match (default 0.5 per NOVA eval)
+        area_penalty_start: Area ratio above which penalty begins (default 0.5)
 
     Returns:
         Reward function
@@ -180,36 +313,22 @@ def localization_reward_factory(iou_threshold: float = 0.5):
         if response is None:
             return 0.0
 
-        localization = response.get("localization", {})
-        pred_boxes = []
-
-        if isinstance(localization, list):
-            for loc in localization:
-                if isinstance(loc, dict) and "bounding_box" in loc:
-                    pred_boxes.append(loc["bounding_box"])
-                elif isinstance(loc, dict) and "bbox" in loc:
-                    pred_boxes.append(loc["bbox"])
-                elif isinstance(loc, list) and len(loc) == 4:
-                    pred_boxes.append(loc)
-        elif isinstance(localization, dict):
-            localizations = localization.get("localizations", [])
-            for loc in localizations:
-                if isinstance(loc, dict):
-                    box = loc.get("bounding_box") or loc.get("bbox")
-                    if box:
-                        pred_boxes.append(box)
-
-        ref_boxes = info.get("boxes", info.get("gold_boxes", []))
-        if isinstance(ref_boxes, dict):
-            ref_boxes = ref_boxes.get("boxes", [])
+        pred_boxes = _extract_pred_boxes(response.get("localization", {}))
+        ref_boxes = _extract_ref_boxes(info)
 
         if not pred_boxes and not ref_boxes:
             return 1.0
         if not pred_boxes or not ref_boxes:
             return 0.0
 
-        matched_refs = set()
+        # Compute image area for area penalty
+        width = info.get("image_width", info.get("width", 0))
+        height = info.get("image_height", info.get("height", 0))
+        image_area = float(width) * float(height)
+
+        matched_refs: set[int] = set()
         true_positives = 0
+        penalty_sum = 0.0
 
         for pred_box in pred_boxes:
             best_iou = 0.0
@@ -218,10 +337,7 @@ def localization_reward_factory(iou_threshold: float = 0.5):
             for ref_idx, ref_box in enumerate(ref_boxes):
                 if ref_idx in matched_refs:
                     continue
-                # Convert to float for compute_iou (handles int coords from JSON)
-                pred_floats = [float(c) for c in pred_box[:4]]
-                ref_floats = [float(c) for c in ref_box[:4]]
-                iou = compute_iou(pred_floats, ref_floats)
+                iou = compute_iou(pred_box, ref_box)
                 if iou > best_iou:
                     best_iou = iou
                     best_ref_idx = ref_idx
@@ -229,6 +345,10 @@ def localization_reward_factory(iou_threshold: float = 0.5):
             if best_iou >= iou_threshold and best_ref_idx >= 0:
                 matched_refs.add(best_ref_idx)
                 true_positives += 1
+                if image_area > 0:
+                    penalty_sum += _area_penalty(pred_box, image_area, area_penalty_start)
+                else:
+                    penalty_sum += 1.0
 
         precision = true_positives / len(pred_boxes)
         recall = true_positives / len(ref_boxes)
@@ -236,7 +356,14 @@ def localization_reward_factory(iou_threshold: float = 0.5):
         if precision + recall == 0:
             return 0.0
 
-        return 2 * precision * recall / (precision + recall)
+        f1 = 2 * precision * recall / (precision + recall)
+
+        # Apply average area penalty across matched predictions
+        if true_positives > 0 and image_area > 0:
+            avg_penalty = penalty_sum / true_positives
+            f1 *= avg_penalty
+
+        return f1
 
     return localization_reward
 
