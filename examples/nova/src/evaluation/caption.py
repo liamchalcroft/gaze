@@ -110,8 +110,10 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     bleu = sacrebleu.corpus_bleu(preds, [refs])
 
     _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
-    # Baseline-rescaled BERTScore F1 is in [0, 1]; scale to [0, 100] for internal use
-    bert_f1_score = float(f1_scores.mean()) * 100
+    # Baseline-rescaled BERTScore F1 can be negative for very poor candidates.
+    # Clamp to [0, 1] before reporting — negative scores are not meaningful
+    # and would violate CaptionMetrics(ge=0.0) if validated.
+    bert_f1_score = max(0.0, min(1.0, float(f1_scores.mean())))
 
     # METEOR calculation with proper tokenization
     # Prepare references for METEOR (list of lists format)
@@ -233,7 +235,7 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
 
     return {
         "bleu": float(bleu.score) / 100.0,  # Normalize from 0-100 to 0-1
-        "bert_f1": bert_f1_score / 100.0,  # Normalize from 0-100 to 0-1
+        "bert_f1": bert_f1_score,  # Already clamped to [0, 1]
         "radgraph_f1": radgraph_f1,  # Already in 0-1 range
         "meteor": meteor,  # Already in 0-1 range (NLTK native)
         "modality_f1": modality_f1,  # Already in 0-1 range

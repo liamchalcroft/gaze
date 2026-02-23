@@ -200,6 +200,7 @@ def _make_valid_response() -> dict:
             "coordinate_system": "absolute_pixels",
         },
         "continue": False,
+        "reasoning": "Test chain-of-thought reasoning",
     }
 
 
@@ -522,11 +523,11 @@ class TestSchemaValidationConfidence:
         resp["diagnosis"]["confidence"] = 2.0
         assert validate_nova_response(resp) is False
 
-    def test_caption_confidence_none_allowed(self) -> None:
-        """confidence is optional in caption — None should pass."""
+    def test_caption_confidence_required(self) -> None:
+        """confidence is required in caption — missing should fail."""
         resp = _make_valid_response()
         del resp["caption"]["confidence"]
-        assert validate_nova_response(resp) is True
+        assert validate_nova_response(resp) is False
 
 
 class TestSchemaValidationDifferentialDiagnoses:

@@ -23,8 +23,8 @@ DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
 )
 
 # Pre-compiled regex patterns for better performance
-_DASH_PATTERN = re.compile(r"\s*–\s*")
-_DOUBLE_SPACE_PATTERN = re.compile(r"  +")
+_DASH_PATTERN = re.compile(r"\s*[–—]\s*")
+_WHITESPACE_PATTERN = re.compile(r"\s+")
 
 # Common medical abbreviation mappings - use frozenset for faster lookups
 _semantic_match_client: Any = None
@@ -96,16 +96,13 @@ def normalize_diagnosis_string(diag: str) -> str:
     # Use pre-compiled regex patterns for better performance
     normalized = diag.lower().strip()
     normalized = _DASH_PATTERN.sub("-", normalized)
-    normalized = _DOUBLE_SPACE_PATTERN.sub(" ", normalized)
+    normalized = _WHITESPACE_PATTERN.sub(" ", normalized)
 
-    # Expand common abbreviations using the pre-defined mapping
+    # Expand common abbreviations as whole words
     for abbrev, full in _ABBREVIATION_MAPPING.items():
-        if normalized == abbrev:
-            normalized = full
-        elif normalized.startswith(abbrev + " "):
-            normalized = full + normalized[len(abbrev) :]
+        normalized = re.sub(r"\b" + re.escape(abbrev) + r"\b", full, normalized)
 
-    return normalized.strip()
+    return " ".join(normalized.split())
 
 
 @beartype

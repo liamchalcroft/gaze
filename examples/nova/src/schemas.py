@@ -198,7 +198,7 @@ NOVA_SCHEMA: dict[str, Any] = {
 
 def get_required_fields() -> list[str]:
     """Get the list of required top-level fields in NOVA schema."""
-    return ["caption", "diagnosis", "localization", "continue"]
+    return ["caption", "diagnosis", "localization", "continue", "reasoning"]
 
 
 def _is_valid_confidence(value: object) -> bool:
@@ -252,8 +252,8 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
         return False
     if not isinstance(caption.get("description"), str):
         return False
-    cap_conf = caption.get("confidence")
-    if cap_conf is not None and not _is_valid_confidence(cap_conf):
+    # Schema requires confidence; reject None and invalid values
+    if not _is_valid_confidence(caption.get("confidence")):
         return False
 
     # --- diagnosis ---
@@ -262,8 +262,8 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
         return False
     if not isinstance(diagnosis.get("primary_diagnosis"), str):
         return False
-    diag_conf = diagnosis.get("confidence")
-    if diag_conf is not None and not _is_valid_confidence(diag_conf):
+    # Schema requires confidence; reject None and invalid values
+    if not _is_valid_confidence(diagnosis.get("confidence")):
         return False
     # evidence must be a list of strings when present
     evidence = diagnosis.get("evidence")

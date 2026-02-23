@@ -163,16 +163,14 @@ def _normalize_diagnosis(diagnosis: str) -> str:
     # Collapse whitespace
     normalized = " ".join(normalized.split())
 
-    # Expand common abbreviations — aligned with evaluation/diagnosis.py
+    # Expand common abbreviations as whole words — aligned with evaluation/diagnosis.py
     for abbrev, full in _ABBREVIATION_MAPPING.items():
-        if normalized == abbrev:
-            normalized = full
-        elif normalized.startswith(abbrev + " "):
-            normalized = full + normalized[len(abbrev) :]
+        normalized = re.sub(r"\b" + re.escape(abbrev) + r"\b", full, normalized)
 
-    # Remove hedging modifiers only — severity qualifiers are clinically meaningful
+    # Remove hedging modifiers only — severity qualifiers are clinically meaningful.
+    # Use word boundaries to avoid corrupting substrings (e.g. "improbable").
     for modifier in ["possible", "probable", "likely", "suspected"]:
-        normalized = normalized.replace(modifier, "")
+        normalized = re.sub(r"\b" + modifier + r"\b", "", normalized)
 
     # Final whitespace cleanup
     return " ".join(normalized.split())
@@ -408,12 +406,17 @@ class NOVAVerifiersReward(BaseRewardFunction):
     ) -> float:
         """Compute localization reward."""
 
-        def _extract_boxes(raw: Any) -> list[list[int | float]]:
+        def _extract_boxes(raw: Any, *, is_prediction: bool) -> list[list[int | float]]:
             boxes: list[list[int | float]] = []
             if isinstance(raw, list):
                 for item in raw:
                     if isinstance(item, dict):
-                        box = item.get("bounding_box", item.get("bbox"))
+                        # Predictions must use "bounding_box" (matches NOVA schema).
+                        # Ground truth may use "bbox" (dataset convention).
+                        if is_prediction:
+                            box = item.get("bounding_box")
+                        else:
+                            box = item.get("bounding_box", item.get("bbox"))
                         if isinstance(box, list) and len(box) >= 4:
                             boxes.append(box[:4])
                     elif isinstance(item, list) and len(item) >= 4:
@@ -422,21 +425,24 @@ class NOVAVerifiersReward(BaseRewardFunction):
 
             if isinstance(raw, dict):
                 if isinstance(raw.get("boxes"), list):
-                    return _extract_boxes(raw["boxes"])
+                    return _extract_boxes(raw["boxes"], is_prediction=is_prediction)
                 if isinstance(raw.get("localizations"), list):
-                    return _extract_boxes(raw["localizations"])
-                box = raw.get("bounding_box", raw.get("bbox"))
+                    return _extract_boxes(raw["localizations"], is_prediction=is_prediction)
+                if is_prediction:
+                    box = raw.get("bounding_box")
+                else:
+                    box = raw.get("bounding_box", raw.get("bbox"))
                 if isinstance(box, list) and len(box) >= 4:
                     boxes.append(box[:4])
             return boxes
 
-        pred_boxes = _extract_boxes(response.get("localization", {}))
+        pred_boxes = _extract_boxes(response.get("localization", {}), is_prediction=True)
 
         # Accept benchmark info in either {"boxes": ...} or {"localizations": [{"bbox": ...}]}
         ref_source = info.get("boxes", info.get("gold_boxes"))
         if ref_source is None:
             ref_source = info.get("localizations", info.get("gold_localizations", []))
-        ref_boxes = _extract_boxes(ref_source)
+        ref_boxes = _extract_boxes(ref_source, is_prediction=False)
 
         width = info.get("image_width", info.get("width", 0))
         height = info.get("image_height", info.get("height", 0))
