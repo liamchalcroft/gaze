@@ -15,6 +15,7 @@ from pathlib import Path
 from loguru import logger
 
 from radiant_harness import AgenticResult
+from radiant_harness.exceptions import AgenticProcessingError
 
 from .dataset import PubmedQADataset
 from .evaluation import evaluate_pubmedqa
@@ -110,7 +111,7 @@ async def run_evaluation(
                 f"turns={result.num_turns}, confidence={result.confidence:.2f}"
             )
 
-        except Exception as e:
+        except AgenticProcessingError as e:
             logger.error(f"Failed to process sample {i}: {e}")
             predictions.append("maybe")  # Default for failed samples
             references.append(sample["answer"])

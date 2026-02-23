@@ -40,7 +40,7 @@ PUBMEDQA_SCHEMA: dict[str, Any] = {
                     "description": "true if more analysis needed, false when complete",
                 },
             },
-            "required": ["answer", "confidence", "reasoning", "continue"],
+            "required": ["answer", "confidence", "reasoning", "key_evidence", "continue"],
             "additionalProperties": False,
         },
     },
@@ -56,7 +56,7 @@ def validate_pubmedqa_response(response: dict[str, Any]) -> bool:
     Returns:
         True if all required fields present and valid
     """
-    required = ["answer", "confidence", "reasoning", "continue"]
+    required = ["answer", "confidence", "reasoning", "key_evidence", "continue"]
     if not all(field in response for field in required):
         return False
 

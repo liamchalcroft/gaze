@@ -1000,7 +1000,7 @@ class AgenticProcessorBase(ABC):
             # used any after several turns, force finalize to avoid token waste.
             # After the first nudge, if the model *still* doesn't use tools,
             # force-accept whatever it returned rather than burning more turns.
-            if self.use_tools and total_tool_calls == 0 and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1:
+            if tool_registry is not None and total_tool_calls == 0 and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1:
                 if idle_tool_nudged:
                     # Already nudged once — accept this response as final.
                     logger.warning(

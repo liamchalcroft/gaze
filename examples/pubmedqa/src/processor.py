@@ -8,6 +8,7 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from beartype import beartype
@@ -86,11 +87,12 @@ class PubmedQAVerifiersReward(BaseRewardFunction):
         if result is not None:
             return result
 
-        # Fallback: check for direct yes/no/maybe
+        # Fallback: check for direct yes/no/maybe using word boundaries
+        # to avoid false positives like "no" in "know" or "yes" in "eyes"
         text_lower = text.lower()
-        for answer in ["yes", "no", "maybe"]:
-            if answer in text_lower:
-                return {"answer": answer}
+        match = re.search(r"\b(yes|no|maybe)\b", text_lower)
+        if match:
+            return {"answer": match.group(1)}
 
         return None
 
@@ -228,6 +230,7 @@ class PubmedQAProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         """Validate response has required PubmedQA fields."""
         return validate_pubmedqa_response(response)
 
+    @beartype
     def calculate_confidence(
         self,
         response: dict[str, Any],

@@ -11,6 +11,22 @@ from collections.abc import Sequence
 from beartype import beartype
 
 
+def _normalize_answer(answer: str) -> str:
+    """Normalize a PubmedQA answer to canonical form.
+
+    Maps common variations to yes/no/maybe so that evaluation
+    matches the reward function's normalization logic.
+    """
+    answer = answer.lower().strip()
+    if answer in {"yes", "y", "true", "positive"}:
+        return "yes"
+    if answer in {"no", "n", "false", "negative"}:
+        return "no"
+    if answer in {"maybe", "uncertain", "unclear", "unknown"}:
+        return "maybe"
+    return answer
+
+
 @beartype
 def evaluate_pubmedqa(
     predictions: Sequence[str],
@@ -41,9 +57,9 @@ def evaluate_pubmedqa(
     if not predictions:
         raise ValueError("Cannot evaluate empty predictions")
 
-    # Normalize to lowercase
-    preds = [p.lower().strip() for p in predictions]
-    refs = [r.lower().strip() for r in references]
+    # Normalize answers to canonical forms (yes/no/maybe)
+    preds = [_normalize_answer(p) for p in predictions]
+    refs = [_normalize_answer(r) for r in references]
 
     # Overall accuracy
     correct = sum(1 for p, r in zip(preds, refs, strict=True) if p == r)
