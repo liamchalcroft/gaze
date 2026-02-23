@@ -138,6 +138,18 @@ def _get_ncbi_email() -> str | None:
     return email
 
 
+# Evidence-tier adjustments applied on top of domain-based reliability.
+# Systematic reviews and guidelines represent higher evidence quality than
+# individual case reports.  These offsets reflect the evidence hierarchy
+# used in evidence-based medicine (EBM) pyramid.
+EVIDENCE_TIER_ADJUSTMENTS: dict[str, float] = {
+    "guidelines": 0.04,   # Highest: clinical practice guidelines
+    "review": 0.02,       # Systematic reviews / meta-analyses
+    "article": 0.0,       # Standard journal articles (baseline)
+    "case_report": -0.05, # Lower evidence: individual case reports
+}
+
+
 class PubMedSearchEngine(SearchEngine):
     """Enhanced PubMed search with better error handling and metadata extraction."""
 
@@ -275,15 +287,20 @@ class PubMedSearchEngine(SearchEngine):
             # Extract medical entities
             entities = self._extract_medical_entities(title + " " + content)
 
+            # Base reliability from domain + evidence-tier adjustment
+            base_reliability = self._calculate_reliability(
+                f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            )
+            tier_adj = EVIDENCE_TIER_ADJUSTMENTS.get(content_type, 0.0)
+            reliability = max(0.0, min(1.0, base_reliability + tier_adj))
+
             result = SearchResult(
                 title=title,
                 url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                 content=content,
                 snippet=self._create_snippet(title, content),
                 source="pubmed",
-                reliability_score=self._calculate_reliability(
-                    f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                ),
+                reliability_score=reliability,
                 publication_date=pub_date,
                 author=", ".join([a.get("name", "") for a in authors[:3]]),
                 journal=journal,
