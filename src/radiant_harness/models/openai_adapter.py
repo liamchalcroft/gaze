@@ -63,7 +63,14 @@ class OpenAIAdapter(AdapterProtocol):
 
     @staticmethod
     def _validate_base_url(url: str) -> None:
-        """Validate *url* is HTTPS and warn if not on the built-in allowlist."""
+        """Validate *url* is HTTPS and reject unlisted hosts unless opted-in.
+
+        Custom base URLs route the API key to a third-party host.  To
+        prevent accidental credential leakage, non-allowlisted URLs are
+        only permitted when ``RADIANT_ALLOW_CUSTOM_BASE_URL=1`` is set in
+        the environment.
+        """
+        import os
         from urllib.parse import urlparse
 
         parsed = urlparse(url)
@@ -73,10 +80,18 @@ class OpenAIAdapter(AdapterProtocol):
                 model_name=None,
             )
         if url.rstrip("/") not in {u.rstrip("/") for u in OpenAIAdapter._ALLOWED_BASE_URLS}:
-            logger.warning(
-                f"Custom base_url {parsed.netloc!r} is not on the built-in allowlist. "
-                "API key will be sent to this host."
-            )
+            if os.environ.get("RADIANT_ALLOW_CUSTOM_BASE_URL") == "1":
+                logger.warning(
+                    f"Custom base_url {parsed.netloc!r} is not on the built-in allowlist. "
+                    "API key will be sent to this host (allowed via RADIANT_ALLOW_CUSTOM_BASE_URL)."
+                )
+            else:
+                raise ModelError(
+                    f"Custom base_url {parsed.netloc!r} is not on the built-in allowlist. "
+                    "Set RADIANT_ALLOW_CUSTOM_BASE_URL=1 to allow sending your API key "
+                    "to third-party hosts.",
+                    model_name=None,
+                )
 
     @beartype
     def __init__(

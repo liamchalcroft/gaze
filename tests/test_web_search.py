@@ -262,6 +262,7 @@ class TestNCBIParamsOnAllRequests:
         """Verify _fetch_article_details builds params with 'tool' key."""
         from contextlib import asynccontextmanager
         from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
         from unittest.mock import patch
 
         engine = PubMedSearchEngine()
@@ -274,6 +275,8 @@ class TestNCBIParamsOnAllRequests:
             captured_params.append(dict(params) if params else {})
             mock_resp = AsyncMock()
             mock_resp.status = 200
+            # raise_for_status() is synchronous in aiohttp — use MagicMock
+            mock_resp.raise_for_status = MagicMock()
             if "esummary" in url:
                 mock_resp.json = AsyncMock(return_value={"result": {}})
             else:
@@ -883,3 +886,156 @@ class TestBigramPhraseMatching:
 
         with pytest.raises(ValueError, match="phrase_match_weight"):
             RankingWeights(phrase_match_weight=-0.1)
+
+
+class TestHTTPErrorRetry:
+    """HTTP error responses from PubMed must be retried by the base class."""
+
+    @pytest.mark.asyncio
+    async def test_esearch_503_is_retried(self) -> None:
+        """PubMed returning 503 on esearch must trigger retry, not immediate failure."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        import aiohttp
+
+        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
+        engine = PubMedSearchEngine(config=config)
+
+        call_count = 0
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            nonlocal call_count
+            call_count += 1
+            mock_resp = AsyncMock()
+            mock_resp.status = 503
+            mock_resp.raise_for_status = MagicMock(
+                side_effect=aiohttp.ClientResponseError(
+                    request_info=aiohttp.RequestInfo(
+                        url=url,
+                        method="GET",
+                        headers={},
+                        real_url=url,  # type: ignore[arg-type]
+                    ),
+                    history=(),
+                    status=503,
+                    message="Service Unavailable",
+                )
+            )
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with (
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
+            pytest.raises(SearchError, match="All search attempts failed"),
+        ):
+            await engine.search("test query")
+
+        # Should have retried max_retries times
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_esearch_200_no_retry(self) -> None:
+        """PubMed returning 200 should not trigger any retry."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
+        engine = PubMedSearchEngine(config=config)
+
+        call_count = 0
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            nonlocal call_count
+            call_count += 1
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.raise_for_status = MagicMock()  # no-op for 200
+            mock_resp.json = AsyncMock(return_value={"esearchresult": {"idlist": []}})
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+            results = await engine.search("test query")
+
+        assert call_count == 1
+        assert results == []
+
+
+class TestTreatmentDifferentialBoosts:
+    """Treatment and differential search types must have content_type_boosts."""
+
+    def test_treatment_boosts_exist(self) -> None:
+        from radiant_harness.config import get_config
+
+        boosts = get_config().ranking.content_type_boosts
+        assert "treatment" in boosts
+        assert boosts["treatment"]["guidelines"] > boosts["treatment"]["case_report"]
+
+    def test_differential_boosts_exist(self) -> None:
+        from radiant_harness.config import get_config
+
+        boosts = get_config().ranking.content_type_boosts
+        assert "differential" in boosts
+        assert boosts["differential"]["review"] > boosts["differential"]["case_report"]
+
+    def test_treatment_guideline_beats_case_report(self) -> None:
+        """For treatment queries, guidelines must rank above case reports."""
+        manager = WebSearchManager()
+
+        guideline = SearchResult(
+            title="Treatment protocol guideline for brain tumors",
+            url="https://pubmed.ncbi.nlm.nih.gov/1000/",
+            content="Clinical guideline for treatment of brain tumors.",
+            snippet="Guideline",
+            source="pubmed",
+            reliability_score=0.95,
+            content_type="guidelines",
+            medical_relevance=0.9,
+        )
+        case_report = SearchResult(
+            title="Treatment protocol case report for brain tumors",
+            url="https://pubmed.ncbi.nlm.nih.gov/1001/",
+            content="A single case report of treatment for brain tumors.",
+            snippet="Case report",
+            source="pubmed",
+            reliability_score=0.95,
+            content_type="case_report",
+            medical_relevance=0.9,
+        )
+
+        ranked = manager._rank_results(
+            [case_report, guideline],
+            query="brain tumor treatment",
+            search_type="treatment",
+        )
+
+        assert ranked[0].url.endswith("/1000/"), (
+            "Guideline should rank above case report for treatment queries"
+        )
+
+    def test_all_search_types_have_boosts(self) -> None:
+        """Every allowed search type should have at least partial boosts."""
+        from radiant_harness.config import get_config
+
+        boosts = get_config().ranking.content_type_boosts
+        # "general" intentionally has no boosts — it's the catch-all
+        for search_type in (
+            "diagnosis",
+            "guidelines",
+            "research",
+            "anatomy",
+            "treatment",
+            "differential",
+        ):
+            assert search_type in boosts, f"Missing content_type_boosts for '{search_type}'"

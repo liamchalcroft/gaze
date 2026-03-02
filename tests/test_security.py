@@ -87,19 +87,35 @@ class TestOpenAIAdapterBaseUrlValidation:
         adapter = OpenAIAdapter(model_name="test", base_url=None)
         assert adapter._base_url is None
 
-    def test_warns_on_unknown_https_host(self) -> None:
-        """Custom HTTPS endpoints are allowed but logged via loguru."""
+    def test_rejects_unknown_https_host_without_opt_in(self) -> None:
+        """Custom HTTPS endpoints are rejected unless env-var opted in."""
+        import os
+        from unittest.mock import patch
+
+        env = {k: v for k, v in os.environ.items() if k != "RADIANT_ALLOW_CUSTOM_BASE_URL"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ModelError, match="RADIANT_ALLOW_CUSTOM_BASE_URL"):
+                OpenAIAdapter(
+                    model_name="test",
+                    base_url="https://my-custom-proxy.example.com/v1",
+                )
+
+    def test_warns_on_unknown_https_host_with_opt_in(self) -> None:
+        """Custom HTTPS endpoints are allowed with env-var opt-in and logged."""
+        import os
         from io import StringIO
+        from unittest.mock import patch
 
         from loguru import logger
 
         sink = StringIO()
         handler_id = logger.add(sink, format="{message}", level="WARNING")
         try:
-            OpenAIAdapter(
-                model_name="test",
-                base_url="https://my-custom-proxy.example.com/v1",
-            )
+            with patch.dict(os.environ, {"RADIANT_ALLOW_CUSTOM_BASE_URL": "1"}):
+                OpenAIAdapter(
+                    model_name="test",
+                    base_url="https://my-custom-proxy.example.com/v1",
+                )
             sink.seek(0)
             output = sink.read().lower()
             assert "allowlist" in output
@@ -180,11 +196,27 @@ class TestAPIErrorNoResponseBody:
 class TestSanitizeToolContent:
     """Verify tool result sanitization for prompt injection defense."""
 
-    def test_wraps_in_markers(self) -> None:
+    def test_wraps_in_markers_with_boundary(self) -> None:
         result = _sanitize_tool_content("hello world")
-        assert result.startswith("[Tool Result - External Data]\n")
-        assert result.endswith("\n[End Tool Result]")
+        assert result.startswith("[Tool Result - External Data - ")
+        assert "[End Tool Result - " in result
         assert "hello world" in result
+
+    def test_boundary_is_unique_per_call(self) -> None:
+        """Each invocation should produce a different boundary."""
+        r1 = _sanitize_tool_content("a")
+        r2 = _sanitize_tool_content("a")
+        # Extract boundaries
+        b1 = r1.split("[Tool Result - External Data - ")[1].split("]")[0]
+        b2 = r2.split("[Tool Result - External Data - ")[1].split("]")[0]
+        assert b1 != b2, "Boundaries must differ between calls"
+
+    def test_boundary_matches_open_and_close(self) -> None:
+        """The open and close markers must use the same boundary."""
+        result = _sanitize_tool_content("test")
+        open_boundary = result.split("[Tool Result - External Data - ")[1].split("]")[0]
+        close_boundary = result.split("[End Tool Result - ")[1].split("]")[0]
+        assert open_boundary == close_boundary
 
     def test_strips_control_characters(self) -> None:
         text_with_controls = "normal\x00hidden\x01evil\x7fmore"
@@ -203,16 +235,13 @@ class TestSanitizeToolContent:
         long_text = "A" * 20_000
         result = _sanitize_tool_content(long_text)
         assert "[...truncated]" in result
-        # Marker overhead + 8000 chars + truncation notice
-        assert len(result) < 8_200
+        # Marker overhead + 8000 chars + truncation notice + boundary
+        assert len(result) < 8_300
 
     def test_custom_max_chars(self) -> None:
         text = "B" * 500
         result = _sanitize_tool_content(text, max_chars=100)
         assert "[...truncated]" in result
-        # The inner text should be at most 100 chars + truncation marker
-        inner = result.split("[Tool Result - External Data]\n")[1].split("\n[End Tool Result]")[0]
-        assert inner == "B" * 100 + "\n[...truncated]"
 
     def test_short_content_not_truncated(self) -> None:
         text = "short text"

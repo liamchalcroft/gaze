@@ -294,6 +294,7 @@ class TestContentLengthMalformed:
     async def test_malformed_content_length_does_not_crash(self, tmp_path: Path) -> None:
         """int('abc') would crash without the ValueError guard."""
         from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
 
         from radiant_harness.retrieval.image_search import ImageSearchResult
 
@@ -306,12 +307,22 @@ class TestContentLengthMalformed:
             source="openi",
         )
 
+        # Valid JPEG magic bytes + padding
+        image_bytes = b"\xff\xd8\xff" + b"\x00" * 100
+
         # Create a mock session and response with malformed Content-Length
+        # and streaming support (iter_chunked)
+        mock_content = MagicMock()
+
+        async def _iter_chunked(chunk_size: int):
+            yield image_bytes
+
+        mock_content.iter_chunked = _iter_chunked
+
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.headers = {"Content-Type": "image/jpeg", "Content-Length": "not-a-number"}
-        # Valid JPEG magic bytes + padding
-        mock_resp.read = AsyncMock(return_value=b"\xff\xd8\xff" + b"\x00" * 100)
+        mock_resp.content = mock_content
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -359,6 +370,114 @@ class TestKeywordMapsPreSorted:
         assert lengths == sorted(lengths, reverse=True)
 
 
+class TestThumbnailHttpsEnforcement:
+    """thumbnail_url must be HTTPS or None — HTTP thumbnails must be dropped."""
+
+    def test_http_thumbnail_dropped(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "HTTP thumbnail",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "imgThumb": "http://insecure.example.com/thumb.jpg",
+                    "pmcid": "PMC900",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].thumbnail_url is None
+
+    def test_https_thumbnail_preserved(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "HTTPS thumbnail",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "imgThumb": "https://openi.nlm.nih.gov/thumb.jpg",
+                    "pmcid": "PMC901",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].thumbnail_url == "https://openi.nlm.nih.gov/thumb.jpg"
+
+    def test_relative_thumbnail_joined_as_https(self) -> None:
+        """Relative thumbnail URLs joined to HTTPS base should pass."""
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Relative thumb",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "imgThumb": "/thumbs/t.jpg",
+                    "pmcid": "PMC902",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].thumbnail_url is not None
+        assert results[0].thumbnail_url.startswith("https://")
+
+
+class TestOpenIHttpErrorRetry:
+    """HTTP error responses from Open-i must be retried by the base class."""
+
+    @pytest.mark.asyncio
+    async def test_openi_503_is_retried(self) -> None:
+        """Open-i returning 503 must trigger retry, not immediate failure."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        import aiohttp
+
+        from radiant_harness.config import SearchConfig
+
+        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
+        engine = OpenISearchEngine(config=config)
+
+        call_count = 0
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            nonlocal call_count
+            call_count += 1
+            mock_resp = AsyncMock()
+            mock_resp.status = 503
+            mock_resp.raise_for_status = MagicMock(
+                side_effect=aiohttp.ClientResponseError(
+                    request_info=aiohttp.RequestInfo(
+                        url=url,
+                        method="GET",
+                        headers={},
+                        real_url=url,  # type: ignore[arg-type]
+                    ),
+                    history=(),
+                    status=503,
+                    message="Service Unavailable",
+                )
+            )
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with (
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
+            pytest.raises(ImageSearchError, match="All search attempts failed"),
+        ):
+            await engine.search("brain MRI")
+
+        # Should have retried max_retries times
+        assert call_count == 3
+
+
 class TestOpeniBaseUrlDerived:
     """openi_base_url for relative URL resolution must derive from config."""
 
@@ -369,6 +488,146 @@ class TestOpeniBaseUrlDerived:
     def test_custom_config_derives_origin(self) -> None:
         from radiant_harness.config import SearchConfig
 
-        config = SearchConfig(openi_base_url="https://custom.example.com:8080/api/search")
+        # Use an allowed hostname with a non-default path to verify origin derivation
+        config = SearchConfig(openi_base_url="https://openi.nlm.nih.gov/v2/api/search")
         engine = OpenISearchEngine(config=config)
-        assert engine.openi_base_url == "https://custom.example.com:8080/"
+        assert engine.openi_base_url == "https://openi.nlm.nih.gov/"
+
+
+class TestSearchConfigHostnameAllowlist:
+    """SearchConfig must reject hostnames not in the allowed set."""
+
+    def test_rejects_arbitrary_hostname_ncbi(self) -> None:
+        from radiant_harness.config import SearchConfig
+
+        with pytest.raises(ValueError, match="not in the allowed set"):
+            SearchConfig(ncbi_base_url="https://evil.example.com/entrez/eutils/")
+
+    def test_rejects_arbitrary_hostname_openi(self) -> None:
+        from radiant_harness.config import SearchConfig
+
+        with pytest.raises(ValueError, match="not in the allowed set"):
+            SearchConfig(openi_base_url="https://evil.example.com/api/search")
+
+    def test_accepts_allowed_ncbi_hostname(self) -> None:
+        from radiant_harness.config import SearchConfig
+
+        config = SearchConfig(ncbi_base_url="https://eutils.ncbi.nlm.nih.gov/custom/path/")
+        assert "eutils.ncbi.nlm.nih.gov" in config.ncbi_base_url
+
+    def test_accepts_allowed_openi_hostname(self) -> None:
+        from radiant_harness.config import SearchConfig
+
+        config = SearchConfig(openi_base_url="https://openi.nlm.nih.gov/v2/search")
+        assert "openi.nlm.nih.gov" in config.openi_base_url
+
+
+class TestDownloadUrlSsrfValidation:
+    """_validate_download_url must block SSRF vectors."""
+
+    def test_rejects_http_scheme(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="HTTPS"):
+            _validate_download_url("http://openi.nlm.nih.gov/img.jpg")
+
+    def test_rejects_non_allowed_hostname(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="not in the allowed download set"):
+            _validate_download_url("https://evil.example.com/img.jpg")
+
+    def test_rejects_localhost(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="loopback"):
+            _validate_download_url("https://localhost/img.jpg")
+
+    def test_rejects_loopback_ip(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="private/loopback"):
+            _validate_download_url(
+                "https://127.0.0.1/img.jpg",
+                allowed_hostnames=frozenset({"127.0.0.1"}),
+            )
+
+    def test_rejects_private_ip(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="private/loopback"):
+            _validate_download_url(
+                "https://192.168.1.1/img.jpg",
+                allowed_hostnames=frozenset({"192.168.1.1"}),
+            )
+
+    def test_rejects_no_hostname(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        with pytest.raises(ImageDownloadError, match="no hostname"):
+            _validate_download_url("https:///img.jpg")
+
+    def test_accepts_allowed_hostname(self) -> None:
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        # Should not raise
+        _validate_download_url("https://openi.nlm.nih.gov/images/test.jpg")
+
+    def test_dns_resolution_rejects_private_ip(self) -> None:
+        """If an allowed hostname resolves to a private IP, it must be rejected."""
+        import socket
+        from unittest.mock import patch
+
+        from radiant_harness.retrieval.image_search import _validate_download_url
+
+        # Simulate DNS resolving to a private IP
+        fake_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 0)),
+        ]
+        with (
+            patch("socket.getaddrinfo", return_value=fake_addrinfo),
+            pytest.raises(ImageDownloadError, match="private/loopback"),
+        ):
+            _validate_download_url("https://openi.nlm.nih.gov/img.jpg")
+
+
+class TestSanitizeApiField:
+    """_sanitize_api_field must strip control chars and truncate."""
+
+    def test_strips_control_characters(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("normal\x00hidden\x01text\x7f")
+        assert "\x00" not in result
+        assert "\x01" not in result
+        assert "\x7f" not in result
+        assert result == "normalhiddentext"
+
+    def test_truncates_to_max_length(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("A" * 1000, max_length=100)
+        assert len(result) == 100
+
+    def test_preserves_normal_text(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("Brain MRI T2-weighted")
+        assert result == "Brain MRI T2-weighted"
+
+    def test_parse_results_sanitizes_title(self) -> None:
+        """Titles from Open-i containing control chars should be stripped."""
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Injected\x00Title",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC999",
+                },
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert "\x00" not in results[0].title
+        assert results[0].title == "InjectedTitle"

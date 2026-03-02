@@ -204,6 +204,12 @@ class HuggingFaceAdapter(AdapterProtocol):
         self._device_str = device
         self._dtype_str = torch_dtype
         self._trust_remote_code = trust_remote_code
+        if trust_remote_code:
+            logger.warning(
+                f"trust_remote_code=True for model {model_name!r}. "
+                "This allows arbitrary code execution from the model repository. "
+                "Only use this with models you trust."
+            )
         self._load_in_8bit = load_in_8bit
         self._load_in_4bit = load_in_4bit
         self._use_flash_attention = use_flash_attention
@@ -512,6 +518,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         )
     """
 
+    @beartype
     def __init__(
         self,
         model_name: str,
@@ -657,7 +664,10 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                 padding=True,
             )
 
-        inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
+        inputs = {
+            k: v.to(self.device, non_blocking=True) if hasattr(v, "to") else v
+            for k, v in inputs.items()
+        }
         input_ids = inputs.get("input_ids", inputs.get("inputs_embeds"))
         if input_ids is None:
             raise ModelError(
@@ -757,8 +767,12 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                         logger.warning(f"Remote image URLs not supported: {url[:50]}...")
                         continue
                     else:
-                        # Local file path
-                        image = PILImage.open(url)
+                        # Reject arbitrary local file paths to prevent
+                        # reading sensitive files via crafted messages.
+                        logger.warning(
+                            f"Skipping local file path in image_url (not allowed): {url[:80]}..."
+                        )
+                        continue
 
                     images.append(image.convert("RGB"))
                 except (OSError, ValueError, binascii.Error) as e:

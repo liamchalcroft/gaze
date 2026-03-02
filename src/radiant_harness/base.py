@@ -59,18 +59,32 @@ _IDLE_TOOL_TURNS_LIMIT = 3
 _COORD_MODIFYING_TOOLS = frozenset({"crop", "zoom", "rotate", "flip_horizontal", "flip_vertical"})
 
 
+def _make_boundary() -> str:
+    """Generate a random boundary token unlikely to appear in tool output."""
+    import secrets
+
+    return secrets.token_hex(8)
+
+
 def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
     """Sanitize tool result text before injecting into the LLM conversation.
 
     1. Strip control characters that could confuse tokenizers.
     2. Truncate to *max_chars* to limit prompt-injection surface.
-    3. Wrap in an untrusted-content marker so the model can distinguish
-       tool output from system/user instructions.
+    3. Wrap in a unique, per-call untrusted-content marker so the model
+       can distinguish tool output from system/user instructions.
+       The boundary is randomized to prevent adversarial content from
+       closing the marker prematurely.
     """
     text = _CONTROL_CHAR_RE.sub("", text)
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[...truncated]"
-    return f"[Tool Result - External Data]\n{text}\n[End Tool Result]"
+    boundary = _make_boundary()
+    return (
+        f"[Tool Result - External Data - {boundary}]\n"
+        f"{text}\n"
+        f"[End Tool Result - {boundary}]"
+    )
 
 
 @dataclass(frozen=True)

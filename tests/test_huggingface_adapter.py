@@ -619,3 +619,154 @@ class TestExtractImagesMimeValidation:
         ]
         images = adapter._extract_images(messages)
         assert images == []
+
+
+# ---------------------------------------------------------------------------
+# Patch Set: VLM .to() guard for non-tensor processor outputs
+# ---------------------------------------------------------------------------
+
+
+class TestVLMInputToDeviceGuard:
+    """Verify VLM generate_chat guards .to() calls for non-tensor values.
+
+    Some HuggingFace processors return metadata (lists, ints) alongside
+    tensors.  Calling .to(device) on a plain list raises AttributeError.
+    The guard ``hasattr(v, 'to')`` must be present.
+    """
+
+    def test_vlm_generate_chat_has_hasattr_guard(self) -> None:
+        """VLM generate_chat must guard .to() with hasattr check."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+        assert 'hasattr(v, "to")' in source, (
+            "VLM generate_chat is missing hasattr(v, 'to') guard on inputs dict"
+        )
+
+    def test_base_adapter_has_no_guard_needed(self) -> None:
+        """Base adapter uses tokenizer (always returns tensors), no guard needed."""
+        import inspect
+
+        source = inspect.getsource(HuggingFaceAdapter.generate_chat)
+        # Base adapter uses self.tokenizer() which always returns tensors,
+        # so the guard is not required there. Verify it's using .to() directly.
+        assert ".to(self.device" in source
+
+
+# ---------------------------------------------------------------------------
+# Patch Set: @beartype on VLMAdapter.__init__
+# ---------------------------------------------------------------------------
+
+
+class TestVLMAdapterBeartype:
+    """Verify VLM adapter __init__ is decorated with @beartype."""
+
+    def test_vlm_init_rejects_invalid_model_name_type(self) -> None:
+        """@beartype should reject non-str model_name."""
+        from beartype.roar import BeartypeException
+
+        with pytest.raises((BeartypeException, TypeError)):
+            HuggingFaceVLMAdapter(model_name=12345)  # type: ignore[arg-type]
+
+    def test_vlm_init_rejects_invalid_device_type(self) -> None:
+        """@beartype should reject non-str device."""
+        from beartype.roar import BeartypeException
+
+        with pytest.raises((BeartypeException, TypeError)):
+            HuggingFaceVLMAdapter(model_name="dummy", device=42)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# PR #2: Adapter security hardening
+# ---------------------------------------------------------------------------
+
+
+class TestTrustRemoteCodeWarning:
+    """trust_remote_code=True must emit a warning."""
+
+    def test_warning_emitted_when_true(self) -> None:
+        from unittest.mock import patch
+
+        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+            HuggingFaceAdapter(model_name="dummy", trust_remote_code=True)
+            mock_logger.warning.assert_called_once()
+            assert "trust_remote_code" in mock_logger.warning.call_args[0][0]
+            assert "arbitrary code" in mock_logger.warning.call_args[0][0]
+
+    def test_no_warning_when_false(self) -> None:
+        from unittest.mock import patch
+
+        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+            HuggingFaceAdapter(model_name="dummy", trust_remote_code=False)
+            mock_logger.warning.assert_not_called()
+
+    def test_vlm_adapter_inherits_warning(self) -> None:
+        from unittest.mock import patch
+
+        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+            HuggingFaceVLMAdapter(model_name="dummy", trust_remote_code=True)
+            mock_logger.warning.assert_called_once()
+            assert "trust_remote_code" in mock_logger.warning.call_args[0][0]
+
+
+class TestExtractImagesRejectsLocalPaths:
+    """_extract_images must reject arbitrary local file paths."""
+
+    def test_local_path_rejected(self) -> None:
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "/etc/passwd"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert images == [], "Local file paths must be rejected"
+
+    def test_relative_path_rejected(self) -> None:
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "../../sensitive/data.png"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert images == [], "Relative file paths must be rejected"
+
+    def test_data_uri_still_accepted(self) -> None:
+        """Data URIs should still work (regression check)."""
+        import base64
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        img = PILImage.new("RGB", (2, 2), color="blue")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        png_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{png_b64}"},
+                    },
+                ],
+            },
+        ]
+        images = adapter._extract_images(messages)
+        assert len(images) == 1

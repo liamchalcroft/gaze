@@ -11,6 +11,7 @@ import atexit
 import hashlib
 import ipaddress
 import json
+import re
 import shutil
 import tempfile
 import threading
@@ -114,6 +115,22 @@ def _atexit_cleanup_temp_dirs() -> None:
 
 atexit.register(_atexit_cleanup_temp_dirs)
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
+    """Sanitize a text field from an external API response.
+
+    Strips control characters and truncates to *max_length* to reduce
+    prompt-injection surface when these values later appear in LLM
+    conversations.
+    """
+    value = _CONTROL_CHAR_RE.sub("", value)
+    if len(value) > max_length:
+        value = value[:max_length]
+    return value
+
+
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
 _CONTENT_TYPE_EXTENSION_MAP = {
@@ -162,12 +179,28 @@ class ImageDownloadError(SearchEngineError):
         super().__init__("ImageDownload", f"Failed to download {url}: {message}", original_error)
 
 
-def _validate_download_url(url: str) -> None:
+# Hostnames from which image downloads are permitted.  Open-i returns
+# image URLs on these domains; any other hostname is rejected to prevent
+# SSRF via crafted API responses.
+_ALLOWED_DOWNLOAD_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "openi.nlm.nih.gov",
+        "www.ncbi.nlm.nih.gov",
+        "ncbi.nlm.nih.gov",
+    }
+)
+
+
+def _validate_download_url(
+    url: str,
+    *,
+    allowed_hostnames: frozenset[str] = _ALLOWED_DOWNLOAD_HOSTNAMES,
+) -> None:
     """Validate a download URL against SSRF attacks.
 
-    Enforces HTTPS scheme and rejects private, loopback, and link-local
-    addresses.  Called before fetching untrusted image URLs that originate
-    from external API responses (e.g. Open-i).
+    Enforces HTTPS scheme, rejects private/loopback/link-local addresses,
+    resolves the hostname via DNS, and validates resolved IPs to close the
+    DNS-rebinding gap.  Also enforces an explicit hostname allowlist.
 
     Raises:
         ImageDownloadError: If the URL fails validation.
@@ -190,16 +223,45 @@ def _validate_download_url(url: str) -> None:
             f"Downloads from loopback addresses are not allowed: {hostname}",
         )
 
+    # Enforce hostname allowlist (primary SSRF defence)
+    if hostname not in allowed_hostnames:
+        raise ImageDownloadError(
+            url,
+            f"Hostname {hostname!r} is not in the allowed download set: "
+            f"{sorted(allowed_hostnames)}",
+        )
+
     # Reject bare-IP private/loopback/link-local addresses
     try:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
-        return  # hostname is a regular DNS name — fine
-    if addr.is_private or addr.is_loopback or addr.is_link_local:
-        raise ImageDownloadError(
-            url,
-            f"Downloads from private/loopback addresses are not allowed: {hostname}",
-        )
+        pass  # hostname is a regular DNS name — resolved below
+    else:
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            raise ImageDownloadError(
+                url,
+                f"Downloads from private/loopback addresses are not allowed: {hostname}",
+            )
+
+    # Resolve DNS and validate all resulting IPs to close DNS-rebinding gap
+    import socket
+
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ImageDownloadError(url, f"DNS resolution failed for {hostname}: {exc}") from exc
+
+    for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+        ip_str = sockaddr[0]
+        try:
+            resolved = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if resolved.is_private or resolved.is_loopback or resolved.is_link_local:
+            raise ImageDownloadError(
+                url,
+                f"Hostname {hostname} resolves to private/loopback address {ip_str}",
+            )
 
 
 class ImageSearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
@@ -247,8 +309,9 @@ class OpenISearchEngine(ImageSearchEngine):
 
         session = await self._get_session()
         async with session.get(self.base_url, params=params) as response:
-            if response.status != 200:
-                raise ImageSearchError(self.name, f"Open-i API returned status {response.status}")
+            # Let aiohttp raise ClientResponseError so transient HTTP errors
+            # (429, 5xx) are retried by the base-class retry wrapper.
+            response.raise_for_status()
 
             try:
                 data = await response.json()
@@ -296,22 +359,26 @@ class OpenISearchEngine(ImageSearchEngine):
                 skipped_non_https += 1
                 continue
 
-            title = item.get("title") or "Medical Image"
-            caption = item.get("caption", "")
-            article_title = item.get("articleTitle", "")
+            # Enforce HTTPS on thumbnail URLs as well
+            if thumbnail_url and not thumbnail_url.startswith("https://"):
+                thumbnail_url = None
+
+            title = _sanitize_api_field(item.get("title") or "Medical Image", max_length=200)
+            caption = _sanitize_api_field(item.get("caption", ""))
+            article_title = _sanitize_api_field(item.get("articleTitle", ""))
             combined_text = f"{caption} {title}"
             modality = self._extract_modality(combined_text)
             body_part = self._extract_body_part(combined_text)
 
-            pmcid = item.get("pmcid", "")
+            pmcid = _sanitize_api_field(item.get("pmcid", ""), max_length=30)
             source_url = (
                 f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
                 if pmcid
-                else item.get("detailedURL", "")
+                else _sanitize_api_field(item.get("detailedURL", ""), max_length=500)
             )
 
             result = ImageSearchResult(
-                title=title[:200],
+                title=title,
                 image_url=image_url,
                 thumbnail_url=thumbnail_url,
                 source_url=source_url,
@@ -320,9 +387,9 @@ class OpenISearchEngine(ImageSearchEngine):
                 body_part=body_part,
                 caption=caption,
                 article_title=article_title,
-                authors=item.get("authors", ""),
-                publication_date=item.get("pubDate", ""),
-                license=item.get("license") or None,
+                authors=_sanitize_api_field(item.get("authors", "")),
+                publication_date=_sanitize_api_field(item.get("pubDate", ""), max_length=30),
+                license=_sanitize_api_field(item.get("license", ""), max_length=100) or None,
                 reliability_score=0.90,
                 metadata={
                     "pmcid": pmcid,
@@ -681,13 +748,21 @@ class MedicalImageSearchManager:
                     f"Image too large: {declared_size} bytes (max {self._MAX_DOWNLOAD_BYTES})",
                 )
 
-            content = await response.read()
-
-            if len(content) > self._MAX_DOWNLOAD_BYTES:
-                raise ImageDownloadError(
-                    result.image_url,
-                    f"Image too large: {len(content)} bytes (max {self._MAX_DOWNLOAD_BYTES})",
-                )
+            # Stream in chunks to enforce the size limit even when the
+            # server lies about Content-Length or omits it entirely.
+            # This prevents OOM from unbounded response.read().
+            chunks: list[bytes] = []
+            total_read = 0
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                total_read += len(chunk)
+                if total_read > self._MAX_DOWNLOAD_BYTES:
+                    raise ImageDownloadError(
+                        result.image_url,
+                        f"Image too large: >{self._MAX_DOWNLOAD_BYTES} bytes "
+                        f"(streaming limit exceeded)",
+                    )
+                chunks.append(chunk)
+            content = b"".join(chunks)
 
             # Validate actual file content matches an image format.
             self._validate_image_magic(content, result.image_url)

@@ -150,13 +150,37 @@ class CacheConfig:
             )
 
 
-def _validate_base_url(url: str, field_name: str) -> None:
+# Hostnames known to be safe destinations for search API base URLs.
+# Used by _validate_base_url to reject arbitrary DNS names that could
+# resolve to internal services (DNS rebinding / SSRF).
+_ALLOWED_SEARCH_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "eutils.ncbi.nlm.nih.gov",
+        "openi.nlm.nih.gov",
+        "www.ncbi.nlm.nih.gov",
+        "ncbi.nlm.nih.gov",
+    }
+)
+
+
+def _validate_base_url(
+    url: str,
+    field_name: str,
+    *,
+    allowed_hostnames: frozenset[str] | None = None,
+) -> None:
     """Validate a base URL for SSRF protection.
 
-    Enforces HTTPS and rejects private/loopback addresses given as bare IPs
-    or well-known loopback hostnames.  Does NOT perform DNS resolution — that
-    would block the event loop when configs are constructed in async contexts
-    and is unreliable at import time (network may be unavailable).
+    Enforces HTTPS, rejects private/loopback addresses given as bare IPs
+    or well-known loopback hostnames, and optionally enforces an explicit
+    hostname allowlist to prevent DNS-rebinding attacks.
+
+    Args:
+        url: The URL to validate.
+        field_name: Config field name (for error messages).
+        allowed_hostnames: If provided, the URL's hostname must appear in
+            this set.  This closes the DNS-rebinding gap where an attacker
+            registers a domain that resolves to an internal IP.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -173,9 +197,19 @@ def _validate_base_url(url: str, field_name: str) -> None:
     try:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
-        return  # hostname is a regular DNS name — fine
-    if addr.is_private or addr.is_loopback or addr.is_link_local:
-        raise ValueError(f"{field_name} must not point to a private/loopback address: {hostname}")
+        pass  # hostname is a regular DNS name — check allowlist below
+    else:
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            raise ValueError(
+                f"{field_name} must not point to a private/loopback address: {hostname}"
+            )
+
+    # Enforce hostname allowlist (closes DNS-rebinding gap)
+    if allowed_hostnames is not None and hostname not in allowed_hostnames:
+        raise ValueError(
+            f"{field_name} hostname {hostname!r} is not in the allowed set: "
+            f"{sorted(allowed_hostnames)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -222,7 +256,11 @@ class SearchConfig:
         if self.max_total_results < 1:
             raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
         for attr in ("ncbi_base_url", "openi_base_url"):
-            _validate_base_url(getattr(self, attr), attr)
+            _validate_base_url(
+                getattr(self, attr),
+                attr,
+                allowed_hostnames=_ALLOWED_SEARCH_HOSTNAMES,
+            )
 
 
 @dataclass(frozen=True)
@@ -258,6 +296,13 @@ class RankingWeights:
             "guidelines": {"guidelines": 0.3, "review": 0.2},
             "research": {"article": 0.2, "review": 0.1},
             "anatomy": {"review": 0.2, "article": 0.1},
+            "treatment": {"guidelines": 0.3, "review": 0.2, "article": 0.1, "case_report": 0.05},
+            "differential": {
+                "review": 0.25,
+                "guidelines": 0.2,
+                "article": 0.1,
+                "case_report": 0.05,
+            },
         }
     )
 

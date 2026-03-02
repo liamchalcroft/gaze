@@ -1,6 +1,6 @@
 # Radiant Harness - Makefile
 
-.PHONY: help install test check clean format lint quality dev-setup status
+.PHONY: help install test check clean format lint quality dev-setup status lock-check
 
 help: ## Show this help message
 	@echo "Radiant Harness - Available Commands:"
@@ -15,10 +15,11 @@ help: ## Show this help message
 install: ## Install dependencies
 	uv sync
 
-check: ## Run all quality checks (lint, typecheck, test)
+check: ## Run all quality checks (lint, typecheck, lock, test)
 	uv run ruff check src/
 	uv run ruff format --check src/
 	uv run pyright src/
+	uv lock --check
 	uv run pytest tests/ -x --tb=short
 
 test: ## Run test suite
@@ -33,6 +34,9 @@ format: ## Format code with ruff
 lint: ## Check code quality
 	uv run ruff check .
 	uv run pyright src/
+
+lock-check: ## Verify uv.lock is in sync with pyproject.toml
+	uv lock --check
 
 quality: format lint ## Format and lint code
 

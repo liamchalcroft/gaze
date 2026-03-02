@@ -219,11 +219,11 @@ class PubMedSearchEngine(SearchEngine):
 
         session = await self._get_session()
         async with session.get(search_url, params=search_params) as response:
-            if response.status != 200:
-                raise SearchError(
-                    self.name,
-                    f"PubMed API returned status {response.status}",
-                )
+            # Let aiohttp raise ClientResponseError for 4xx/5xx so the
+            # base-class retry wrapper can catch and retry transient failures
+            # (e.g. 429, 503).  Previously this raised SearchError which
+            # bypassed retry entirely.
+            response.raise_for_status()
             search_data = await response.json()
 
         if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
@@ -344,11 +344,9 @@ class PubMedSearchEngine(SearchEngine):
 
         session = await self._get_session()
         async with session.get(summary_url, params=summary_params) as response:
-            if response.status != 200:
-                raise SearchError(
-                    self.name,
-                    f"Failed to fetch article details: status {response.status}",
-                )
+            # Let aiohttp raise ClientResponseError so transient HTTP errors
+            # (429, 5xx) are retried by the base-class retry wrapper.
+            response.raise_for_status()
             return await response.json()
 
     async def _fetch_abstracts(self, pmid_list: list[str]) -> dict[str, str]:
