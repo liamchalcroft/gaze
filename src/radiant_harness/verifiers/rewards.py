@@ -46,11 +46,16 @@ def extract_completion_text(completion: Any) -> str:
             if isinstance(content, str):
                 return content
 
-            # Handle multimodal content
+            # Handle multimodal content — concatenate ALL text items,
+            # not just the first, so reasoning + answer are both captured.
             if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        return item.get("text", "")
+                texts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                ]
+                if texts:
+                    return "\n".join(texts)
 
     return str(completion or "")
 
@@ -287,16 +292,18 @@ class IoUReward(BaseRewardFunction):
                     image_area = 1.0
                 else:
                     # Coords are pixel-scale despite normalized=True.
-                    # Infer image area from info or max coordinate extent so
-                    # the area penalty still applies — prevents reward hacking
-                    # by outputting full-image pixel boxes.
-                    image_area = float(
-                        info.get(
-                            "image_area",
-                            max(pred_floats[2], pred_floats[0])
-                            * max(pred_floats[3], pred_floats[1]),
+                    # We cannot infer image area from the predicted box itself
+                    # (that estimate is always wrong for origin-anchored boxes).
+                    # Require image_area in info; skip penalty if absent.
+                    raw_area = info.get("image_area")
+                    if raw_area is not None:
+                        image_area = float(raw_area)
+                    else:
+                        logger.warning(
+                            "IoUReward: pixel-space coords detected but no "
+                            "image_area in info dict; skipping area penalty"
                         )
-                    )
+                        image_area = 0.0
             else:
                 image_area = float(info.get("image_area", 0.0))
             if image_area > 0:
@@ -366,11 +373,13 @@ class IoUReward(BaseRewardFunction):
                 # Unclosed brace — no more valid JSON possible
                 break
 
-        # Fallback: regex for [x1, y1, x2, y2] pattern
+        # Fallback: regex for [x1, y1, x2, y2] pattern.
+        # Use findall and take the LAST match — models often emit reasoning
+        # arrays before the final bbox, so the last one is most likely correct.
         pattern = r"\[(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\]"
-        match = re.search(pattern, text)
-        if match:
-            return [float(x) for x in match.groups()]
+        matches = re.findall(pattern, text)
+        if matches:
+            return [float(x) for x in matches[-1]]
 
         logger.debug(f"IoUReward: No bbox found in completion. Text length: {len(text)}")
         return []
@@ -404,7 +413,10 @@ class CombinedReward(BaseRewardFunction):
 
         total = sum(self.weights)
         if abs(total - 1.0) > 1e-6:
-            # Normalize weights
+            logger.warning(
+                "CombinedReward: weights sum to {:.4f} (not 1.0), auto-normalizing",
+                total,
+            )
             self.weights = [w / total for w in self.weights]
 
     def __call__(

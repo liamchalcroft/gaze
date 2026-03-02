@@ -74,6 +74,8 @@ _ABBREVIATION_MAPPING = {
     "da": "diffuse axonal injury",
     "sah": "subarachnoid hemorrhage",
     "ich": "intracerebral hemorrhage",
+    "ms": "multiple sclerosis",
+    "nph": "normal pressure hydrocephalus",
 }
 
 
@@ -144,6 +146,14 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
         (r"\bdermoid\b.*\bcyst\b", r"\bdermoid cyst\b"),
         # Trauma
         (r"\bshearing injury\b", r"\bdiffuse axonal injury\b"),
+        # Infectious / inflammatory
+        (r"\bbrain abscess\b", r"\bcerebral abscess\b"),
+        (r"\bms\b", r"\bmultiple sclerosis\b"),
+        # Neoplastic synonyms
+        (r"\bmeningioma\b", r"\bmeningeal tumor\b"),
+        (r"\bpituitary adenoma\b", r"\bpituitary tumor\b"),
+        # Hydrocephalus variants
+        (r"\bnph\b", r"\bnormal pressure hydrocephalus\b"),
     ]
 
     # Check synonym pairs (bidirectional)
@@ -240,6 +250,13 @@ async def llm_semantic_match_async(
         raise ValueError(f"num_votes must be >= 1, got {num_votes}")
     if num_votes > 1 and num_votes % 2 == 0:
         raise ValueError(f"num_votes must be odd for majority vote, got {num_votes}")
+
+    if num_votes == 1 and "nano" in model_name.lower():
+        logger.warning(
+            "llm_semantic_match: using small model %r with num_votes=1. "
+            "Consider num_votes=3+ for more reliable diagnosis matching.",
+            model_name,
+        )
 
     prompt = f"""You are a medical expert evaluating diagnostic predictions.
 

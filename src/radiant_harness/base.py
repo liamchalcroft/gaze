@@ -607,10 +607,10 @@ class AgenticProcessorBase(ABC):
                             w, h = images[0].width, images[0].height
                             if coord_space_modified:
                                 coord_note = (
-                                    f" WARNING: You previously used crop/zoom which changed the "
-                                    f"coordinate space. The image has been AUTOMATICALLY RESET to "
-                                    f"the original {w}x{h} image (re-attached below). "
-                                    f"Any bounding boxes from your cropped/zoomed analysis are "
+                                    f" WARNING: You used crop/zoom/rotate/flip which changed the "
+                                    f"coordinate space. The original {w}x{h} image is "
+                                    f"re-attached below. "
+                                    f"Any bounding boxes from your transformed analysis are "
                                     f"INVALID. Re-examine this original image and provide ALL "
                                     f"coordinates in the original pixel space "
                                     f"[0, {w - 1}] x [0, {h - 1}]."
@@ -824,7 +824,9 @@ class AgenticProcessorBase(ABC):
                 turns.append(tool_turn)
                 nudge_count = 0  # Successful tool calls reset nudge counter
                 total_tool_calls += len(typed_tool_calls)
-                if any(tc.name in _COORD_MODIFYING_TOOLS for tc in typed_tool_calls):
+                if any(tc.name == "reset" for tc in typed_tool_calls):
+                    coord_space_modified = False
+                elif any(tc.name in _COORD_MODIFYING_TOOLS for tc in typed_tool_calls):
                     coord_space_modified = True
                 continue
             # Detect truncated responses before attempting JSON parsing

@@ -639,7 +639,7 @@ WINDOW_PRESETS: dict[str, tuple[int, int]] = {
     "subdural": (75, 215),
     "bone": (400, 1800),
     "soft_tissue": (40, 400),
-    "stroke": (32, 8),
+    "stroke": (32, 40),
     "posterior_fossa": (36, 120),
 }
 
@@ -668,7 +668,6 @@ def apply_window_level(
     Raises:
         ValueError: If neither preset nor center+width provided, or invalid preset
     """
-    is_preset = False
     if preset is not None:
         if preset not in WINDOW_PRESETS:
             raise ValueError(
@@ -682,14 +681,14 @@ def apply_window_level(
                 width,
             )
         center, width = WINDOW_PRESETS[preset]
-        is_preset = True
     elif center is None or width is None:
         raise ValueError("Must provide either preset or both center and width")
 
-    # Clinical presets are curated settings — exempt from minimum width.
-    # Freeform center+width must respect the safety floor.
+    # Safety floor: ALL window widths (including presets) must meet the
+    # minimum.  Presets are curated to comply; if one is below the floor
+    # it indicates a configuration error, not an intentional override.
     cfg = _get_image_config()
-    if not is_preset and width < cfg.min_window_width:
+    if width < cfg.min_window_width:
         raise ValueError(
             f"width must be >= {cfg.min_window_width}, got {width}. "
             f"Very narrow windows destroy diagnostic information."

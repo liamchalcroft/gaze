@@ -273,14 +273,14 @@ class TestIoUAreaPenaltyBypass:
     reward by predicting full-image pixel boxes.
     """
 
-    def test_normalized_mode_pixel_coords_still_penalized(self) -> None:
+    def test_normalized_mode_pixel_coords_penalized_with_image_area(self) -> None:
         """When normalized=True but model outputs pixel coords,
-        the area penalty must still apply."""
+        the area penalty applies if image_area is provided in info."""
         from radiant_harness.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
-        info = {"bbox": [0, 0, 512, 512]}
+        info = {"bbox": [0, 0, 512, 512], "image_area": 512 * 512}
         completion = "[0, 0, 512, 512]"
         reward = reward_fn("prompt", completion, info)
 
@@ -288,6 +288,22 @@ class TestIoUAreaPenaltyBypass:
         assert reward < 0.5, (
             f"Full-image pixel box got reward={reward} in normalized mode. "
             f"Area penalty was bypassed."
+        )
+
+    def test_normalized_mode_pixel_coords_skips_penalty_without_image_area(self) -> None:
+        """When pixel coords are detected but no image_area in info,
+        penalty is safely skipped rather than using a broken estimate."""
+        from radiant_harness.verifiers.rewards import IoUReward
+
+        reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
+
+        info = {"bbox": [0, 0, 512, 512]}  # No image_area
+        completion = "[0, 0, 512, 512]"
+        reward = reward_fn("prompt", completion, info)
+
+        # Without image_area, penalty is skipped → IoU=1.0 returned
+        assert reward == 1.0, (
+            f"Expected reward=1.0 when penalty skipped, got {reward}"
         )
 
     def test_normalized_mode_valid_coords_penalized(self) -> None:
