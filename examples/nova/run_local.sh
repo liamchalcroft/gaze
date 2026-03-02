@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Run local model evaluation: single-turn then agentic.
 # Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]
-#   MODEL       required — e.g. glm-4.6v-flash, medgemma-1.5-4b-it
+#   MODEL       required — e.g. qwen3.5-35b-a3b, glm-4.6v-flash, medgemma-1.5-4b-it
 #   BASE_URL    defaults to http://192.168.1.138:1234/v1
-#   MAX_SAMPLES defaults to 20 (0 = all)
+#   MAX_SAMPLES defaults to 50 (0 = all)
 
 set -euo pipefail
 
 MODEL="${1:?Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]}"
 BASE_URL="${2:-http://192.168.1.138:1234/v1}"
-MAX_SAMPLES="${3:-20}"
+MAX_SAMPLES="${3:-50}"
 RESULTS_DIR="./runs/main_results"
+
+# Use the local model for diagnosis semantic matching too
+export NOVA_SEMANTIC_MATCH_MODEL="${MODEL}"
+export NOVA_SEMANTIC_MATCH_BASE_URL="${BASE_URL}"
 
 echo "=== Local model evaluation ==="
 echo "Model:    ${MODEL}"
 echo "Endpoint: ${BASE_URL}"
 echo "Samples:  ${MAX_SAMPLES} (0 = all)"
-echo "Metrics:  caption + localization (skipping diagnosis)"
+echo "Metrics:  caption + diagnosis + localization"
 echo ""
 
 # --- Single-turn (no tools) ---
@@ -26,7 +30,6 @@ uv run python -m src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --task all \
-  --eval-tasks caption localization \
   --mode single_turn \
   --max-turns 10 \
   --max-samples "${MAX_SAMPLES}" \
@@ -43,7 +46,6 @@ uv run python -m src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --task all \
-  --eval-tasks caption localization \
   --mode agentic \
   --use-tools \
   --max-turns 10 \

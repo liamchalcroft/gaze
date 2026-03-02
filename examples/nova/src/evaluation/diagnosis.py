@@ -31,9 +31,26 @@ _semantic_match_client: Any = None
 
 
 def _get_semantic_match_client() -> Any:
-    """Return a shared AsyncOpenAI client, creating it on first call."""
+    """Return a shared AsyncOpenAI client, creating it on first call.
+
+    Supports ``NOVA_SEMANTIC_MATCH_BASE_URL`` to point at a local server
+    (e.g. LM Studio) for diagnosis matching without a cloud API key.
+    """
     global _semantic_match_client  # noqa: PLW0603
     if _semantic_match_client is not None:
+        return _semantic_match_client
+
+    from openai import AsyncOpenAI
+
+    custom_base_url = os.getenv("NOVA_SEMANTIC_MATCH_BASE_URL")
+    if custom_base_url:
+        # Local server — use dummy API key, custom base URL
+        api_key = os.getenv("OPENAI_API_KEY", "lm-studio")
+        _semantic_match_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=custom_base_url,
+            timeout=300.0,
+        )
         return _semantic_match_client
 
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -41,10 +58,9 @@ def _get_semantic_match_client() -> Any:
     api_key = openai_key or openrouter_key
     if not api_key:
         raise ValueError(
-            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY for LLM semantic matching."
+            "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY for LLM semantic matching, "
+            "or set NOVA_SEMANTIC_MATCH_BASE_URL to use a local server."
         )
-
-    from openai import AsyncOpenAI
 
     base_url: str | None = None
     if not openai_key and openrouter_key:
@@ -283,13 +299,21 @@ or "NO" if they refer to different conditions.
     ]
 
     async def _single_call() -> str:
+        # Use 1024 tokens — thinking models (Qwen3.5, etc.) need ~400
+        # tokens of reasoning before producing the YES/NO answer.
         response = await client.chat.completions.create(
             model=model_name,
             messages=messages,
-            max_tokens=16,
+            max_tokens=1024,
             temperature=0.0,
         )
-        return (response.choices[0].message.content or "").strip()
+        raw = (response.choices[0].message.content or "").strip()
+        # Thinking models may wrap the answer in extra text.
+        # Extract the last YES or NO token.
+        for token in reversed(raw.upper().split()):
+            if token in ("YES", "NO"):
+                return token
+        return raw
 
     if num_votes == 1:
         raw = await _single_call()

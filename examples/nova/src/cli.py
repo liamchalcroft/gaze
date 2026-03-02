@@ -18,6 +18,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+# AgenticResult deep-freezes dicts into MappingProxyType.  Use this
+# tuple in isinstance() checks so both dict and proxy are accepted.
+_DICT_LIKE = (dict, MappingProxyType)
+
 from loguru import logger
 
 from radiant_harness import AgenticResult
@@ -316,7 +320,7 @@ async def compute_metrics(
             caption = p.get("caption")
             if caption is None:
                 raise KeyError(f"Prediction {i} missing 'caption' field")
-            if not isinstance(caption, dict):
+            if not isinstance(caption, _DICT_LIKE):
                 raise TypeError(
                     f"Prediction {i} 'caption' must be dict, got {type(caption).__name__}"
                 )
@@ -333,7 +337,7 @@ async def compute_metrics(
             diag = p.get("diagnosis")
             if diag is None:
                 raise KeyError(f"Prediction {i} missing 'diagnosis' field")
-            if not isinstance(diag, dict):
+            if not isinstance(diag, _DICT_LIKE):
                 raise TypeError(
                     f"Prediction {i} 'diagnosis' must be dict per NOVA schema, "
                     f"got {type(diag).__name__}"
@@ -347,7 +351,7 @@ async def compute_metrics(
             # evaluate_diagnosis_nova_official already handles lists via isinstance(p, list).
             ranked: list[str] = [primary]
             for dd in diag.get("differential_diagnoses", []):
-                if isinstance(dd, dict):
+                if isinstance(dd, _DICT_LIKE):
                     name = dd.get("diagnosis")
                     if name:
                         ranked.append(name)
@@ -365,7 +369,7 @@ async def compute_metrics(
             loc_data = p.get("localization")
             if loc_data is None:
                 raise KeyError(f"Prediction {i} missing 'localization' field")
-            if not isinstance(loc_data, dict):
+            if not isinstance(loc_data, _DICT_LIKE):
                 raise TypeError(
                     f"Prediction {i} 'localization' must be dict, got {type(loc_data).__name__}"
                 )

@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from typing import Any
 
 from beartype import beartype
 from loguru import logger
 from openai import AsyncOpenAI
 
+from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
 _DEFAULT_BASE_URL = "http://localhost:1234/v1"
@@ -26,6 +28,10 @@ class LMStudioAdapter(OpenAIAdapter):
     2. No real API key is required (LM Studio doesn't authenticate by default).
     3. Longer default timeout (300s) for local inference on consumer hardware.
     4. Tool messages use text-only content (no multipart image payloads).
+    5. ``response_format`` is stripped — many local models (especially those
+       with built-in thinking/reasoning) mishandle the ``json_schema``
+       response format, putting output into ``reasoning_content`` instead
+       of ``content``.  The prompts already instruct JSON output.
 
     All generation logic (tool calling, vision, streaming, retries) is
     inherited unchanged from :class:`OpenAIAdapter`.
@@ -89,6 +95,36 @@ class LMStudioAdapter(OpenAIAdapter):
                 max_retries=0,
             )
         return self._client
+
+    @beartype
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        stream: bool = False,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
+        """Generate chat completion, stripping ``response_format``.
+
+        Local models with built-in thinking (Qwen3.5, etc.) misroute
+        structured output into ``reasoning_content`` when
+        ``response_format`` is set, leaving ``content`` empty.  Dropping
+        the parameter lets the prompt handle JSON formatting instead.
+        """
+        if response_format is not None:
+            logger.debug(
+                "LMStudioAdapter: stripping response_format (local model compatibility)"
+            )
+        return await super().generate_chat(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            response_format=None,
+            stream=stream,
+        )
 
     async def list_models(self) -> list[dict[str, Any]]:
         """List models currently loaded in LM Studio.
