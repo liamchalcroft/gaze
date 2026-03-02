@@ -189,22 +189,33 @@ class ImageManager:
             old_image.close()
 
     @beartype
-    def set_preloaded_image(self, image: Image.Image, image_path: Path) -> None:
+    def set_preloaded_image(
+        self,
+        image: Image.Image,
+        image_path: Path,
+        *,
+        transfer_ownership: bool = False,
+    ) -> None:
         """Set a pre-loaded PIL Image, avoiding a redundant disk read.
-
-        The image is copied internally, so the caller retains full ownership
-        of the original and may continue to use or close it.
 
         Args:
             image: Already-loaded PIL Image (must have pixel data in memory).
             image_path: Path to the source file (stored for reset/logging).
+            transfer_ownership: If True, the manager takes ownership of
+                *image* directly (used as ``_original_image`` without
+                copying).  The caller **must not** use or close *image*
+                after this call.  When False (default), *image* is copied
+                so the caller retains ownership.
 
         Raises:
             ToolExecutionError: If image_path contains traversal patterns.
         """
         resolved = self._validate_image_path(image_path)
         self.close()
-        self._original_image = image.copy()
+        if transfer_ownership:
+            self._original_image = image
+        else:
+            self._original_image = image.copy()
         self._current_image = self._original_image.copy()
         self._image_path = resolved
 

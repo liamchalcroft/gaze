@@ -43,10 +43,17 @@ class EncodedImage:
 
     data: str
     mime_type: str
+    _data_url: str = ""
+
+    def __post_init__(self) -> None:
+        # Pre-compute the data URL once to avoid re-creating the ~500KB+
+        # string on every call.  Uses object.__setattr__ because the
+        # dataclass is frozen.
+        object.__setattr__(self, "_data_url", f"data:{self.mime_type};base64,{self.data}")
 
     def to_data_url(self) -> str:
         """Convert to a data URL for embedding in HTML/messages."""
-        return f"data:{self.mime_type};base64,{self.data}"
+        return self._data_url
 
 
 @beartype

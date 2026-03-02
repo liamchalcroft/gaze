@@ -173,13 +173,14 @@ class PubMedSearchEngine(SearchEngine):
             "Accept": "application/json, application/xml, text/xml",
         }
 
-    # Default medical entity patterns
-    MEDICAL_ENTITY_PATTERNS: list[str] = [
-        r"\b(?:tumor|mass|lesion|cyst|hemorrhage|infarct|edema)\b",
-        r"\b(?:hyperintensity|hypointensity|enhancement|atrophy)\b",
-        r"\b(?:mri|ct|pet|x-ray|ultrasound|mammography)\b",
-        r"\b(?:cerebral|cortex|ventricle|white matter|gray matter)\b",
-        r"\b(?:malignant|benign|metastatic|primary)\b",
+    # Pre-compiled medical entity patterns — avoids re.compile overhead
+    # on every call to _extract_medical_entities.
+    MEDICAL_ENTITY_PATTERNS: list[re.Pattern[str]] = [
+        re.compile(r"\b(?:tumor|mass|lesion|cyst|hemorrhage|infarct|edema)\b"),
+        re.compile(r"\b(?:hyperintensity|hypointensity|enhancement|atrophy)\b"),
+        re.compile(r"\b(?:mri|ct|pet|x-ray|ultrasound|mammography)\b"),
+        re.compile(r"\b(?:cerebral|cortex|ventricle|white matter|gray matter)\b"),
+        re.compile(r"\b(?:malignant|benign|metastatic|primary)\b"),
     ]
 
     @beartype
@@ -494,7 +495,7 @@ class PubMedSearchEngine(SearchEngine):
         text_lower = text.lower()
 
         for pattern in self.MEDICAL_ENTITY_PATTERNS:
-            matches = re.findall(pattern, text_lower)
+            matches = pattern.findall(text_lower)
             entities.update(matches)
 
         return tuple(sorted(entities))
@@ -783,6 +784,18 @@ class WebSearchManager:
         weights = self._ranking_weights
         content_type_boosts = weights.content_type_boosts.get(search_type, {})
 
+        # Pre-compute word-boundary patterns for query terms present in
+        # result entities.  This avoids re-compiling a regex for every
+        # (result, entity) pair inside the scoring loop.
+        all_entities: set[str] = set()
+        for result in results:
+            all_entities.update(result.extracted_entities)
+        entity_in_query: set[str] = {
+            entity
+            for entity in all_entities
+            if re.search(r"\b" + re.escape(entity) + r"\b", query_lower)
+        }
+
         # Compute raw scores for each result.
         raw_scores: list[float] = []
         for result in results:
@@ -826,9 +839,7 @@ class WebSearchManager:
             score += phrase_matches * weights.phrase_match_weight
 
             entity_matches = sum(
-                1
-                for entity in result.extracted_entities
-                if re.search(r"\b" + re.escape(entity) + r"\b", query_lower)
+                1 for entity in result.extracted_entities if entity in entity_in_query
             )
             score += entity_matches * weights.entity_match_weight
 

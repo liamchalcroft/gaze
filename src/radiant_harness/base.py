@@ -295,10 +295,16 @@ class AgenticProcessorBase(ABC):
 
         # If the PIL Image was kept from load(), hand it directly to the
         # ImageManager to avoid re-reading the file from disk.
+        # transfer_ownership=True avoids an extra ~12MB copy; the
+        # ImageInput.pil_image reference is not used after this point.
         if active_image.pil_image is not None:
             registry = ToolRegistry(tools=tools)
             mgr = registry.get_image_manager()
-            mgr.set_preloaded_image(active_image.pil_image, active_image.path)
+            mgr.set_preloaded_image(
+                active_image.pil_image,
+                active_image.path,
+                transfer_ownership=True,
+            )
             if active_image.encoded is not None:
                 mgr.original_encoding = active_image.encoded
             return registry
@@ -1000,7 +1006,11 @@ class AgenticProcessorBase(ABC):
             # used any after several turns, force finalize to avoid token waste.
             # After the first nudge, if the model *still* doesn't use tools,
             # force-accept whatever it returned rather than burning more turns.
-            if tool_registry is not None and total_tool_calls == 0 and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1:
+            if (
+                tool_registry is not None
+                and total_tool_calls == 0
+                and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1
+            ):
                 if idle_tool_nudged:
                     # Already nudged once — accept this response as final.
                     logger.warning(
@@ -1106,16 +1116,12 @@ class AgenticProcessorBase(ABC):
             # can self-correct on the next turn instead of crashing the loop.
             available = ", ".join(sorted(e.available_tools)) if e.available_tools else "none"
             logger.warning(
-                f"Unknown tool '{tool_call.name}' on turn {turn_idx + 1}. "
-                f"Available: {available}",
+                f"Unknown tool '{tool_call.name}' on turn {turn_idx + 1}. Available: {available}",
             )
             return ToolResult(
                 tool_name=tool_call.name,
                 description=f"Tool '{tool_call.name}' does not exist",
-                error=(
-                    f"Unknown tool '{tool_call.name}'. "
-                    f"Available tools: {available}"
-                ),
+                error=(f"Unknown tool '{tool_call.name}'. Available tools: {available}"),
             )
         except ToolExecutionError as e:
             logger.warning(f"Tool '{tool_call.name}' failed on turn {turn_idx + 1}: {e}")
