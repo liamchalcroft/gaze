@@ -137,8 +137,13 @@ class ImageInput:
         if self.pil_image is not None:
             return self
 
-        img = Image.open(self.path)
-        img.load()  # Force full pixel decode into memory
+        try:
+            img = Image.open(self.path)
+            img.load()  # Force full pixel decode into memory
+        except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
+            raise ValueError(
+                f"Failed to load image '{self.path}': {e}"
+            ) from e
         max_dim = get_config().image.max_image_dimension
         if img.width > max_dim or img.height > max_dim:
             img.close()
@@ -1138,6 +1143,7 @@ class AgenticProcessorBase(ABC):
             OSError,
             RuntimeError,
             BeartypeException,
+            asyncio.TimeoutError,
         ) as e:
             logger.warning(
                 f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",

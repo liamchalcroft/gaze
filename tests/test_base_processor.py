@@ -238,3 +238,39 @@ class TestImageInputAload:
             image_input = ImageInput(path=image_path)
             with pytest.raises(ValueError, match="exceed maximum"):
                 await image_input.aload()
+
+
+class TestImageInputCorruptFile:
+    """Test ImageInput.load() with corrupt/unreadable files."""
+
+    def test_load_corrupt_file_raises_valueerror(self, tmp_path: Path) -> None:
+        """load() wraps PIL errors into ValueError with the file path."""
+        corrupt_path = tmp_path / "corrupt.png"
+        corrupt_path.write_bytes(b"this is not a valid image file")
+
+        image_input = ImageInput(path=corrupt_path)
+        with pytest.raises(ValueError, match="Failed to load image"):
+            image_input.load()
+
+    def test_load_truncated_image_raises_valueerror(self, tmp_path: Path) -> None:
+        """load() wraps PIL decode errors for truncated images."""
+        # Write a valid PNG header but truncate the data
+        valid_path = tmp_path / "valid.png"
+        Image.new("RGB", (50, 50), color="red").save(valid_path)
+        data = valid_path.read_bytes()
+        truncated_path = tmp_path / "truncated.png"
+        truncated_path.write_bytes(data[:20])  # Only header, no pixel data
+
+        image_input = ImageInput(path=truncated_path)
+        with pytest.raises(ValueError, match="Failed to load image"):
+            image_input.load()
+
+    @pytest.mark.asyncio
+    async def test_aload_corrupt_file_raises_valueerror(self, tmp_path: Path) -> None:
+        """aload() propagates wrapped ValueError for corrupt files."""
+        corrupt_path = tmp_path / "corrupt.jpg"
+        corrupt_path.write_bytes(b"\x00\x00\x00")
+
+        image_input = ImageInput(path=corrupt_path)
+        with pytest.raises(ValueError, match="Failed to load image"):
+            await image_input.aload()

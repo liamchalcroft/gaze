@@ -26,7 +26,7 @@ src/radiant_harness/
         registry.py             # ToolRegistry, ToolDocumenter, EncodedImage
         visual.py               # zoom, crop, adjust_contrast, adjust_brightness, adjust_sharpness, threshold, window_level, equalize_histogram, adaptive_equalize, detect_edges, denoise, morphological, get_intensity_stats, intensity_profile, symmetry_diff, invert, annotate_region, flip_horizontal, flip_vertical, rotate, show_grid, measure, reset
         search.py               # search_web (PubMed), search_images (Open-i)
-        image_manager.py        # Image loading and transformation state
+        image_manager.py        # Image loading, transformation state, reset-to-original
     retrieval/
         web_search.py           # PubMed search via NCBI E-utilities
         image_search.py         # NIH Open-i image search

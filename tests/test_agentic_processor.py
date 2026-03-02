@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -1430,3 +1431,97 @@ async def test_non_dict_json_last_turn_still_crashes() -> None:
         await processor.analyze(images=None, metadata={})
 
     assert "JSON object" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# asyncio.TimeoutError in tool execution is caught gracefully
+# ---------------------------------------------------------------------------
+
+
+async def _timeout_tool(registry: ToolRegistry) -> ToolResult:  # noqa: ARG001
+    raise asyncio.TimeoutError("search timed out")
+
+
+class TimeoutToolAdapter(AdapterProtocol):
+    """Adapter that calls a tool which raises asyncio.TimeoutError, then recovers."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                "",
+                [{"id": "call-1", "name": "timeout_tool", "arguments": "{}"}],
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+            )
+        return (
+            '{"continue": false, "result": "recovered after timeout"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_asyncio_timeout_in_tool_is_caught_gracefully() -> None:
+    """asyncio.TimeoutError in a tool returns an error result, not a crash."""
+    adapter = TimeoutToolAdapter()
+
+    class TimeoutToolProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="timeout_tool",
+                description="always times out",
+                parameters={},
+                execute=_timeout_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = TimeoutToolProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    # Model recovered after the timeout error was returned as a ToolResult
+    assert result.final_response["result"] == "recovered after timeout"
+    assert adapter.calls == 2
+
+    # The tool_result turn recorded the timeout error
+    tool_result_turns = [t for t in result.turns if t.role == "tool_result"]
+    assert len(tool_result_turns) == 1
+    assert tool_result_turns[0].tool_results[0].error is not None
+    assert "timed out" in tool_result_turns[0].tool_results[0].error.lower()

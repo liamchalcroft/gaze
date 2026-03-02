@@ -729,9 +729,7 @@ def adaptive_equalize(
             f"got {clip_limit}"
         )
     if tile_size < 2 or tile_size > cfg.max_clahe_tile_size:
-        raise ValueError(
-            f"tile_size must be in [2, {cfg.max_clahe_tile_size}], got {tile_size}"
-        )
+        raise ValueError(f"tile_size must be in [2, {cfg.max_clahe_tile_size}], got {tile_size}")
 
     gray = np.array(image.convert("L"), dtype=np.float64)
     h, w = gray.shape
@@ -947,6 +945,13 @@ def morphological_op(
     return result
 
 
+# Threshold for distinguishing rounding-error coords (e.g. 1.001) from pixel
+# coords (e.g. 200).  Values above 1.0 but below this are clamped to [0, 1].
+# The smallest valid image is 10x10 (min_image_size), so any pixel coordinate
+# >= 2 could plausibly be a pixel value.  Values in (1.0, 2.0) are almost
+# certainly normalized coords with small rounding overshoot.
+_PIXEL_COORD_THRESHOLD = 2.0
+
 # =============================================================================
 # Tool Executors
 # =============================================================================
@@ -966,41 +971,73 @@ def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
     Models sometimes pass pixel coordinates (e.g. [200, 150, 380, 350] or
     [0, 50, 200, 300]) instead of normalized [0, 1] values.
 
-    Detection heuristic: if ANY coordinate exceeds 1.0, the box is in pixel
-    space.  The old check ``all(v > 1 ...)`` missed boxes starting at the
-    image edge where x1=0 or y1=0 — a common case.
+    Detection heuristic: values are categorised into three bands:
+
+    1. All values in [0, 1] — already normalized, pass through.
+    2. Any value > 1.0 but max(box) < ``_PIXEL_COORD_THRESHOLD`` — likely
+       normalized coordinates with small rounding errors.  Clamp to [0, 1].
+    3. max(box) >= ``_PIXEL_COORD_THRESHOLD`` — clearly pixel coordinates.
+       Normalize by dividing by image dimensions.
     """
-    if any(v > 1.0 for v in box):
-        w, h = image.size
-        normalized = [box[0] / w, box[1] / h, box[2] / w, box[3] / h]
+    max_val = max(box)
+    if max_val <= 1.0:
+        return box
+
+    if max_val < _PIXEL_COORD_THRESHOLD:
+        # Small overshoot (e.g. 1.001) — clamp, don't normalize.
+        clamped = [max(0.0, min(v, 1.0)) for v in box]
         logger.warning(
-            "Auto-normalized pixel coords {} -> {:.3f},{:.3f},{:.3f},{:.3f} (image {}x{})",
+            "Clamped near-normalized coords {} -> {} (max {:.4f} < threshold {})",
             box,
-            *normalized,
-            w,
-            h,
+            clamped,
+            max_val,
+            _PIXEL_COORD_THRESHOLD,
         )
-        return normalized
-    return box
+        return clamped
+
+    w, h = image.size
+    normalized = [box[0] / w, box[1] / h, box[2] / w, box[3] / h]
+    logger.warning(
+        "Auto-normalized pixel coords {} -> {:.3f},{:.3f},{:.3f},{:.3f} (image {}x{})",
+        box,
+        *normalized,
+        w,
+        h,
+    )
+    return normalized
 
 
 def _maybe_normalize_point(point: list[float], image: Image.Image) -> list[float]:
     """Auto-normalize pixel coordinates to [0, 1] if values indicate pixel space.
 
-    Same heuristic as _maybe_normalize_box but for 2-element point arrays.
+    Same three-band heuristic as :func:`_maybe_normalize_box` but for
+    2-element point arrays.
     """
-    if any(v > 1.0 for v in point):
-        w, h = image.size
-        normalized = [point[0] / w, point[1] / h]
+    max_val = max(point)
+    if max_val <= 1.0:
+        return point
+
+    if max_val < _PIXEL_COORD_THRESHOLD:
+        clamped = [max(0.0, min(v, 1.0)) for v in point]
         logger.warning(
-            "Auto-normalized pixel point {} -> {:.3f},{:.3f} (image {}x{})",
+            "Clamped near-normalized point {} -> {} (max {:.4f} < threshold {})",
             point,
-            *normalized,
-            w,
-            h,
+            clamped,
+            max_val,
+            _PIXEL_COORD_THRESHOLD,
         )
-        return normalized
-    return point
+        return clamped
+
+    w, h = image.size
+    normalized = [point[0] / w, point[1] / h]
+    logger.warning(
+        "Auto-normalized pixel point {} -> {:.3f},{:.3f} (image {}x{})",
+        point,
+        *normalized,
+        w,
+        h,
+    )
+    return normalized
 
 
 def _get_current_image(registry: ToolRegistry) -> Image.Image:
@@ -1293,9 +1330,16 @@ async def _execute_intensity_stats(
     """Execute intensity statistics tool."""
     image = _require_image(registry)
 
-    # Models sometimes pass the string "null" instead of JSON null
+    # Models sometimes pass the string "null" instead of JSON null.
+    # Any other string (e.g. "[0.1,0.2,0.3,0.4]") is a model error —
+    # silently treating it as None would return wrong (full-image) stats.
     if isinstance(box, str):
-        box = None
+        if box.lower() in ("null", "none", ""):
+            box = None
+        else:
+            raise ToolExecutionError(
+                f"box must be an array [x1,y1,x2,y2] or null, got string: {box!r}"
+            )
 
     box_tuple: tuple[float, float, float, float] | None = None
     if box is not None:
@@ -1831,7 +1875,8 @@ def create_visual_tools(
     if "window_level" not in disabled:
         presets_list = ", ".join(sorted(WINDOW_PRESETS.keys()))
         window_prompt_doc = (
-            f"**window_level** - Clinical windowing (center+width or preset: {presets_list})"
+            f"**window_level** - Clinical windowing. "
+            f"Must provide EITHER preset ({presets_list}) OR both center and width."
         )
         tools.append(
             Tool(
