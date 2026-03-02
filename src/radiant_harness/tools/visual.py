@@ -674,6 +674,13 @@ def apply_window_level(
             raise ValueError(
                 f"Unknown preset {preset!r}. Available: {sorted(WINDOW_PRESETS.keys())}"
             )
+        if center is not None or width is not None:
+            logger.warning(
+                "window_level: preset={!r} overrides center={}/width={}",
+                preset,
+                center,
+                width,
+            )
         center, width = WINDOW_PRESETS[preset]
         is_preset = True
     elif center is None or width is None:
@@ -1473,6 +1480,15 @@ async def _execute_annotate_region(
     if len(box) != 4:
         raise ToolExecutionError(f"box requires [x1, y1, x2, y2], got {len(box)} values")
 
+    # Validate element types before normalization (same guard as _execute_crop)
+    coord_names = ["x1", "y1", "x2", "y2"]
+    for i, value in enumerate(box):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ToolExecutionError(
+                f"box coordinates must be numbers, got {coord_names[i]}={value!r} "
+                f"(type {type(value).__name__})"
+            )
+
     image = _require_image(registry)
     box = _maybe_normalize_box(box, image)
 
@@ -1531,8 +1547,14 @@ async def _execute_window_level(
     except ValueError as e:
         raise ToolExecutionError(f"Invalid window/level: {e}") from e
 
+    # Report the *actual* values used (preset overrides kwargs).
+    actual_center = center
+    actual_width = width
+    if preset is not None and preset in WINDOW_PRESETS:
+        actual_center, actual_width = WINDOW_PRESETS[preset]
+
     desc = (
-        f"Applied window preset '{preset}'"
+        f"Applied window preset '{preset}' (center={actual_center}, width={actual_width})"
         if preset
         else f"Applied window center={center} width={width}"
     )
@@ -1541,7 +1563,12 @@ async def _execute_window_level(
         description=desc,
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"center": center, "width": width, "preset": preset, "size": current.size},
+        metadata={
+            "center": actual_center,
+            "width": actual_width,
+            "preset": preset,
+            "size": current.size,
+        },
     )
 
 
