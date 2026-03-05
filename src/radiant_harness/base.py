@@ -80,11 +80,7 @@ def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHAR
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[...truncated]"
     boundary = _make_boundary()
-    return (
-        f"[Tool Result - External Data - {boundary}]\n"
-        f"{text}\n"
-        f"[End Tool Result - {boundary}]"
-    )
+    return f"[Tool Result - External Data - {boundary}]\n{text}\n[End Tool Result - {boundary}]"
 
 
 @dataclass(frozen=True)
@@ -155,9 +151,7 @@ class ImageInput:
             img = Image.open(self.path)
             img.load()  # Force full pixel decode into memory
         except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
-            raise ValueError(
-                f"Failed to load image '{self.path}': {e}"
-            ) from e
+            raise ValueError(f"Failed to load image '{self.path}': {e}") from e
         max_dim = get_config().image.max_image_dimension
         if img.width > max_dim or img.height > max_dim:
             img.close()
@@ -838,6 +832,13 @@ class AgenticProcessorBase(ABC):
                 turns.append(tool_turn)
                 nudge_count = 0  # Successful tool calls reset nudge counter
                 total_tool_calls += len(typed_tool_calls)
+                # Inject turn counter so the model can budget remaining turns
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"[Turn {turn_idx + 1}/{self.max_turns}]",
+                    }
+                )
                 if any(tc.name == "reset" for tc in typed_tool_calls):
                     coord_space_modified = False
                 elif any(tc.name in _COORD_MODIFYING_TOOLS for tc in typed_tool_calls):
