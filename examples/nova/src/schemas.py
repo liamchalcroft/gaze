@@ -188,7 +188,6 @@ NOVA_SCHEMA: dict[str, Any] = {
                 "diagnosis",
                 "localization",
                 "continue",
-                "reasoning",
             ],
             "additionalProperties": False,
         },
@@ -198,7 +197,7 @@ NOVA_SCHEMA: dict[str, Any] = {
 
 def get_required_fields() -> list[str]:
     """Get the list of required top-level fields in NOVA schema."""
-    return ["caption", "diagnosis", "localization", "continue", "reasoning"]
+    return ["caption", "diagnosis", "localization", "continue"]
 
 
 def _is_valid_confidence(value: object) -> bool:
