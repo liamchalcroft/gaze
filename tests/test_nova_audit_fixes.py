@@ -52,10 +52,11 @@ class TestSchemaStrictCompliance:
         missing = props - required
         assert not missing, f"Properties not in required (strict mode violation): {missing}"
 
-    def test_reasoning_is_required(self) -> None:
-        """'reasoning' must be in required since it's in properties with strict mode."""
+    def test_reasoning_removed_from_schema(self) -> None:
+        """'reasoning' should not be in properties or required (removed to fix strict mode issues)."""
         schema = self._get_inner_schema()
-        assert "reasoning" in schema["required"]
+        assert "reasoning" not in schema.get("properties", {})
+        assert "reasoning" not in schema.get("required", [])
 
     def _check_nested_objects(self, schema: dict, path: str = "root") -> list[str]:
         """Recursively check all nested objects have additionalProperties: false."""
@@ -186,11 +187,12 @@ class TestSingleTurnPrompt:
             "Single-turn task.jinja missing 'continue' field in JSON example"
         )
 
-    def test_reasoning_field_in_template(self) -> None:
+    def test_reasoning_field_removed_from_template(self) -> None:
+        """'reasoning' was removed from schema — template should not include it."""
         template_path = EXAMPLE_NOVA_ROOT / "src" / "prompts" / "single_turn" / "task.jinja"
         content = template_path.read_text()
-        assert '"reasoning"' in content, (
-            "Single-turn task.jinja missing 'reasoning' field in JSON example"
+        assert '"reasoning"' not in content, (
+            "Single-turn task.jinja still contains 'reasoning' field — should be removed"
         )
 
 

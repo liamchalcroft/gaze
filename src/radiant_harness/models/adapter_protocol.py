@@ -15,6 +15,7 @@ class GenerationLog:
     prompt_tokens: int
     completion_tokens: int
     finish_reason: str | None
+    reasoning_content: str | None = None
 
     @property
     def tokens(self) -> int:

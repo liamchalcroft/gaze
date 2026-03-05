@@ -178,10 +178,6 @@ NOVA_SCHEMA: dict[str, Any] = {
                         "false when analysis is complete"
                     ),
                 },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Chain-of-thought reasoning for the analysis",
-                },
             },
             "required": [
                 "caption",
@@ -303,6 +299,22 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
             return False
         if not _is_valid_confidence(loc.get("confidence")):
             return False
+
+    # --- localization sub-fields ---
+    image_dims = localization.get("image_dimensions")
+    if image_dims is not None:
+        if not isinstance(image_dims, dict):
+            return False
+        w = image_dims.get("width")
+        h = image_dims.get("height")
+        if not isinstance(w, int) or not isinstance(h, int):
+            return False
+        if w <= 0 or h <= 0:
+            return False
+
+    coord_sys = localization.get("coordinate_system")
+    if coord_sys is not None and coord_sys != "absolute_pixels":
+        return False
 
     # --- continue ---
     return isinstance(response.get("continue"), bool)

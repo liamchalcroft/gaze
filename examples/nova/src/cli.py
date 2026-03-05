@@ -247,6 +247,24 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     else:
         logger.warning("All samples failed — skipping metric computation")
 
+    # Compute token cost summary stats
+    token_counts = [r.total_tokens for r in results]
+    token_summary: dict[str, object] = {}
+    if token_counts:
+        sorted_tokens = sorted(token_counts)
+        mid = len(sorted_tokens) // 2
+        median = (
+            sorted_tokens[mid]
+            if len(sorted_tokens) % 2 == 1
+            else (sorted_tokens[mid - 1] + sorted_tokens[mid]) / 2
+        )
+        token_summary = {
+            "mean_tokens": sum(token_counts) / len(token_counts),
+            "median_tokens": median,
+            "max_tokens": max(token_counts),
+            "total_tokens": sum(token_counts),
+        }
+
     # Save summary (always, even if all samples failed)
     summary_file = config.output_dir / "summary.json"
     with summary_file.open("w") as f:
@@ -263,6 +281,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                 "num_samples": len(results),
                 "failed_samples": [{"sample_id": idx, "error": err} for idx, err in failed_samples],
                 "metrics": metrics,
+                "token_summary": token_summary,
             },
             f,
             indent=2,
@@ -327,7 +346,15 @@ async def compute_metrics(
             description = caption.get("description")
             if description is None:
                 raise KeyError(f"Prediction {i} 'caption' missing required 'description' field")
-            pred_captions.append(description)
+            # Build richer caption by concatenating structured fields for better
+            # keyword overlap with modality_f1 and clinical_f1.
+            parts = [description]
+            if seq := caption.get("sequence_characteristics"):
+                parts.append(str(seq))
+            if orient := caption.get("orientation"):
+                parts.append(str(orient))
+            parts.extend(str(f) for f in caption.get("findings", []))
+            pred_captions.append(" ".join(parts))
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
         metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
 
@@ -359,7 +386,12 @@ async def compute_metrics(
                     ranked.append(dd)
             pred_diagnoses.append(ranked)
 
-        gt_diagnoses = [gt.get("final_diagnosis", "") for gt in ground_truth]
+        gt_diagnoses = []
+        for i, gt in enumerate(ground_truth):
+            diag = gt.get("final_diagnosis", "")
+            if not diag:
+                logger.warning("Sample %d has empty ground truth diagnosis", i)
+            gt_diagnoses.append(diag)
         metrics["diagnosis"] = await evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
 
     if _should_compute("localization"):

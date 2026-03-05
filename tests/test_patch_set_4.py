@@ -299,7 +299,7 @@ class TestEvaluateDiagnosisJudgmentLog:
         ):
             results = asyncio.run(
                 evaluate_diagnosis_nova_official(
-                    preds=["glioblastoma", "meningioma", "cyst"],
+                    preds=["glioblastoma", "meningioma", "migraine"],
                     refs=["glioblastoma", "meningioma", "arachnoid cyst"],
                 )
             )

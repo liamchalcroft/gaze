@@ -83,6 +83,54 @@ def _extract_keyword_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _rouge_l_sentence(pred_tokens: list[str], ref_tokens: list[str]) -> float:
+    """Compute ROUGE-L F1 between two token lists using longest common subsequence."""
+    if not pred_tokens or not ref_tokens:
+        return 0.0
+    m, n = len(ref_tokens), len(pred_tokens)
+    # DP table for LCS length
+    prev = [0] * (n + 1)
+    for i in range(1, m + 1):
+        curr = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if ref_tokens[i - 1].lower() == pred_tokens[j - 1].lower():
+                curr[j] = prev[j - 1] + 1
+            else:
+                curr[j] = max(prev[j], curr[j - 1])
+        prev = curr
+    lcs_len = prev[n]
+    if lcs_len == 0:
+        return 0.0
+    precision = lcs_len / n
+    recall = lcs_len / m
+    return (2 * precision * recall) / (precision + recall)
+
+
+def _has_clinical_terms(text: str) -> bool:
+    """Check if text contains any clinical abnormality terms."""
+    clinical_terms = {
+        "lesion",
+        "tumor",
+        "tumour",
+        "hemorrhage",
+        "haemorrhage",
+        "infarct",
+        "infarction",
+        "cyst",
+        "atrophy",
+        "metastasis",
+        "metastases",
+        "edema",
+        "oedema",
+        "mass",
+        "enhancement",
+        "abnormal",
+        "abnormality",
+    }
+    words = _extract_keyword_tokens(text)
+    return bool(words & clinical_terms)
+
+
 @beartype
 def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, float | None]:
     """Evaluate generated captions using multiple metrics.
@@ -93,7 +141,8 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
 
     Returns:
         Dictionary with keys 'bleu', 'bert_f1', 'radgraph_f1', 'meteor',
-        'modality_f1', 'clinical_f1', 'binary_f1'. radgraph_f1 may be None
+        'rouge_l', 'modality_f1', 'clinical_f1', 'binary_f1',
+        'binary_accuracy', 'abnormal_prevalence'. radgraph_f1 may be None
         if radgraph is not installed.
 
     Raises:
@@ -130,6 +179,12 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     ]
 
     meteor = float(sum(meteor_scores) / len(meteor_scores))
+
+    # ROUGE-L (robust to length differences unlike BLEU)
+    rouge_l_scores = [
+        _rouge_l_sentence(list(pred_tokens[i]), list(ref_tokens[i])) for i in range(len(preds))
+    ]
+    rouge_l = float(sum(rouge_l_scores) / len(rouge_l_scores))
 
     # RadGraph F1 (optional heavy dependency)
     radgraph_f1 = _calculate_radgraph_f1(refs, preds)
@@ -233,13 +288,20 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         else 0.0
     )
 
+    # Abnormal prevalence in ground truth — documents class balance.
+    # NOVA is almost entirely pathological cases, so binary accuracy is
+    # trivially high when the model always predicts "abnormal".
+    abnormal_prevalence = float(sum(1 for r in refs if _has_clinical_terms(r)) / len(refs))
+
     return {
         "bleu": float(bleu.score) / 100.0,  # Normalize from 0-100 to 0-1
         "bert_f1": bert_f1_score,  # Already clamped to [0, 1]
         "radgraph_f1": radgraph_f1,  # Already in 0-1 range
         "meteor": meteor,  # Already in 0-1 range (NLTK native)
+        "rouge_l": rouge_l,  # LCS-based, robust to length differences
         "modality_f1": modality_f1,  # Already in 0-1 range
         "clinical_f1": clinical_f1,  # Already in 0-1 range
         "binary_accuracy": binary_accuracy,  # Accuracy of abnormal/normal classification
         "binary_f1": binary_f1,  # F1 of abnormal/normal classification
+        "abnormal_prevalence": abnormal_prevalence,  # GT class balance (high = trivial binary task)
     }

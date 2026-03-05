@@ -198,7 +198,7 @@ def test_nova_agentic_task_renders() -> None:
     }
     result = load_template(NOVA_PROMPTS / "agentic" / "task.jinja", ctx)
     assert "512" in result
-    assert "/data/brain.png" in result
+    # img_path is no longer rendered in the template (removed filesystem paths from prompts)
     assert "<clinical_history>" in result
     assert "Headache for 3 weeks" in result
 

@@ -241,6 +241,13 @@ class OpenAIAdapter(AdapterProtocol):
         message = choice.message
 
         content = message.content or ""
+        # Thinking models (Qwen3.5, etc.) put chain-of-thought in reasoning_content.
+        # If content is empty, fall back to reasoning_content for the actual answer.
+        reasoning = getattr(message, "reasoning_content", None) or None
+        if not content and reasoning:
+            logger.info("Content empty, falling back to reasoning_content from thinking model")
+            content = reasoning
+
         tool_calls = None
         if message.tool_calls:
             tool_calls = [
@@ -257,6 +264,7 @@ class OpenAIAdapter(AdapterProtocol):
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
             finish_reason=choice.finish_reason,
+            reasoning_content=reasoning,
         )
 
         logger.debug(

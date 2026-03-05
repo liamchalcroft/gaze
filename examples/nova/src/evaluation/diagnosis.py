@@ -170,6 +170,11 @@ def exact_diagnosis_match(pred: str, ref: str) -> bool:
         (r"\bpituitary adenoma\b", r"\bpituitary tumor\b"),
         # Hydrocephalus variants
         (r"\bnph\b", r"\bnormal pressure hydrocephalus\b"),
+        # WHO reclassifications and rare synonyms
+        (r"\bhemangiopericytoma\b", r"\bsolitary fibrous tumo(?:u)?r\b"),
+        (r"\bolivary degeneration\b", r"\bpalatal (?:tremor|myoclonus)\b"),
+        (r"\bcolloid cyst\b", r"\bthird ventricle cyst\b"),
+        (r"\btrigeminal neuralgia\b", r"\btic douloureux\b"),
     ]
 
     # Check synonym pairs (bidirectional)
@@ -308,6 +313,16 @@ or "NO" if they refer to different conditions.
             temperature=0.0,
         )
         raw = (response.choices[0].message.content or "").strip()
+        # Retry once on empty response (common with local LLMs)
+        if raw == "":
+            logger.warning("LLM returned empty response for diagnosis match, retrying once")
+            response = await client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=1024,
+                temperature=0.0,
+            )
+            raw = (response.choices[0].message.content or "").strip()
         # Thinking models may wrap the answer in extra text.
         # Extract the last YES or NO token.
         for token in reversed(raw.upper().split()):
@@ -430,15 +445,29 @@ async def evaluate_diagnosis_nova_official(
     judgment_log = JudgmentLog()
 
     # Collect all (pred, ref) pairs that need LLM matching, then run in parallel.
+    # Skip samples with empty ground truth — they can't be scored.
     all_preds: list[Any] = []
     items: list[tuple[int, bool, Any, Any]] = []
+    skipped_empty_gt = 0
     for i, (p, r) in enumerate(zip(preds, refs, strict=True)):
+        ref_str = str(r).strip()
+        if not ref_str:
+            logger.warning("Sample %d has empty ground truth diagnosis, skipping from scoring", i)
+            skipped_empty_gt += 1
+            continue
         if isinstance(p, list):
             items.append((i, True, p, r))
             all_preds.extend(p)
         else:
             items.append((i, False, p, r))
             all_preds.append(p)
+
+    if skipped_empty_gt:
+        logger.info(
+            "Skipped %d samples with empty ground truth diagnosis (out of %d total)",
+            skipped_empty_gt,
+            n,
+        )
 
     # Evaluate each sample — exact match first, LLM only if needed.
     # Run LLM calls concurrently with a semaphore to avoid overwhelming the API.
@@ -451,6 +480,14 @@ async def evaluate_diagnosis_nova_official(
             ref_norm = normalize_diagnosis_string(ref)
             method = "exact_match" if pred_norm == ref_norm else "synonym_match"
             judgment_log.add(JudgmentRecord(pred=pred, ref=ref, method=method, verdict=True))
+            return True
+        # Containment pre-check: if one string contains the other, it's a match
+        pred_lower = pred.strip().lower()
+        ref_lower = ref.strip().lower()
+        if pred_lower and ref_lower and (pred_lower in ref_lower or ref_lower in pred_lower):
+            judgment_log.add(
+                JudgmentRecord(pred=pred, ref=ref, method="containment_match", verdict=True)
+            )
             return True
         async with sem:
             verdict, record = await llm_semantic_match_async(pred, ref, model_name, num_votes)
@@ -477,10 +514,15 @@ async def evaluate_diagnosis_nova_official(
     top1_count = sum(1 for t1, _ in results_list if t1)
     top5_count = sum(1 for _, t5 in results_list if t5)
 
+    # Use number of scored samples (excluding empty GT) as denominator
+    scored_n = len(items)
+    if scored_n == 0:
+        return {"top1": 0.0, "top5": 0.0, "coverage": 0.0, "entropy": 0.0, "judgment_log": []}
+
     # Calculate metrics
     results: dict[str, Any] = {
-        "top1": top1_count / n,
-        "top5": top5_count / n,
+        "top1": top1_count / scored_n,
+        "top5": top5_count / scored_n,
     }
 
     # Coverage: unique predictions vs unique references

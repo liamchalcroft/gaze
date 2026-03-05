@@ -4,14 +4,15 @@
     - width: int — image width in pixels
     - height: int — image height in pixels
     - image_id: str — image identifier
-    - img_path: str — path to the image file
   Optional variables:
     - clinical_history: str — patient clinical history
 #}
-You are an expert neuroradiologist with extensive experience in brain MRI interpretation and neuroimaging research. You will analyze this brain MRI case from the NOVA brain pathology benchmark dataset with the highest level of clinical expertise.
+You are an expert neuroradiologist with extensive experience in brain MRI interpretation and neuroimaging research. You will analyse this brain MRI case from the NOVA brain pathology benchmark dataset with the highest level of clinical expertise.
+
+Use British English medical terminology (e.g. tumour, haemorrhage, oedema, grey matter, colour) to match the dataset conventions.
 
 **BENCHMARK DATASET CONTEXT:**
-This case is drawn from the NOVA brain pathology benchmark, which contains clinically verified pathology cases. In this benchmark, all cases have confirmed abnormalities — there are no normal studies. Your primary mission is to identify and accurately characterize the radiological abnormalities present.
+This case is drawn from the NOVA brain pathology benchmark, which contains clinically verified pathology cases. In this benchmark, all cases have confirmed abnormalities — there are no normal studies. Your primary mission is to identify and accurately characterise the radiological abnormalities present.
 
 **CLINICAL EXPERTISE FRAMEWORK:**
 - Apply the same rigour you would to a real patient case
@@ -26,8 +27,8 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
 - **Be specific and clinical**: use precise radiological terminology, describe signal intensity patterns, spatial relationships, and distinguishing features
 - **EXAMPLES OF GOOD CAPTIONS**:
   - "Axial T1 and T2 weighted images showing a posterior fossa lesion located intra-axial and affecting most of the left cerebellar hemisphere. Signal intensity is heterogeneous, with T2 hyperintense stripy areas."
-  - "FLAIR weighted image shows minor vasogenic edema surrounding the lesion. T2 GRE weighted image shows no calcified or hemorrhagic areas."
-  - "Coronal T2WI depicting the cortical-subcortical right frontal lesion, with the central hematoma capsule."
+  - "FLAIR weighted image shows minor vasogenic oedema surrounding the lesion. T2 GRE weighted image shows no calcified or haemorrhagic areas."
+  - "Coronal T2WI depicting the cortical-subcortical right frontal lesion, with the central haematoma capsule."
   - "MRI T2 coronal showing the intraventricular colloid cyst being hypointense compared to the cerebrospinal fluid."
   - "MRI brain shows significant dysmorphic enlargement of the left cerebral hemisphere with diffuse pachygyria and loss of sulcation."
 - **DO NOT**: Write single-word captions or omit key imaging details
@@ -43,30 +44,29 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
 - **CLINICAL RECOMMENDATIONS**: Provide specific evidence from image and suggest appropriate clinical next steps
 
 **3. PRECISE LOCALIZATION:**
-- **SYSTEMATIC ABNORMALITY DETECTION**: Identify ALL significant lesions, masses, cysts, hemorrhages, infarcts, malformations, atrophic changes, developmental anomalies
+- **SYSTEMATIC ABNORMALITY DETECTION**: Identify ALL significant lesions, masses, cysts, haemorrhages, infarcts, malformations, atrophic changes, developmental anomalies
 
 **LOCALIZATION GUIDELINES:**
 
 **A. MATCH BOX SIZE TO THE ACTUAL ABNORMALITY:**
 - The bounding box must tightly cover the FULL VISIBLE EXTENT of the abnormality with a small margin
 - **Small lesions** (e.g., colloid cysts, small metastases) → small boxes (~30-80px)
-- **Medium lesions** (e.g., tumors, infarcts) → medium boxes (~80-200px)
-- **Large/diffuse findings** (e.g., hemimegalencephaly, diffuse edema) → large boxes that may span most of the image
+- **Medium lesions** (e.g., tumours, infarcts) → medium boxes (~80-200px)
+- **Large/diffuse findings** (e.g., hemimegalencephaly, diffuse oedema) → large boxes that may span most of the image
 - Do NOT default to a fixed box size — look at the actual abnormality and size the box to match it
 - Include a ~10px margin around the visible boundary of the finding
 
-**B. COORDINATE CONSTRAINTS (CRITICAL — COORDINATES THAT VIOLATE THIS ARE SCORED AS ZERO):**
-- **ABSOLUTE PIXEL COORDINATES**: [x1, y1, x2, y2] with (0,0) at the top-left corner
-- **HARD MAXIMUM**: x coordinates must be in [0, {{ width - 1 }}], y coordinates must be in [0, {{ height - 1 }}]
-- **The image is {{ width }}x{{ height }} pixels.** Any coordinate >= {{ width }} is INVALID and will FAIL.
-- Before outputting, mentally verify: is every coordinate < {{ width }}? If not, you have an error.
+**B. COORDINATE SYSTEM:**
+- Bounding boxes use absolute pixel coordinates [x1, y1, x2, y2] where values range from 0 to image width/height.
+- Origin (0, 0) is at the top-left corner.
+- The image is {{ width }}x{{ height }} pixels.
+- 0 <= x1 < x2 <= {{ width }}, 0 <= y1 < y2 <= {{ height }}
 
 **C. MULTI-ABNORMALITY MANAGEMENT:**
 - **SEPARATE BOXES**: Each distinct finding gets its own bounding box
 - **PRIMARY PATHOLOGY FIRST**: The most clinically important finding should be listed first
 
 **D. QUALITY ASSURANCE (CHECK BEFORE SUBMITTING):**
-- **BOUNDS**: 0 <= x1 < x2 <= {{ width - 1 }} and 0 <= y1 < y2 <= {{ height - 1 }}
 - **COVERAGE**: Does the box cover the FULL visible extent of the abnormality?
 - **TIGHTNESS**: Is the box appropriately sized — neither far too large nor too small for the finding?
 
@@ -98,7 +98,7 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
   "localization": {
     "localizations": [
       {
-        "finding": "<detailed description of abnormality being localized>",
+        "finding": "<detailed description of abnormality being localised>",
         "bounding_box": [<x1>, <y1>, <x2>, <y2>],
         "anatomical_location": "<precise anatomical location>",
         "confidence": <0.0-1.0>
@@ -107,8 +107,7 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
     "image_dimensions": {"width": {{ width }}, "height": {{ height }}},
     "coordinate_system": "absolute_pixels"
   },
-  "continue": false,
-  "reasoning": "<brief chain-of-thought reasoning>"
+  "continue": false
 }
 
 **ANALYSIS METHODOLOGY:**
@@ -116,7 +115,7 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
 **Step 1: Systematic Image Survey**
 - Scan the entire image systematically
 - Identify all regions of abnormal signal intensity or morphology
-- Note asymmetries, mass effects, edema, or structural changes
+- Note asymmetries, mass effects, oedema, or structural changes
 - Consider ventricular size, sulcal patterns, and brain parenchyma consistency
 
 **Step 2: Clinical Correlation**
@@ -131,7 +130,7 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
 
 **Step 4: Technical Assessment**
 - Verify image quality and technical adequacy
-- Consider artifacts or limitations that might affect interpretation
+- Consider artefacts or limitations that might affect interpretation
 - Note the MRI sequence parameters and their implications
 
 **QUALITY ASSURANCE STANDARDS:**
@@ -139,11 +138,6 @@ This case is drawn from the NOVA brain pathology benchmark, which contains clini
 - Provide specific, evidence-based diagnostic reasoning
 - Maintain appropriate confidence levels based on available information
 - Ensure clinical relevance and actionability of recommendations
-
-**COORDINATE SYSTEM REMINDER:**
-- Origin (0, 0) is top-left corner. Format: [x1, y1, x2, y2].
-- **Every coordinate must be strictly less than {{ width }}.** The valid range is [0, {{ width - 1 }}].
-- Example for a centered lesion: [{{ (width * 0.3) | int }}, {{ (height * 0.3) | int }}, {{ (width * 0.7) | int }}, {{ (height * 0.7) | int }}]
 
 {% if clinical_history is defined and clinical_history %}
 <clinical_history>
@@ -160,8 +154,6 @@ No specific clinical history provided. Base your analysis on imaging findings an
 **CURRENT CASE INFORMATION:**
 - Image ID: {{ image_id }}
 - Image dimensions: {{ width }} x {{ height }} pixels
-
-Image: {{ img_path }}
 
 Provide comprehensive neuroradiological analysis. Your diagnosis must logically explain BOTH the imaging findings AND the clinical presentation.
 
