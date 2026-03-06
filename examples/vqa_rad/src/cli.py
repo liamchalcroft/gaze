@@ -31,28 +31,26 @@ async def run_evaluation(
     max_turns: int,
     output_dir: Path,
     reasoning: bool,
+    base_url: str | None = None,
 ) -> dict[str, float]:
-    """Run VQA-RAD evaluation.
-
-    Args:
-        model_name: Model to use
-        split: Dataset split
-        max_samples: Maximum samples to evaluate
-        use_tools: Enable visual tools
-        use_search: Enable web search
-        max_turns: Maximum conversation turns
-        output_dir: Output directory for results
-        reasoning: Enable reasoning mode
-
-    Returns:
-        Evaluation metrics
-    """
+    """Run VQA-RAD evaluation."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load dataset
     logger.info(f"Loading VQA-RAD dataset (split={split})")
     dataset = VQARadDataset(split=split, max_samples=max_samples)
     logger.info(f"Loaded {len(dataset)} samples")
+
+    # Build adapter factory for custom base URLs (e.g. LM Studio)
+    adapter_factory = None
+    if base_url is not None:
+        from radiant_harness.models import LMStudioAdapter
+
+        _url = base_url
+        _model = model_name
+
+        def adapter_factory() -> LMStudioAdapter:
+            return LMStudioAdapter(model_name=_model, base_url=_url)
 
     # Create processor
     processor = VQARadProcessor(
@@ -61,6 +59,7 @@ async def run_evaluation(
         use_web_search=use_search,
         max_turns=max_turns,
         reasoning_enabled=reasoning,
+        adapter_factory=adapter_factory,
     )
 
     logger.info(f"Running evaluation with model: {model_name}")
@@ -177,7 +176,13 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="openai/gpt-4o",
-        help="Model name (OpenRouter format)",
+        help="Model name (OpenRouter format, or local model ID for --base-url)",
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument(
         "--split",
@@ -252,6 +257,7 @@ def main() -> None:
                 max_turns=args.max_turns,
                 output_dir=args.output_dir,
                 reasoning=args.reasoning,
+                base_url=args.base_url,
             )
         )
         print("\n=== VQA-RAD Results ===")  # noqa: T201

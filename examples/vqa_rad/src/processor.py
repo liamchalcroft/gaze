@@ -12,9 +12,12 @@ from typing import Literal
 
 from beartype import beartype
 
+from collections.abc import Callable
+
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
+from radiant_harness.models import AdapterProtocol
 from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
@@ -149,17 +152,8 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         max_turns: int = 5,
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
+        adapter_factory: Callable[[], AdapterProtocol] | None = None,
     ) -> None:
-        """Initialize VQA-RAD processor.
-
-        Args:
-            model_name: Model to use for analysis
-            use_tools: Enable visual manipulation tools
-            use_web_search: Enable medical literature search
-            max_turns: Maximum conversation turns
-            reasoning_enabled: Enable model reasoning mode
-            reasoning_effort: Reasoning effort level
-        """
         super().__init__(
             model_name=model_name,
             use_tools=use_tools,
@@ -167,6 +161,7 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             max_turns=max_turns,
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
+            adapter_factory=adapter_factory,
         )
 
     def get_reward_function(self) -> BaseRewardFunction:

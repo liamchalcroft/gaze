@@ -382,18 +382,12 @@ async def compute_metrics(
         pred_captions = []
         for i, p in enumerate(predictions):
             caption = p.get("caption")
-            if caption is None:
-                raise KeyError(f"Prediction {i} missing 'caption' field")
-            if not isinstance(caption, _DICT_LIKE):
-                raise TypeError(
-                    f"Prediction {i} 'caption' must be dict, got {type(caption).__name__}"
-                )
-            description = caption.get("description")
-            if description is None:
-                raise KeyError(f"Prediction {i} 'caption' missing required 'description' field")
-            # Build richer caption by concatenating structured fields for better
-            # keyword overlap with modality_f1 and clinical_f1.
-            parts = [description]
+            if caption is None or not isinstance(caption, _DICT_LIKE):
+                logger.warning(f"Prediction {i} missing or malformed 'caption' — scoring as empty")
+                pred_captions.append("")
+                continue
+            description = caption.get("description", "")
+            parts = [description] if description else []
             if seq := caption.get("sequence_characteristics"):
                 parts.append(str(seq))
             if orient := caption.get("orientation"):
@@ -409,21 +403,12 @@ async def compute_metrics(
         pred_diagnoses = []
         for i, p in enumerate(predictions):
             diag = p.get("diagnosis")
-            if diag is None:
-                raise KeyError(f"Prediction {i} missing 'diagnosis' field")
-            if not isinstance(diag, _DICT_LIKE):
-                raise TypeError(
-                    f"Prediction {i} 'diagnosis' must be dict per NOVA schema, "
-                    f"got {type(diag).__name__}"
-                )
-            primary = diag.get("primary_diagnosis")
-            if primary is None:
-                raise KeyError(
-                    f"Prediction {i} 'diagnosis' missing required 'primary_diagnosis' field"
-                )
-            # Build ranked list [primary, diff1, diff2, ...] for top-5 evaluation.
-            # evaluate_diagnosis_nova_official already handles lists via isinstance(p, list).
-            ranked: list[str] = [primary]
+            if diag is None or not isinstance(diag, _DICT_LIKE):
+                logger.warning(f"Prediction {i} missing or malformed 'diagnosis' — scoring as empty")
+                pred_diagnoses.append([""])
+                continue
+            primary = diag.get("primary_diagnosis", "")
+            ranked: list[str] = [primary] if primary else [""]
             for dd in diag.get("differential_diagnoses", []):
                 if isinstance(dd, _DICT_LIKE):
                     name = dd.get("diagnosis")
@@ -448,12 +433,15 @@ async def compute_metrics(
         gt_boxes = []
         for i, (p, gt) in enumerate(zip(predictions, ground_truth, strict=True)):
             loc_data = p.get("localization")
-            if loc_data is None:
-                raise KeyError(f"Prediction {i} missing 'localization' field")
-            if not isinstance(loc_data, _DICT_LIKE):
-                raise TypeError(
-                    f"Prediction {i} 'localization' must be dict, got {type(loc_data).__name__}"
+            if loc_data is None or not isinstance(loc_data, _DICT_LIKE):
+                logger.warning(f"Prediction {i} missing or malformed 'localization' — scoring as empty")
+                pred_boxes.append({"boxes": [], "scores": [], "labels": []})
+                gt_localizations = gt.get("localizations", [])
+                gt_box_list = [list(loc["bbox"]) for loc in gt_localizations if "bbox" in loc]
+                gt_boxes.append(
+                    {"boxes": gt_box_list, "scores": [1.0] * len(gt_box_list), "labels": [0] * len(gt_box_list)}
                 )
+                continue
             localizations = loc_data.get("localizations", [])
             img_dims = loc_data.get("image_dimensions", {})
             pred_w = img_dims.get("width", 0)
@@ -463,12 +451,10 @@ async def compute_metrics(
             boxes = []
             scores = []
             for j, loc in enumerate(localizations):
-                # Schema requires 'bounding_box' - enforce strictly
                 bbox = loc.get("bounding_box")
                 if bbox is None:
-                    raise KeyError(
-                        f"Prediction {i} localization {j} missing required 'bounding_box' field"
-                    )
+                    logger.warning(f"Prediction {i} localization {j} missing 'bounding_box' — skipping")
+                    continue
                 bbox = list(bbox)
                 if actual_w > 0 and actual_h > 0:
                     bbox = rescale_and_clamp_box(bbox, actual_w, actual_h)
