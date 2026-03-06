@@ -4,7 +4,7 @@
 
 Radiant Harness is a modular framework for building multi-turn agentic VLM systems for medical image analysis. It provides tool-augmented reasoning over radiological images.
 
-The primary example implementation is `examples/nova/` -- a benchmark for VLMs on the NOVA brain-MRI dataset. Additional examples exist for GEMeX visual grounding, AgentClinic diagnostic reasoning, PubMedQA, and VQA-RAD (the latter two are verifiers environments only with no standalone CLI).
+The primary example implementation is `examples/nova/` -- a benchmark for VLMs on the NOVA brain-MRI dataset. Additional examples exist for GEMeX visual grounding, AgentClinic diagnostic reasoning, PubMedQA, and VQA-RAD (each with its own CLI, processor, dataset, evaluation, and schemas).
 
 ## Project Structure
 
@@ -12,6 +12,7 @@ The primary example implementation is `examples/nova/` -- a benchmark for VLMs o
 src/radiant_harness/
     __init__.py                 # Public API exports
     __main__.py                 # CLI entry point (info only)
+    _frozen.py                  # deep_freeze utility for immutable config
     base.py                     # AgenticProcessorBase, ImageInput
     config.py                   # HarnessConfig, AgenticConfig, SearchConfig, etc.
     types.py                    # ToolCall, ToolResult, Turn, AgenticResult
@@ -20,6 +21,7 @@ src/radiant_harness/
     models/
         adapter_protocol.py     # AdapterProtocol, GenerationLog
         openai_adapter.py       # OpenAIAdapter
+        lmstudio_adapter.py     # LMStudioAdapter (local LM Studio server)
         huggingface_adapter.py  # HuggingFaceAdapter, HuggingFaceVLMAdapter (optional)
     tools/
         tool.py                 # Tool class
@@ -28,6 +30,7 @@ src/radiant_harness/
         search.py               # search_web (PubMed), search_images (Open-i)
         image_manager.py        # Image loading, transformation state, reset-to-original
     retrieval/
+        base.py                 # Base search engine class
         web_search.py           # PubMed search via NCBI E-utilities
         image_search.py         # NIH Open-i image search
     prompts/
@@ -44,8 +47,8 @@ examples/
     nova/                       # NOVA brain-MRI benchmark (full CLI + evaluation)
     gemex_thinkvg/              # GEMeX visual grounding with RL rewards
     agentclinic_nejm/           # Multi-turn diagnostic reasoning
-    pubmedqa/                   # PubMedQA (verifiers env only)
-    vqa_rad/                    # VQA-RAD (verifiers env only)
+    pubmedqa/                   # PubMedQA (CLI + processor + evaluation)
+    vqa_rad/                    # VQA-RAD (CLI + processor + evaluation)
 environments/
     nova_brain_mri/             # MedMarks-compatible NOVA evaluation environment
 tests/
@@ -83,7 +86,7 @@ uv run python -m src.cli --task localization --model openai/gpt-4o --data-dir ./
 ## Technology Stack
 
 - Python 3.10+, asyncio
-- OpenAI API (OpenRouter, OpenAI) via `openai` SDK
+- OpenAI API (OpenRouter, OpenAI) via `openai` SDK, plus LM Studio for local models
 - PubMed (NCBI E-utilities), Open-i image search
 - minijinja for templating
 - beartype for runtime type validation

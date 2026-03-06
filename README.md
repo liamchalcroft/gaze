@@ -10,7 +10,7 @@ A modular framework for building multi-turn agentic vision-language model system
 - **Tool system** -- extensible registry with visual manipulation (zoom, crop, contrast, threshold, flip, rotate) and search tools (PubMed, Open-i)
 - **Multi-turn agentic loop** -- full tool-calling support with configurable turn limits and JSON-structured output
 - **Task processors** -- abstract base class with dependency injection for prompts, schemas, and validation
-- **Model adapters** -- OpenAI API (including OpenRouter), plus optional HuggingFace local models
+- **Model adapters** -- OpenAI API (including OpenRouter), LM Studio for local models, plus optional HuggingFace adapters
 - **Verifiers integration** -- reward functions and multi-turn environments for RL training
 
 ## Installation
@@ -26,6 +26,8 @@ uv sync
 Subclass `AgenticProcessorBase` and implement four methods:
 
 ```python
+from pathlib import Path
+
 from radiant_harness import AgenticProcessorBase
 
 class MyProcessor(AgenticProcessorBase):
@@ -38,11 +40,17 @@ class MyProcessor(AgenticProcessorBase):
     def get_response_schema(self):
         return {
             "type": "json_schema",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "findings": {"type": "string"},
-                    "continue": {"type": "boolean"}
+            "json_schema": {
+                "name": "analysis_response",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "findings": {"type": "string"},
+                        "continue": {"type": "boolean"}
+                    },
+                    "required": ["findings", "continue"],
+                    "additionalProperties": False,
                 }
             }
         }
@@ -77,8 +85,8 @@ examples/
     nova/                   # NOVA brain-MRI benchmark (fully implemented)
     gemex_thinkvg/          # GEMeX visual grounding with RL rewards
     agentclinic_nejm/       # Multi-turn diagnostic reasoning
-    pubmedqa/               # Medical Q&A (verifiers env only)
-    vqa_rad/                # Radiology VQA (verifiers env only)
+    pubmedqa/               # Medical Q&A (CLI + processor + evaluation)
+    vqa_rad/                # Radiology VQA (CLI + processor + evaluation)
 environments/
     nova_brain_mri/         # MedMarks-compatible NOVA environment
 tests/
@@ -96,11 +104,11 @@ uv run pytest tests/test_tool_registry.py        # specific file
 ## Development
 
 ```bash
-uv sync --group dev        # install dev dependencies
-uv run ruff check .        # lint
-uv run ruff format .       # format
-uv run pyright             # type check
-make check                 # all of the above + tests
+uv sync                          # install all dependencies (dev included by default)
+uv run ruff check .              # lint
+uv run ruff format --check .     # format check
+uv run pyright src/              # type check
+make check                       # all of the above + lock check + tests
 ```
 
 ## Documentation

@@ -19,8 +19,8 @@ The `environments/nova_brain_mri/` package provides a MedMarks-compatible enviro
 ## Installation
 
 ```bash
-# Install radiant-harness with MedMarks dependencies
-pip install radiant-harness[medmarks]
+# Install radiant-harness with MedMarks dependencies (from source)
+pip install -e .[medmarks]
 
 # Install the NOVA brain-MRI environment
 cd environments/nova_brain_mri
@@ -39,19 +39,7 @@ medarc-eval nova-brain-mri -m gpt-4o --use-tools --max-turns 10
 
 ### Via Python API
 
-```python
-import verifiers as vf
-
-env = vf.load_environment(
-    "nova-brain-mri",
-    split="test",
-    task="all",
-    max_turns=10,
-    use_tools=True,
-)
-
-results = env.evaluate(client=openai_client, model="gpt-4o", num_examples=100)
-```
+See [environments/nova_brain_mri/README.md](../environments/nova_brain_mri/README.md) for the Python API and configuration reference.
 
 ### Via Radiant Harness Processor
 
@@ -82,7 +70,7 @@ env = EnvClass()
 | `max_turns` | int | 10 | Maximum conversation turns |
 | `use_tools` | bool | True | Enable visual tools |
 | `use_web_search` | bool | False | Enable PubMed search |
-| `iou_threshold` | float | 0.3 | IoU threshold for localization |
+| `iou_threshold` | float | 0.5 | IoU threshold for localization |
 | `data_dir` | str | None | Custom dataset directory |
 
 ## Reward Functions
