@@ -145,10 +145,15 @@ def extract_completion_text(completion: Any) -> str:
             if isinstance(content, str):
                 return content
 
-            # Handle multimodal content
+            # Handle multimodal content — concatenate ALL text items,
+            # not just the first, so reasoning + answer are both captured.
             if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        return item.get("text", "")
+                texts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                ]
+                if texts:
+                    return "\n".join(texts)
 
     return str(completion or "")

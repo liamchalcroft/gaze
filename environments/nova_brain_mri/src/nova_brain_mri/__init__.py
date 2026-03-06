@@ -41,8 +41,6 @@ class NOVAEnvConfig:
 
     task: NOVATask = "all"
     max_turns: int = 10
-    use_tools: bool = True
-    use_web_search: bool = False
     iou_threshold: float = 0.5
     data_dir: str | None = None
 
@@ -51,8 +49,6 @@ def load(
     split: Split = "test",
     task: NOVATask = "all",
     max_turns: int = 10,
-    use_tools: bool = True,
-    use_web_search: bool = False,
     iou_threshold: float = 0.5,
     data_dir: str | None = None,
     **kwargs: Any,
@@ -65,24 +61,16 @@ def load(
         split: Dataset split to use ("train", "validation", "test")
         task: NOVA task type ("caption", "diagnosis", "localization", "all")
         max_turns: Maximum conversation turns per episode
-        use_tools: Enable visual manipulation tools (zoom, crop, contrast, etc.)
-        use_web_search: Enable PubMed/medical literature search
         iou_threshold: IoU threshold for localization reward
         data_dir: Path to NOVA dataset directory (optional, uses default if None)
         **kwargs: Additional arguments passed to environment
 
     Returns:
         Configured NOVABrainMRIEnv instance
-
-    Example:
-        >>> env = load(split="test", task="diagnosis", max_turns=5)
-        >>> results = env.evaluate(client, "gpt-4o", num_examples=50)
     """
     config = NOVAEnvConfig(
         task=task,
         max_turns=max_turns,
-        use_tools=use_tools,
-        use_web_search=use_web_search,
         iou_threshold=iou_threshold,
         data_dir=data_dir,
     )
@@ -93,12 +81,7 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
     """Multi-turn environment for NOVA brain MRI benchmark.
 
     Implements the verifiers MultiTurnEnv interface for MedMarks evaluation.
-    Supports multi-task evaluation (caption, diagnosis, localization) with
-    optional tool usage for image manipulation and literature search.
-
-    Attributes:
-        config: Environment configuration
-        split: Dataset split being used
+    Supports multi-task evaluation: caption, diagnosis, and localization.
     """
 
     def __init__(
@@ -116,9 +99,7 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         """
         self.config = config or NOVAEnvConfig()
         self.split = split
-        self._processor = None  # Lazy initialization
 
-        # Load dataset
         cases = self._load_cases(split)
         prompts, infos = self._prepare_cases(cases)
 
@@ -135,7 +116,6 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
             dataset=dataset,
             **kwargs,
         )
-        self._cases = cases
 
     def _load_cases(self, split: Split) -> list[dict[str, Any]]:
         """Load NOVA cases from dataset.
@@ -149,18 +129,15 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         if self.config.data_dir:
             data_path = Path(self.config.data_dir) / f"{split}.jsonl"
         else:
-            # Default path relative to package
-            data_path = Path(__file__).parent.parent.parent.parent / "data" / f"nova_{split}.jsonl"
+            # Default path: environments/nova_brain_mri/data/
+            pkg_root = Path(__file__).parent.parent.parent  # environments/nova_brain_mri/
+            data_path = pkg_root / "data" / f"nova_{split}.jsonl"
 
         if not data_path.exists():
-            # Try alternative location in examples/nova/data
-            alt_path = (
-                Path(__file__).parent.parent.parent.parent.parent.parent
-                / "examples"
-                / "nova"
-                / "data"
-                / f"{split}.jsonl"
-            )
+            # Try alternative location in examples/nova/data (monorepo layout)
+            # 5 parents from __init__.py → project root
+            project_root = Path(__file__).parent.parent.parent.parent.parent
+            alt_path = project_root / "examples" / "nova" / "data" / f"nova_{split}.jsonl"
             if alt_path.exists():
                 data_path = alt_path
             else:
@@ -230,14 +207,7 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         return messages
 
     def _get_system_prompt(self) -> str:
-        """Get system prompt for brain MRI analysis.
-
-        Note: use_tools and use_web_search config flags are accepted for
-        forward-compatibility but tool execution is not yet implemented in
-        this standalone MedMarks environment. The system prompt does not
-        advertise tools to avoid misleading models into wasting turns on
-        tool calls that env_response() cannot execute.
-        """
+        """Get system prompt for brain MRI analysis."""
         task_description = {
             "caption": "radiological description and findings",
             "diagnosis": "primary diagnosis with differentials",

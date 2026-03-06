@@ -1,12 +1,4 @@
-"""Tests for NOVA Brain MRI environment reward functions.
-
-Validates:
-- Independence from radiant_harness (no imports)
-- Caption reward uses multiset intersection (Counter, not set)
-- Diagnosis normalization preserves hyphens, expands abbreviations, uses word boundaries
-- Localization reward enforces "bounding_box" key and applies area penalty
-- IoU threshold defaults to 0.5
-"""
+"""Tests for NOVA Brain MRI environment reward functions."""
 
 from __future__ import annotations
 
@@ -16,7 +8,6 @@ from typing import Any
 import pytest
 
 
-# ── Independence check ──────────────────────────────────────────────────────
 def test_no_radiant_harness_imports():
     """rewards.py must not import from radiant_harness."""
     from pathlib import Path
@@ -28,7 +19,6 @@ def test_no_radiant_harness_imports():
 
 
 def test_no_radiant_harness_in_pyproject():
-    """pyproject.toml must not list radiant-harness as a dependency."""
     from pathlib import Path
 
     pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
@@ -36,9 +26,7 @@ def test_no_radiant_harness_in_pyproject():
     assert "radiant-harness" not in source
 
 
-# ── Utility imports work from local _utils ──────────────────────────────────
 def test_utils_importable():
-    """_utils.py utilities should be importable from the package."""
     from nova_brain_mri._utils import (
         compute_iou,
         extract_completion_text,
@@ -50,15 +38,11 @@ def test_utils_importable():
     assert callable(extract_completion_text)
 
 
-# ── Caption reward ──────────────────────────────────────────────────────────
 def _make_completion(response: dict[str, Any]) -> list[dict[str, Any]]:
-    """Helper: wrap a response dict as a verifiers-style completion."""
     return [{"role": "assistant", "content": json.dumps(response)}]
 
 
 class TestCaptionReward:
-    """Caption reward uses multiset (Counter) intersection."""
-
     def test_perfect_match(self):
         from nova_brain_mri.rewards import caption_reward
 
@@ -74,19 +58,13 @@ class TestCaptionReward:
         assert caption_reward("", completion, info) == pytest.approx(0.0)
 
     def test_multiset_not_set(self):
-        """Repeated tokens must affect the score (Counter, not set).
-
-        If using set(), "mild" appearing once vs twice is ignored.
-        With Counter: pred="mild" vs ref="mild mild" → recall=0.5, not 1.0.
-        """
+        """Counter-based: pred="mild" vs ref="mild mild" -> recall=0.5, F1=2/3."""
         from nova_brain_mri.rewards import caption_reward
 
         completion = _make_completion({"caption": "mild"})
         info = {"caption": "mild mild"}
         score = caption_reward("", completion, info)
-        # With Counter: precision=1/1=1.0, recall=1/2=0.5, F1=2/3≈0.667
-        # With set(): precision=1/1=1.0, recall=1/1=1.0, F1=1.0
-        assert score < 0.9, f"Expected < 0.9 (Counter-based), got {score}"
+        assert score < 0.9
         assert score == pytest.approx(2.0 / 3.0, abs=0.01)
 
     def test_invalid_json_returns_zero(self):
@@ -97,105 +75,79 @@ class TestCaptionReward:
         assert caption_reward("", completion, info) == 0.0
 
 
-# ── Diagnosis normalization ─────────────────────────────────────────────────
 class TestDiagnosisNormalization:
-    """Normalization preserves hyphens, expands abbreviations, uses \\b."""
-
     def test_preserves_hyphens(self):
         from nova_brain_mri.rewards import _normalize_diagnosis
 
         result = _normalize_diagnosis("septo-optic dysplasia")
-        assert "-" in result, f"Hyphens should be preserved, got: {result}"
+        assert "-" in result
 
     def test_expands_abbreviation(self):
         from nova_brain_mri.rewards import _normalize_diagnosis
 
-        result = _normalize_diagnosis("SOD")
-        assert "septo-optic dysplasia" in result
+        assert "septo-optic dysplasia" in _normalize_diagnosis("SOD")
 
     def test_expands_avm(self):
         from nova_brain_mri.rewards import _normalize_diagnosis
 
-        result = _normalize_diagnosis("AVM")
-        assert "arteriovenous malformation" in result
+        assert "arteriovenous malformation" in _normalize_diagnosis("AVM")
 
     def test_word_boundary_hedging(self):
-        """'probable' should be stripped but 'improbable' should not."""
         from nova_brain_mri.rewards import _normalize_diagnosis
 
-        # "probable" alone should be removed
         result_probable = _normalize_diagnosis("probable glioma")
         assert "probable" not in result_probable
         assert "glioma" in result_probable
 
-        # "improbable" should NOT be corrupted
         result_improbable = _normalize_diagnosis("improbable diagnosis")
         assert "improbable" in result_improbable
 
     def test_diagnosis_reward_abbreviation_match(self):
-        """Abbreviation in prediction should match full term in reference."""
         from nova_brain_mri.rewards import diagnosis_reward
 
         completion = _make_completion(
             {"diagnosis": {"primary_diagnosis": "AVM", "differential_diagnoses": []}}
         )
         info = {"diagnosis": {"primary": "arteriovenous malformation"}}
-        score = diagnosis_reward("", completion, info)
-        # top1 match (0.6) + coverage 1/1 (0.4) = 1.0
-        assert score == pytest.approx(1.0)
+        assert diagnosis_reward("", completion, info) == pytest.approx(1.0)
 
 
-# ── Localization reward ─────────────────────────────────────────────────────
 class TestLocalizationReward:
-    """Localization reward enforces bounding_box key and applies area penalty."""
-
     def test_perfect_iou(self):
         from nova_brain_mri.rewards import localization_reward_factory
 
         loc_reward = localization_reward_factory(iou_threshold=0.5)
         completion = _make_completion({"localization": [{"bounding_box": [10, 10, 50, 50]}]})
         info = {"boxes": [[10, 10, 50, 50]]}
-        score = loc_reward("", completion, info)
-        assert score == pytest.approx(1.0)
+        assert loc_reward("", completion, info) == pytest.approx(1.0)
 
     def test_rejects_bbox_key_from_predictions(self):
-        """Predictions using "bbox" instead of "bounding_box" should be ignored."""
         from nova_brain_mri.rewards import localization_reward_factory
 
         loc_reward = localization_reward_factory(iou_threshold=0.5)
-        # Use "bbox" key (ground-truth convention, not valid for predictions)
         completion = _make_completion({"localization": [{"bbox": [10, 10, 50, 50]}]})
         info = {"boxes": [[10, 10, 50, 50]]}
-        score = loc_reward("", completion, info)
-        # Should get 0.0 because no valid pred boxes extracted
-        assert score == 0.0
+        assert loc_reward("", completion, info) == 0.0
 
     def test_area_penalty_full_image_box(self):
-        """A box covering the full image should be penalized toward 0."""
         from nova_brain_mri.rewards import localization_reward_factory
 
         loc_reward = localization_reward_factory(iou_threshold=0.1)
-        # Pred box covers 100% of image (0,0 to 100,100 in a 100x100 image)
         completion = _make_completion({"localization": [{"bounding_box": [0, 0, 100, 100]}]})
-        # Ref box is small (should have high IoU with full-image box)
         info = {
             "boxes": [[20, 20, 40, 40]],
             "image_width": 100,
             "image_height": 100,
         }
-        score = loc_reward("", completion, info)
-        # With area penalty: box covers 100% → penalty = 0.0, so score ≈ 0.0
-        assert score < 0.1, f"Full-image box should be penalized, got {score}"
+        assert loc_reward("", completion, info) < 0.1
 
     def test_no_area_penalty_without_dimensions(self):
-        """Without image dimensions, area penalty should not apply."""
         from nova_brain_mri.rewards import localization_reward_factory
 
         loc_reward = localization_reward_factory(iou_threshold=0.5)
         completion = _make_completion({"localization": [{"bounding_box": [10, 10, 50, 50]}]})
-        info = {"boxes": [[10, 10, 50, 50]]}  # No image_width/height
-        score = loc_reward("", completion, info)
-        assert score == pytest.approx(1.0)
+        info = {"boxes": [[10, 10, 50, 50]]}
+        assert loc_reward("", completion, info) == pytest.approx(1.0)
 
     def test_both_empty_returns_one(self):
         from nova_brain_mri.rewards import localization_reward_factory
@@ -214,23 +166,15 @@ class TestLocalizationReward:
         assert loc_reward("", completion, info) == 0.0
 
     def test_default_iou_threshold_is_05(self):
-        """Factory default should be 0.5, matching NOVA ACC50."""
         from nova_brain_mri.rewards import localization_reward_factory
 
-        # A match with IoU=0.4 should fail at default threshold (0.5)
         loc_reward = localization_reward_factory()
-        # Two boxes with partial overlap: IoU ≈ 0.39
         completion = _make_completion({"localization": [{"bounding_box": [0, 0, 50, 50]}]})
         info = {"boxes": [[30, 30, 80, 80]]}
-        score = loc_reward("", completion, info)
-        # IoU of [0,0,50,50] vs [30,30,80,80]:
-        # intersection: [30,30,50,50] = 20*20 = 400
-        # union: 2500 + 2500 - 400 = 4600
-        # IoU = 400/4600 ≈ 0.087 < 0.5, so score = 0.0
-        assert score == 0.0
+        # IoU = 400/4600 ~ 0.087 < 0.5
+        assert loc_reward("", completion, info) == 0.0
 
 
-# ── Config defaults ─────────────────────────────────────────────────────────
 class TestConfigDefaults:
     def test_env_config_iou_default(self):
         from nova_brain_mri import NOVAEnvConfig
@@ -239,55 +183,38 @@ class TestConfigDefaults:
         assert config.iou_threshold == 0.5
 
     def test_load_iou_default(self):
-        """load() signature should default to 0.5."""
         import inspect
 
         from nova_brain_mri import load
 
         sig = inspect.signature(load)
-        iou_param = sig.parameters["iou_threshold"]
-        assert iou_param.default == 0.5
+        assert sig.parameters["iou_threshold"].default == 0.5
 
 
-# ── System prompt: no phantom tool descriptions (#8) ────────────────────────
 class TestSystemPromptNoPhantomTools:
-    """System prompt must not describe tools that env_response cannot execute."""
-
     def _get_prompt(self, **config_kwargs: Any) -> str:
-        """Build a system prompt via NOVABrainMRIEnv._get_system_prompt."""
-        from nova_brain_mri import NOVAEnvConfig
-
-        # Instantiate config without creating the full env (avoids dataset load)
-        from nova_brain_mri import NOVABrainMRIEnv
+        from nova_brain_mri import NOVABrainMRIEnv, NOVAEnvConfig
 
         env = object.__new__(NOVABrainMRIEnv)
         env.config = NOVAEnvConfig(**config_kwargs)
         return env._get_system_prompt()
 
-    def test_no_tool_names_in_prompt_with_tools_enabled(self):
-        prompt = self._get_prompt(use_tools=True)
-        for tool_name in ["zoom", "crop", "adjust_contrast", "threshold", "reset"]:
-            assert tool_name not in prompt, (
-                f"System prompt mentions '{tool_name}' but env_response does not execute tools"
-            )
+    def test_no_tool_names_in_prompt(self):
+        prompt = self._get_prompt()
+        for name in ["zoom", "crop", "adjust_contrast", "threshold", "reset"]:
+            assert name not in prompt
 
-    def test_no_search_names_in_prompt_with_search_enabled(self):
-        prompt = self._get_prompt(use_web_search=True)
+    def test_no_search_names_in_prompt(self):
+        prompt = self._get_prompt()
         for name in ["search_web", "search_images", "PubMed"]:
-            assert name not in prompt, (
-                f"System prompt mentions '{name}' but env_response does not execute search"
-            )
+            assert name not in prompt
 
     def test_no_use_tools_instruction(self):
-        """Final instruction should not say 'Use tools'."""
-        prompt = self._get_prompt(use_tools=True, use_web_search=True)
+        prompt = self._get_prompt()
         assert "Use tools" not in prompt
 
 
-# ── State: no dead tool_uses counter (#8) ───────────────────────────────────
 class TestStateCleanliness:
-    """build_initial_state should not contain dead counters."""
-
     def test_no_tool_uses_in_state(self):
         from nova_brain_mri import NOVABrainMRIEnv, NOVAEnvConfig
 
@@ -300,12 +227,8 @@ class TestStateCleanliness:
         assert "tool_uses" not in state
 
 
-# ── CLI --schema flag (#9) ──────────────────────────────────────────────────
 class TestCLISchemaFlag:
-    """--schema flag should be wired up and reachable."""
-
     def test_schema_flag_in_parser(self):
-        """parse_args should accept --schema without error."""
         import sys
         from unittest.mock import patch
 
@@ -326,7 +249,6 @@ class TestCLISchemaFlag:
         assert schema["properties"]["iou_threshold"]["default"] == 0.5
 
     def test_model_not_required_with_schema(self):
-        """--schema should work without --model."""
         import sys
         from unittest.mock import patch
 
@@ -338,10 +260,7 @@ class TestCLISchemaFlag:
         assert args.model is None
 
 
-# ── _utils parity ──────────────────────────────────────────────────────────
 class TestUtilsParity:
-    """Inlined _utils functions produce same results as radiant_harness originals."""
-
     def test_compute_iou_basic(self):
         from nova_brain_mri._utils import compute_iou
 
@@ -351,22 +270,18 @@ class TestUtilsParity:
     def test_compute_iou_partial(self):
         from nova_brain_mri._utils import compute_iou
 
-        # 50% overlap
         iou = compute_iou([0, 0, 10, 10], [5, 0, 15, 10])
-        # intersection: [5,0,10,10] = 50, union: 100+100-50=150
         assert iou == pytest.approx(50 / 150)
 
     def test_extract_json_from_text_basic(self):
         from nova_brain_mri._utils import extract_json_from_text
 
-        result = extract_json_from_text('{"key": "value"}')
-        assert result == {"key": "value"}
+        assert extract_json_from_text('{"key": "value"}') == {"key": "value"}
 
     def test_extract_json_from_text_markdown(self):
         from nova_brain_mri._utils import extract_json_from_text
 
-        result = extract_json_from_text('```json\n{"key": "value"}\n```')
-        assert result == {"key": "value"}
+        assert extract_json_from_text('```json\n{"key": "value"}\n```') == {"key": "value"}
 
     def test_extract_json_from_text_embedded(self):
         from nova_brain_mri._utils import extract_json_from_text
@@ -387,3 +302,145 @@ class TestUtilsParity:
             {"role": "assistant", "content": "result text"},
         ]
         assert extract_completion_text(messages) == "result text"
+
+    def test_extract_completion_text_multimodal_concatenates_all(self):
+        from nova_brain_mri._utils import extract_completion_text
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me think about this."},
+                    {"type": "text", "text": '{"diagnosis": "glioma"}'},
+                ],
+            }
+        ]
+        result = extract_completion_text(messages)
+        assert '{"diagnosis": "glioma"}' in result
+        assert "Let me think" in result
+        assert "\n" in result
+
+
+class TestDiagnosisRewardPrimaryOnly:
+    def test_correct_differential_scores_zero(self):
+        from nova_brain_mri.rewards import diagnosis_reward
+
+        completion = _make_completion(
+            {
+                "diagnosis": {
+                    "primary_diagnosis": "wrong diagnosis",
+                    "differential_diagnoses": [{"diagnosis": "glioma"}],
+                }
+            }
+        )
+        info = {"diagnosis": "glioma"}
+        assert diagnosis_reward("", completion, info) == pytest.approx(0.0)
+
+    def test_correct_primary_scores_one(self):
+        from nova_brain_mri.rewards import diagnosis_reward
+
+        completion = _make_completion(
+            {
+                "diagnosis": {
+                    "primary_diagnosis": "glioma",
+                    "differential_diagnoses": [{"diagnosis": "meningioma"}],
+                }
+            }
+        )
+        info = {"diagnosis": "glioma"}
+        assert diagnosis_reward("", completion, info) == pytest.approx(1.0)
+
+
+class TestIoUCrossImplementation:
+    _BOX_PAIRS = [
+        ([0, 0, 10, 10], [0, 0, 10, 10], 1.0),
+        ([0, 0, 10, 10], [20, 20, 30, 30], 0.0),
+        ([0, 0, 10, 10], [5, 0, 15, 10], 50 / 150),
+        ([0, 0, 100, 100], [50, 50, 150, 150], 2500 / 17500),
+        ([10, 10, 50, 50], [10, 10, 50, 50], 1.0),
+        ([0, 0, 10, 10], [10, 10, 20, 20], 0.0),
+        ([0, 0, 10, 10], [9, 9, 19, 19], 1 / 199),
+        ([50, 50, 10, 10], [10, 10, 50, 50], 1.0),
+        ([100, 100, 0, 0], [50, 50, 150, 150], 2500 / 17500),
+    ]
+
+    @pytest.mark.parametrize("box1,box2,expected", _BOX_PAIRS)
+    def test_iou_values(self, box1, box2, expected):
+        from nova_brain_mri._utils import compute_iou
+
+        assert compute_iou(box1, box2) == pytest.approx(expected, abs=1e-6)
+
+
+class TestNormalizeDiagnosisParity:
+    _CASES = [
+        ("SOD", "septo-optic dysplasia"),
+        ("AVM", "arteriovenous malformation"),
+        ("GBM", "glioblastoma multiforme"),
+        ("MS", "multiple sclerosis"),
+        ("NPH", "normal pressure hydrocephalus"),
+        ("possible glioma", "glioma"),
+        ("probable meningioma", "meningioma"),
+        ("likely AVM", "arteriovenous malformation"),
+        ("suspected MS", "multiple sclerosis"),
+        ("septo-optic dysplasia", "septo-optic dysplasia"),
+        ("improbable diagnosis", "improbable diagnosis"),
+    ]
+
+    @pytest.mark.parametrize("input_,expected", _CASES)
+    def test_normalization(self, input_, expected):
+        from nova_brain_mri.rewards import _normalize_diagnosis
+
+        assert _normalize_diagnosis(input_) == expected
+
+
+class TestEndToEndRewardParity:
+    _COMPLETION = _make_completion(
+        {
+            "caption": "Axial T2 FLAIR showing periventricular white matter lesions",
+            "diagnosis": {
+                "primary_diagnosis": "multiple sclerosis",
+                "differential_diagnoses": [{"diagnosis": "ADEM"}],
+            },
+            "localization": [{"bounding_box": [120, 80, 180, 140]}],
+            "continue": False,
+        }
+    )
+
+    def test_caption_reward_pinned(self):
+        from nova_brain_mri.rewards import caption_reward
+
+        info = {"caption": "Axial T2 FLAIR showing periventricular white matter lesions"}
+        assert caption_reward("", self._COMPLETION, info) == pytest.approx(1.0)
+
+    def test_caption_reward_partial(self):
+        from nova_brain_mri.rewards import caption_reward
+
+        info = {"caption": "Axial FLAIR showing some lesions"}
+        score = caption_reward("", self._COMPLETION, info)
+        assert 0.0 < score < 1.0
+
+    def test_diagnosis_reward_pinned(self):
+        from nova_brain_mri.rewards import diagnosis_reward
+
+        info = {"diagnosis": "multiple sclerosis"}
+        assert diagnosis_reward("", self._COMPLETION, info) == pytest.approx(1.0)
+
+    def test_diagnosis_reward_ms_abbreviation(self):
+        from nova_brain_mri.rewards import diagnosis_reward
+
+        info = {"diagnosis": "MS"}
+        assert diagnosis_reward("", self._COMPLETION, info) == pytest.approx(1.0)
+
+    def test_localization_reward_pinned(self):
+        from nova_brain_mri.rewards import localization_reward_factory
+
+        loc_reward = localization_reward_factory(iou_threshold=0.5)
+        info = {"boxes": [[120, 80, 180, 140]]}
+        assert loc_reward("", self._COMPLETION, info) == pytest.approx(1.0)
+
+    def test_localization_reward_no_match(self):
+        from nova_brain_mri.rewards import localization_reward_factory
+
+        loc_reward = localization_reward_factory(iou_threshold=0.5)
+        info = {"boxes": [[300, 300, 400, 400]]}
+        assert loc_reward("", self._COMPLETION, info) == pytest.approx(0.0)

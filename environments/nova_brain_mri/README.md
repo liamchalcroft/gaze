@@ -24,7 +24,7 @@ pip install -e .
 ```bash
 medarc-eval nova-brain-mri -m gpt-4o -n 100
 medarc-eval nova-brain-mri -m gpt-4o --task diagnosis -n 50
-medarc-eval nova-brain-mri -m gpt-4o --use-tools --max-turns 10
+medarc-eval nova-brain-mri -m gpt-4o --max-turns 10
 ```
 
 ### Via Python API
@@ -37,26 +37,9 @@ env = vf.load_environment(
     split="test",
     task="all",
     max_turns=10,
-    use_tools=True,
 )
 
 results = env.evaluate(client=openai_client, model="gpt-4o", num_examples=100)
-```
-
-### Via Radiant Harness
-
-```python
-from examples.nova.src.processor import NOVAAgenticProcessor
-
-processor = NOVAAgenticProcessor(
-    model_name="openai/gpt-4o",
-    use_tools=True,
-    use_web_search=True,
-    max_turns=10,
-)
-
-EnvClass = processor.as_verifiers_env(dataset_path="data/nova_test.jsonl")
-env = EnvClass()
 ```
 
 ## Configuration
@@ -66,9 +49,7 @@ env = EnvClass()
 | `split` | str | `"test"` | Dataset split |
 | `task` | str | `"all"` | caption, diagnosis, localization, all |
 | `max_turns` | int | 10 | Maximum conversation turns |
-| `use_tools` | bool | True | Enable visual tools |
-| `use_web_search` | bool | False | Enable PubMed search |
-| `iou_threshold` | float | 0.3 | IoU threshold for localization |
+| `iou_threshold` | float | 0.5 | IoU threshold for localization (NOVA ACC50) |
 | `data_dir` | str | None | Custom data directory |
 
 ## Response Schema

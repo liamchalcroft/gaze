@@ -2,7 +2,7 @@
 
 Provides verifiers-compatible reward functions for:
 - Caption: Token F1 similarity (multiset intersection)
-- Diagnosis: Top-k accuracy with medical term normalization
+- Diagnosis: Top-1 accuracy with medical term normalization
 - Localization: IoU-based detection reward with area penalty
 
 These can be used individually or combined for multi-task evaluation.
@@ -43,6 +43,8 @@ _ABBREVIATION_MAPPING: dict[str, str] = {
     "da": "diffuse axonal injury",
     "sah": "subarachnoid hemorrhage",
     "ich": "intracerebral hemorrhage",
+    "ms": "multiple sclerosis",
+    "nph": "normal pressure hydrocephalus",
 }
 
 _DASH_PATTERN = re.compile(r"\s*[–—]\s*")
@@ -191,21 +193,20 @@ def diagnosis_reward(
     diagnosis = response.get("diagnosis", {})
     if isinstance(diagnosis, str):
         pred_primary = diagnosis
-        pred_list = [diagnosis]
     else:
-        pred_primary = diagnosis.get("primary_diagnosis", "")
-        pred_list = [pred_primary]
-
-        differentials = diagnosis.get("differential_diagnoses", [])
-        for diff in differentials:
-            if isinstance(diff, dict):
-                pred_list.append(diff.get("diagnosis", ""))
-            elif isinstance(diff, str):
-                pred_list.append(diff)
+        pred_primary = diagnosis.get(
+            "primary_diagnosis",
+            diagnosis.get("primary", diagnosis.get("diagnosis", "")),
+        )
 
     ref_diagnosis = info.get("diagnosis", info.get("gold_diagnosis", ""))
     if isinstance(ref_diagnosis, dict):
         ref_diagnosis = ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", ""))
+
+    # Match examples/nova: score primary prediction against reference only.
+    # Differentials are not included to avoid inflating scores relative to
+    # the examples/nova pipeline.
+    pred_list = [pred_primary] if isinstance(pred_primary, str) else list(pred_primary)
     ref_list = [ref_diagnosis] if isinstance(ref_diagnosis, str) else list(ref_diagnosis)
 
     if not pred_list or not ref_list:
@@ -368,53 +369,6 @@ def localization_reward_factory(
     return localization_reward
 
 
-def combined_reward_factory(
-    caption_weight: float = 0.33,
-    diagnosis_weight: float = 0.34,
-    localization_weight: float = 0.33,
-    iou_threshold: float = 0.5,
-):
-    """Create combined reward function for all NOVA tasks.
-
-    Args:
-        caption_weight: Weight for caption reward
-        diagnosis_weight: Weight for diagnosis reward
-        localization_weight: Weight for localization reward
-        iou_threshold: IoU threshold for localization (default 0.5 per NOVA eval)
-
-    Returns:
-        Combined reward function
-    """
-    loc_reward = localization_reward_factory(iou_threshold)
-
-    def combined_reward(
-        prompt: str,
-        completion: Any,
-        info: dict[str, Any],
-    ) -> float:
-        """Compute combined NOVA reward.
-
-        Args:
-            prompt: Input prompt
-            completion: Model completion
-            info: Case info with ground truth
-
-        Returns:
-            Weighted combined score in [0.0, 1.0]
-        """
-        cap_score = caption_reward(prompt, completion, info)
-        diag_score = diagnosis_reward(prompt, completion, info)
-        loc_score = loc_reward(prompt, completion, info)
-
-        return (
-            caption_weight * cap_score
-            + diagnosis_weight * diag_score
-            + localization_weight * loc_score
-        )
-
-    return combined_reward
-
-
 def create_nova_rubric(
     task: NOVATask = "all",
     iou_threshold: float = 0.5,
@@ -450,7 +404,6 @@ def create_nova_rubric(
 
 __all__ = [
     "caption_reward",
-    "combined_reward_factory",
     "create_nova_rubric",
     "diagnosis_reward",
     "localization_reward_factory",

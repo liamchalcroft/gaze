@@ -94,24 +94,6 @@ def parse_args() -> argparse.Namespace:
         help="Maximum conversation turns",
     )
     parser.add_argument(
-        "--use-tools",
-        action="store_true",
-        default=True,
-        help="Enable visual tools",
-    )
-    parser.add_argument(
-        "--no-tools",
-        dest="use_tools",
-        action="store_false",
-        help="Disable visual tools",
-    )
-    parser.add_argument(
-        "--use-web-search",
-        action="store_true",
-        default=False,
-        help="Enable PubMed search",
-    )
-    parser.add_argument(
         "--iou-threshold",
         type=float,
         default=0.5,
@@ -141,7 +123,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--schema",
         action="store_true",
-        default=False,
         help="Print environment configuration schema and exit",
     )
 
@@ -168,8 +149,10 @@ def get_api_client(args: argparse.Namespace) -> Any:
     # Use OpenRouter if model has provider prefix
     if "/" in args.model and not base_url:
         base_url = "https://openrouter.ai/api/v1"
-        if not os.environ.get("OPENROUTER_API_KEY") and os.environ.get("OPENAI_API_KEY"):
-            api_key = os.environ.get("OPENROUTER_API_KEY", api_key)
+        # Prefer OPENROUTER_API_KEY when routing through OpenRouter
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        if openrouter_key:
+            api_key = openrouter_key
 
     return OpenAI(api_key=api_key, base_url=base_url)
 
@@ -190,8 +173,6 @@ def print_env_schema() -> None:
                 "default": "all",
             },
             "max_turns": {"type": "integer", "default": 10},
-            "use_tools": {"type": "boolean", "default": True},
-            "use_web_search": {"type": "boolean", "default": False},
             "iou_threshold": {"type": "number", "default": 0.5},
             "data_dir": {"type": "string", "default": None},
         },
@@ -314,8 +295,6 @@ def main() -> int:
         split=args.split,
         task=args.task,
         max_turns=args.max_turns,
-        use_tools=args.use_tools,
-        use_web_search=args.use_web_search,
         iou_threshold=args.iou_threshold,
         data_dir=args.data_dir,
     )
@@ -323,7 +302,6 @@ def main() -> int:
     if args.verbose:
         print(f"Loaded NOVA environment: {len(env.dataset)} examples")
         print(f"Task: {args.task}, Max turns: {args.max_turns}")
-        print(f"Tools: {args.use_tools}, Web search: {args.use_web_search}")
 
     # Run evaluation
     results = asyncio.run(
