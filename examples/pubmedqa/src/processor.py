@@ -178,13 +178,6 @@ class PubmedQAProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             "",
         ]
 
-        if self.use_web_search:
-            prompt_parts.extend([
-                "You have access to PubMed search to find additional supporting evidence.",
-                "Use search_web tool if the provided context is insufficient.",
-                "",
-            ])
-
         # Add MeSH terms if available
         meshes = metadata.get("meshes", [])
         if meshes:

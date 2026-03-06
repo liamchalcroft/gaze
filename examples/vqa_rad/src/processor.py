@@ -196,35 +196,6 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             "",
         ]
 
-        if self.use_tools:
-            prompt_parts.extend(
-                [
-                    "You have access to visual tools to examine the image more closely:",
-                    "- Use 'zoom' to magnify regions of interest",
-                    "- Use 'crop' to focus on specific areas",
-                    "- Use 'adjust_brightness'/'adjust_contrast' for window level/width control",
-                    "- Use 'adjust_sharpness' for edge enhancement",
-                    "- Use 'window_level' with clinical presets (brain, bone, soft_tissue, etc.)",
-                    "- Use 'threshold' to highlight intensity ranges",
-                    "- Use 'equalize_histogram'/'adaptive_equalize' for contrast equalization",
-                    "- Use 'detect_edges' for lesion boundary detection",
-                    "- Use 'get_intensity_stats' for quantitative analysis",
-                    "- Use 'measure' to measure distances between points",
-                    "- Use 'show_grid' for spatial reference",
-                    "",
-                ]
-            )
-
-        if self.use_web_search:
-            prompt_parts.extend(
-                [
-                    "You can also search medical literature for reference:",
-                    "- Use 'search_web' to find relevant diagnostic criteria",
-                    "- Use 'search_images' to find similar reference cases",
-                    "",
-                ]
-            )
-
         # Add image dimensions if available
         if images:
             img = images[0]

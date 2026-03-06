@@ -192,15 +192,13 @@ def combine_prompts(
         return (
             f"{system_prompt}\n\n"
             f"<analysis_instructions>\n{task_prompt}\n"
-            f"</analysis_instructions>\n\n"
-            f"Provide your complete analysis in this single response."
+            f"</analysis_instructions>"
         )
     if mode_enum == AnalysisMode.AGENTIC:
         return (
             f"{system_prompt}\n\n"
             f"<agentic_analysis_instructions>\n{task_prompt}\n"
-            f"</agentic_analysis_instructions>\n\n"
-            f"Begin your agentic analysis process."
+            f"</agentic_analysis_instructions>"
         )
 
     assert_never(mode_enum)
@@ -221,13 +219,15 @@ def create_prompt(
         context: Dictionary of variables for template rendering.
             Standard context variables for generic harness templates:
             - domain_expertise: Domain-specific expertise description
-            - tool_documentation: Generated documentation for available tools
             - analysis_workflow: Domain-specific analysis workflow steps
             - task_instructions: The specific task to perform
             - image_info: Information about the image (dimensions, etc.)
             - context: Additional context (e.g., clinical history)
             - output_format: Description of expected output format
-            - image_path: Path to the image being analyzed
+
+            Note: Tool documentation is injected automatically by
+            ``_run_analysis()`` from the ``ToolRegistry`` — do NOT pass
+            it as a template context variable.
         template_name: Name of the task template (default: 'task.jinja')
 
     Returns:
@@ -235,17 +235,13 @@ def create_prompt(
 
     Example:
         from radiant_harness.prompts import create_prompt
-        from radiant_harness.tools import ToolRegistry
 
-        registry = ToolRegistry(tools=my_tools)
         prompt = create_prompt(
             prompts_dir=Path("my_prompts"),
             mode="agentic",
             context={
                 "domain_expertise": "You are an expert radiologist...",
-                "tool_documentation": registry.get_documenter().generate_prompt_documentation(),
                 "task_instructions": "Analyze this brain MRI...",
-                "image_path": "/path/to/image.png",
             },
         )
     """

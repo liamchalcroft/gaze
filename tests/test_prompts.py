@@ -156,7 +156,6 @@ def test_base_templates_render_with_full_context(mode: str) -> None:
     """Base templates should render all sections when full context is provided."""
     context = {
         "domain_expertise": "Expert radiologist",
-        "tool_documentation": "zoom(), crop()",
         "analysis_workflow": "1. Scan 2. Analyze",
         "task_instructions": "Analyze this image",
         "images": [],
@@ -194,11 +193,9 @@ def test_nova_agentic_task_renders() -> None:
         "img_path": "/data/brain.png",
         "clinical_history": "Headache for 3 weeks",
         "enable_visual_tools": True,
-        "enable_web_search": True,
     }
     result = load_template(NOVA_PROMPTS / "agentic" / "task.jinja", ctx)
     assert "512" in result
-    # img_path is no longer rendered in the template (removed filesystem paths from prompts)
     assert "<clinical_history>" in result
     assert "Headache for 3 weeks" in result
 
@@ -211,7 +208,9 @@ def test_nova_agentic_task_requires_width() -> None:
 def test_nova_single_turn_system_renders() -> None:
     result = load_template(NOVA_PROMPTS / "single_turn" / "system.jinja", {})
     assert "neuroradiologist" in result
-    assert "Tools are not available in this mode" in result
+    # Single-turn template should not hardcode tool availability claims;
+    # tool docs are injected by _run_analysis() based on actual config.
+    assert "single response" in result
 
 
 def test_nova_single_turn_task_renders() -> None:
@@ -243,3 +242,164 @@ def test_nova_single_turn_task_with_clinical_history() -> None:
 def test_nova_single_turn_task_requires_width() -> None:
     with pytest.raises(TemplateError):
         load_template(NOVA_PROMPTS / "single_turn" / "task.jinja", {})
+
+
+# ---------------------------------------------------------------------------
+# Integration: combine_prompts no longer appends trailing instructions
+# ---------------------------------------------------------------------------
+
+
+def test_combine_prompts_agentic_no_trailing_begin() -> None:
+    """combine_prompts should NOT append its own 'Begin' instruction."""
+    result = combine_prompts("SYS", "TASK", "agentic")
+    # The result should end with the closing tag, not a redundant instruction
+    assert result.rstrip().endswith("</agentic_analysis_instructions>")
+
+
+def test_combine_prompts_single_turn_no_trailing_instruction() -> None:
+    """combine_prompts should NOT append 'Provide your complete analysis'."""
+    result = combine_prompts("SYS", "TASK", "single_turn")
+    assert result.rstrip().endswith("</analysis_instructions>")
+
+
+# ---------------------------------------------------------------------------
+# Integration: NOVA agentic template does not duplicate POLICY content
+# ---------------------------------------------------------------------------
+
+
+def test_nova_agentic_task_no_duplicate_continue_instructions() -> None:
+    """NOVA task template should not have its own multi-turn strategy section.
+
+    The POLICY block injected by _run_analysis() is the canonical source
+    for 'continue' field instructions.
+    """
+    ctx = {"width": 512, "height": 384}
+    result = load_template(NOVA_PROMPTS / "agentic" / "task.jinja", ctx)
+    # The template should not contain a standalone "Multi-turn Strategy" section
+    assert "**Multi-turn Strategy:**" not in result
+    # But the output format JSON example should still reference 'continue'
+    assert '"continue"' in result
+
+
+def test_nova_agentic_task_no_hardcoded_search_tool_signatures() -> None:
+    """NOVA task template should not hardcode search tool parameter signatures.
+
+    Tool documentation is auto-injected by _run_analysis().
+    """
+    ctx = {
+        "width": 512,
+        "height": 384,
+        "enable_visual_tools": True,
+        "enable_web_search": True,
+    }
+    result = load_template(NOVA_PROMPTS / "agentic" / "task.jinja", ctx)
+    assert "search_web(query, search_type)" not in result
+    assert "search_images(query, modality, body_part)" not in result
+
+
+# ---------------------------------------------------------------------------
+# Integration: tool documentation auto-generation
+# ---------------------------------------------------------------------------
+
+
+def test_tool_documenter_generates_nonempty_docs() -> None:
+    """ToolDocumenter.generate_prompt_documentation() returns non-empty string
+    when tools are registered — this is what _run_analysis() injects.
+    """
+    from radiant_harness.tools import create_visual_tools
+
+    tools = create_visual_tools()
+    from radiant_harness.tools.registry import ToolDocumenter
+
+    documenter = ToolDocumenter(tools)
+    docs = documenter.generate_prompt_documentation()
+    assert len(docs) > 100
+    # Should mention at least a few core tools
+    assert "zoom" in docs
+    assert "crop" in docs
+    assert "reset" in docs
+
+
+def test_tool_documenter_covers_all_visual_tools() -> None:
+    """Auto-generated tool docs should include ALL registered visual tools."""
+    from radiant_harness.tools import create_visual_tools
+    from radiant_harness.tools.registry import ToolDocumenter
+
+    tools = create_visual_tools()
+    documenter = ToolDocumenter(tools)
+    docs = documenter.generate_prompt_documentation()
+    for tool in tools:
+        assert tool.name in docs, f"Tool '{tool.name}' missing from auto-generated docs"
+
+
+def test_critical_tools_in_nova_template_guidance() -> None:
+    """NOVA agentic task template's Tool Strategy should reference safety-critical tools.
+
+    Tools that modify coordinate/intensity space need explicit guidance
+    about reset() and coordinate system implications.
+    """
+    ctx = {"width": 512, "height": 384, "enable_visual_tools": True}
+    result = load_template(NOVA_PROMPTS / "agentic" / "task.jinja", ctx)
+    # Coordinate-modifying tools should be mentioned with reset warnings
+    for tool in ("crop", "zoom", "symmetry_diff", "detect_edges", "threshold"):
+        assert tool in result, f"Critical tool '{tool}' missing from NOVA template guidance"
+    # Reset instruction must be present
+    assert "reset()" in result
+
+
+# ---------------------------------------------------------------------------
+# Integration: NOVA processor context variable contract
+# ---------------------------------------------------------------------------
+
+
+def test_nova_agentic_renders_with_processor_context() -> None:
+    """Simulate the full context dict that NOVAAgenticProcessor passes."""
+    ctx = {
+        "width": 512,
+        "height": 384,
+        "image_id": "case_001.png",
+        "img_path": "/data/case_001.png",
+        "images": [],
+        "enable_visual_tools": True,
+        "enable_web_search": True,
+        "clinical_history": "Progressive headache",
+        "has_images": True,
+        "num_images": 1,
+        "policy": {"max_turns": 10, "requires_continue": True},
+    }
+    result = create_prompt(
+        prompts_dir=NOVA_PROMPTS,
+        mode="agentic",
+        context=ctx,
+        template_name="task.jinja",
+    )
+    assert "neuroradiologist" in result
+    assert "512" in result
+    assert "Progressive headache" in result
+    assert "Coordinate Space Warning" in result
+
+
+def test_nova_single_turn_renders_with_processor_context() -> None:
+    """Simulate the full context dict for single-turn mode."""
+    ctx = {
+        "width": 256,
+        "height": 256,
+        "image_id": "case_002.png",
+        "img_path": "/data/case_002.png",
+        "images": [],
+        "enable_visual_tools": False,
+        "enable_web_search": False,
+        "clinical_history": "",
+        "has_images": True,
+        "num_images": 1,
+        "policy": {"max_turns": 1, "requires_continue": False},
+    }
+    result = create_prompt(
+        prompts_dir=NOVA_PROMPTS,
+        mode="single_turn",
+        context=ctx,
+        template_name="task.jinja",
+    )
+    assert "neuroradiologist" in result
+    assert "256" in result
+    assert '"continue": false' in result

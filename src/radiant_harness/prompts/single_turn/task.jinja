@@ -1,6 +1,8 @@
-{# GENERIC SINGLE-TURN TASK PROMPT - Template for single-response analysis #}
+{# GENERIC SINGLE-TURN TASK PROMPT - Reference template for single-response analysis #}
 {# Supports text-only, single image, and multi-image input modes. #}
-{# Specific tasks are defined by the dataset implementation. #}
+{# Dataset-specific implementations typically provide their own task templates. #}
+{# The "continue" field instruction is injected by _run_analysis() as a POLICY #}
+{# block — do NOT duplicate here. #}
 {#
   Required variables: (none — all are optional)
   Optional variables:
@@ -45,4 +47,4 @@
 {{ output_format }}
 {% endif %}
 
-Provide your complete analysis in a single response. Set "continue": false.
+Provide your complete analysis in a single response.

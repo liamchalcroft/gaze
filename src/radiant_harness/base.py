@@ -13,6 +13,7 @@ from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncIterator
 from collections.abc import Callable
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,9 +23,11 @@ from beartype.roar import BeartypeException
 from loguru import logger
 from PIL import Image
 
+from radiant_harness._frozen import deep_thaw
 from radiant_harness.config import AgenticConfig
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import AgenticProcessingError
+from radiant_harness.exceptions import SchemaValidationError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
@@ -57,6 +60,27 @@ _IDLE_TOOL_TURNS_LIMIT = 3
 # - rotate: pixel coordinates shift (90/270° also swaps dimensions)
 # - flip_horizontal/flip_vertical: mirrors coordinate axes
 _COORD_MODIFYING_TOOLS = frozenset({"crop", "zoom", "rotate", "flip_horizontal", "flip_vertical"})
+
+# Tools that modify the image intensity space. After these, pixel values
+# no longer represent original tissue intensities — quantitative
+# measurements (get_intensity_stats, intensity_profile) reflect the
+# transformed data.
+_INTENSITY_MODIFYING_TOOLS = frozenset(
+    {
+        "threshold",
+        "window_level",
+        "equalize_histogram",
+        "adaptive_equalize",
+        "invert",
+        "detect_edges",
+        "symmetry_diff",
+        "morphological",
+        "denoise",
+        "adjust_contrast",
+        "adjust_brightness",
+        "adjust_sharpness",
+    }
+)
 
 
 def _make_boundary() -> str:
@@ -249,6 +273,8 @@ class AgenticProcessorBase(ABC):
             self._disabled_tools.update(["search_web", "search_images"])
 
         self._model_adapter: AdapterProtocol | None = None
+        self._shared_web_search_manager = None
+        self._shared_image_search_manager = None
 
     @beartype
     def _ensure_initialized(self) -> None:
@@ -267,6 +293,32 @@ class AgenticProcessorBase(ABC):
                     enable_caching=self.enable_caching,
                 )
 
+    def _get_shared_web_search_manager(self):
+        if self._shared_web_search_manager is None:
+            from radiant_harness.retrieval.web_search import WebSearchManager
+
+            self._shared_web_search_manager = WebSearchManager()
+        return self._shared_web_search_manager
+
+    def _get_shared_image_search_manager(self):
+        if self._shared_image_search_manager is None:
+            from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+
+            self._shared_image_search_manager = MedicalImageSearchManager()
+        return self._shared_image_search_manager
+
+    async def aclose(self) -> None:
+        """Close processor-owned resources that are reused across analyses."""
+        close_tasks: list[asyncio.Task[None]] = []
+        if self._shared_web_search_manager is not None:
+            close_tasks.append(asyncio.create_task(self._shared_web_search_manager.close()))
+            self._shared_web_search_manager = None
+        if self._shared_image_search_manager is not None:
+            close_tasks.append(asyncio.create_task(self._shared_image_search_manager.close()))
+            self._shared_image_search_manager = None
+        if close_tasks:
+            await asyncio.gather(*close_tasks)
+
     @beartype
     def _create_tool_registry(
         self,
@@ -282,10 +334,22 @@ class AgenticProcessorBase(ABC):
 
         Subclasses can override to customize available tools.
         """
+        web_search_manager = None
+        image_search_manager = None
         if not images:
             if self.use_web_search:
                 tools = create_search_tools(self._disabled_tools)
-                return ToolRegistry(image_path=None, tools=tools)
+                tool_names = {tool.name for tool in tools}
+                if "search_web" in tool_names:
+                    web_search_manager = self._get_shared_web_search_manager()
+                if "search_images" in tool_names:
+                    image_search_manager = self._get_shared_image_search_manager()
+                return ToolRegistry(
+                    image_path=None,
+                    tools=tools,
+                    web_search_manager=web_search_manager,
+                    image_search_manager=image_search_manager,
+                )
             return None
 
         tools: list[Tool] = []
@@ -299,6 +363,12 @@ class AgenticProcessorBase(ABC):
         if not tools:
             return None
 
+        tool_names = {tool.name for tool in tools}
+        if "search_web" in tool_names:
+            web_search_manager = self._get_shared_web_search_manager()
+        if "search_images" in tool_names:
+            image_search_manager = self._get_shared_image_search_manager()
+
         if len(images) > 1:
             logger.warning(
                 f"Tool registry only supports a single active image; "
@@ -311,7 +381,11 @@ class AgenticProcessorBase(ABC):
         # transfer_ownership=True avoids an extra ~12MB copy; the
         # ImageInput.pil_image reference is not used after this point.
         if active_image.pil_image is not None:
-            registry = ToolRegistry(tools=tools)
+            registry = ToolRegistry(
+                tools=tools,
+                web_search_manager=web_search_manager,
+                image_search_manager=image_search_manager,
+            )
             mgr = registry.get_image_manager()
             mgr.set_preloaded_image(
                 active_image.pil_image,
@@ -322,7 +396,12 @@ class AgenticProcessorBase(ABC):
                 mgr.original_encoding = active_image.encoded
             return registry
 
-        return ToolRegistry(image_path=active_image.path, tools=tools)
+        return ToolRegistry(
+            image_path=active_image.path,
+            tools=tools,
+            web_search_manager=web_search_manager,
+            image_search_manager=image_search_manager,
+        )
 
     @abstractmethod
     def get_system_prompt(
@@ -513,6 +592,18 @@ class AgenticProcessorBase(ABC):
         ]
         system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
+        if tool_registry and self.max_turns > 1:
+            tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
+            if tool_docs:
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    f"AVAILABLE TOOLS:\n"
+                    f"You have access to the following tools through function calling. "
+                    f"Call these tools to gather information, manipulate the image, "
+                    f"or retrieve evidence.\n\n"
+                    f"{tool_docs}"
+                )
+
         if tool_registry and len(images) > 1:
             first_label = images[0].label or images[0].path.name
             system_prompt = (
@@ -553,6 +644,7 @@ class AgenticProcessorBase(ABC):
         nudge_count: int = 0
         total_tool_calls: int = 0
         coord_space_modified: bool = False
+        intensity_modified: bool = False
         idle_tool_nudged: bool = False
 
         def _force_finalize_message() -> str:
@@ -597,50 +689,58 @@ class AgenticProcessorBase(ABC):
             # On the last turn, inject a schema reminder so models that don't
             # fully support response_format still know the expected output.
             if is_last_turn and turn_idx > 0:
-                # NOTE: No reset_to_original() here — the original images are
-                # re-injected below from ImageInput.encoded (which always holds
-                # the original encoding), so resetting the ImageManager is
-                # wasted work.  The image manager is closed in the finally
-                # block of analyze() and never read after this point.
-
-                # Build final-turn message with original image + schema reminder
+                # Build final-turn message with original image + schema reminder.
+                # No reset_to_original() — original images are re-injected from
+                # ImageInput.encoded; the ImageManager is closed in analyze().
                 final_parts: list[dict[str, Any]] = []
 
+                coord_note = ""
+                if images:
+                    w, h = images[0].width, images[0].height
+                    if coord_space_modified:
+                        coord_note = (
+                            f" WARNING: You used crop/zoom/rotate/flip which changed the "
+                            f"coordinate space. The original {w}x{h} image is "
+                            f"re-attached below. "
+                            f"Any bounding boxes from your transformed analysis are "
+                            f"INVALID. Re-examine this original image and provide ALL "
+                            f"coordinates in the original pixel space "
+                            f"[0, {w - 1}] x [0, {h - 1}]."
+                        )
+                    else:
+                        coord_note = (
+                            " The ORIGINAL (untransformed) image is re-attached below. "
+                            "All spatial coordinates (bounding boxes) MUST reference "
+                            "this original image, NOT any zoomed or cropped version."
+                        )
+                    if intensity_modified:
+                        coord_note += (
+                            " NOTE: You used intensity-modifying tools (threshold, "
+                            "window_level, equalize, etc.) during this session. "
+                            "Any intensity measurements from modified images do NOT "
+                            "reflect original tissue characteristics."
+                        )
+
+                schema_note = ""
                 if response_schema is not None:
                     schema_obj = response_schema.get("json_schema", {}).get("schema", {})
                     top_keys = list(schema_obj.get("properties", {}).keys())
                     if top_keys:
-                        coord_note = ""
-                        if images:
-                            w, h = images[0].width, images[0].height
-                            if coord_space_modified:
-                                coord_note = (
-                                    f" WARNING: You used crop/zoom/rotate/flip which changed the "
-                                    f"coordinate space. The original {w}x{h} image is "
-                                    f"re-attached below. "
-                                    f"Any bounding boxes from your transformed analysis are "
-                                    f"INVALID. Re-examine this original image and provide ALL "
-                                    f"coordinates in the original pixel space "
-                                    f"[0, {w - 1}] x [0, {h - 1}]."
-                                )
-                            else:
-                                coord_note = (
-                                    " The ORIGINAL (untransformed) image is re-attached below. "
-                                    "All spatial coordinates (bounding boxes) MUST reference "
-                                    "this original image, NOT any zoomed or cropped version."
-                                )
-                        final_parts.append(
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"[System: This is your FINAL turn. Tools are no longer available."
-                                    f"{coord_note} "
-                                    f"You MUST respond with a complete JSON object containing these "
-                                    f"required top-level keys: {top_keys}. "
-                                    f"Set 'continue': false. Do NOT attempt tool calls.]"
-                                ),
-                            }
+                        schema_note = (
+                            f" You MUST respond with a complete JSON object containing "
+                            f"these required top-level keys: {top_keys}."
                         )
+
+                final_parts.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"[System: This is your FINAL turn. Tools are no longer available."
+                            f"{coord_note}{schema_note} "
+                            f"Set 'continue': false. Do NOT attempt tool calls.]"
+                        ),
+                    }
+                )
 
                 # Re-inject original images for coordinate reference
                 final_parts.extend(
@@ -649,12 +749,11 @@ class AgenticProcessorBase(ABC):
                     if img.encoded is not None
                 )
 
-                if final_parts:
-                    messages.append({"role": "user", "content": final_parts})
+                messages.append({"role": "user", "content": final_parts})
 
             # Strip stale base64 images from earlier rounds (including the
             # initial user message) to reduce payload on subsequent API calls.
-            if turn_idx > 0:
+            if turn_idx > 0 and images:
                 self._strip_stale_images(messages)
 
             chat_result = await model_adapter.generate_chat(
@@ -772,7 +871,7 @@ class AgenticProcessorBase(ABC):
                             "name": tc.name,
                             "arguments": tc.arguments
                             if isinstance(tc.arguments, str)
-                            else json.dumps(tc.arguments),
+                            else json.dumps(deep_thaw(tc.arguments)),
                         },
                     }
                     for tc in typed_tool_calls
@@ -839,10 +938,19 @@ class AgenticProcessorBase(ABC):
                         "content": f"[Turn {turn_idx + 1}/{self.max_turns}]",
                     }
                 )
-                if any(tc.name == "reset" for tc in typed_tool_calls):
+                succeeded = frozenset(
+                    tc.name
+                    for tc, tr in zip(typed_tool_calls, tool_results, strict=True)
+                    if tr.success
+                )
+                if "reset" in succeeded:
                     coord_space_modified = False
-                elif any(tc.name in _COORD_MODIFYING_TOOLS for tc in typed_tool_calls):
-                    coord_space_modified = True
+                    intensity_modified = False
+                else:
+                    if succeeded & _COORD_MODIFYING_TOOLS:
+                        coord_space_modified = True
+                    if succeeded & _INTENSITY_MODIFYING_TOOLS:
+                        intensity_modified = True
                 continue
             # Detect truncated responses before attempting JSON parsing
             if gen_log.finish_reason == "length":
@@ -1068,12 +1176,18 @@ class AgenticProcessorBase(ABC):
             )
 
         if not self.validate_response(final_response):
-            # Log the actual keys for debugging
             top_keys = list(final_response.keys())[:10]
-            raise AgenticProcessingError(
+            missing_fields: list[str] = []
+            if response_schema is not None:
+                schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+                required = schema_obj.get("required", [])
+                if isinstance(required, list):
+                    missing_fields = [field for field in required if field not in final_response]
+            raise SchemaValidationError(
                 f"Final response failed schema validation. Top-level keys: {top_keys}",
                 turns_completed=len(turns),
-                partial_response=final_response,
+                missing_fields=missing_fields,
+                response=final_response,
             )
 
         confidence = self.calculate_confidence(final_response, turns)
@@ -1085,35 +1199,43 @@ class AgenticProcessorBase(ABC):
             confidence=confidence,
         )
 
-    def _parse_tool_args(self, tool_call: ToolCall, turn_idx: int) -> dict[str, Any]:
-        """Parse tool call arguments, raising on malformed JSON."""
+    def _parse_tool_args(self, tool_call: ToolCall) -> dict[str, Any]:
+        """Parse tool call arguments, raising on malformed JSON.
+
+        Raises ToolExecutionError (not AgenticProcessingError) so that
+        callers in _run_single_tool can catch it and return an error
+        ToolResult, letting the model self-correct.
+        """
         if isinstance(tool_call.arguments, str):
             try:
                 parsed_args: dict[str, Any] | list | str | int | float | bool | None = json.loads(
                     tool_call.arguments
                 )
             except json.JSONDecodeError as e:
-                raise AgenticProcessingError(
-                    f"Malformed JSON in tool arguments for '{tool_call.name}': {e}",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "malformed_tool_args", "tool": tool_call.name},
+                raise ToolExecutionError(
+                    f"Malformed JSON in tool arguments: {e}",
+                    tool_name=tool_call.name,
                 ) from e
 
             if not isinstance(parsed_args, dict):
-                raise AgenticProcessingError(
-                    f"Tool arguments for '{tool_call.name}' must be a JSON object, got {type(parsed_args).__name__}",
-                    turns_completed=turn_idx + 1,
-                    partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
+                raise ToolExecutionError(
+                    f"Tool arguments must be a JSON object, got {type(parsed_args).__name__}",
+                    tool_name=tool_call.name,
                 )
             return parsed_args
 
-        if not isinstance(tool_call.arguments, dict):
-            raise AgenticProcessingError(
-                f"Tool arguments for '{tool_call.name}' must be a dict, got {type(tool_call.arguments).__name__}",
-                turns_completed=turn_idx + 1,
-                partial_response={"error": "invalid_tool_args", "tool": tool_call.name},
+        if not isinstance(tool_call.arguments, Mapping):
+            raise ToolExecutionError(
+                f"Tool arguments must be a JSON object, got {type(tool_call.arguments).__name__}",
+                tool_name=tool_call.name,
             )
-        return dict(tool_call.arguments)
+        thawed_args = deep_thaw(tool_call.arguments)
+        if not isinstance(thawed_args, dict):
+            raise ToolExecutionError(
+                f"Tool arguments must be a JSON object, got {type(thawed_args).__name__}",
+                tool_name=tool_call.name,
+            )
+        return thawed_args
 
     @beartype
     async def _run_single_tool(
@@ -1128,10 +1250,9 @@ class AgenticProcessorBase(ABC):
         ``ToolResult`` with an error description so the model can
         self-correct on subsequent turns.
         """
-        tool_args = self._parse_tool_args(tool_call, turn_idx)
-        logger.debug(f"Executing: {tool_call.name}({tool_args})")
-
         try:
+            tool_args = self._parse_tool_args(tool_call)
+            logger.debug(f"Executing: {tool_call.name}({tool_args})")
             return await tool_registry.execute(tool_call.name, **tool_args)
         except UnknownToolError as e:
             # Model hallucinated a tool name. Return an error ToolResult so it

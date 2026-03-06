@@ -6,7 +6,6 @@
   Optional variables:
     - clinical_history: str — patient clinical history
     - enable_visual_tools: bool — whether visual tools are enabled
-    - enable_web_search: bool — whether web search is enabled
 #}
 You are an expert neuroradiologist analysing a brain MRI from the NOVA benchmark dataset. In this benchmark, all cases have confirmed pathology — there are no normal studies.
 
@@ -79,18 +78,6 @@ IMPORTANT: Only use tools that help answer the specific clinical question.
 Do NOT use every tool available. Fewer focused tools > many unfocused tools.
 {% endif %}
 
-{% if enable_web_search is defined and enable_web_search %}
-**Research Tools Available:**
-- `search_web(query, search_type)`: PubMed literature search
-- `search_images(query, modality, body_part)`: NIH Open-i reference images
-{% endif %}
-
-**Multi-turn Strategy:**
-- Turn 1: Initial survey, identify areas for investigation. Set `continue: true`.
-- Turn 2+: Detailed examination using tools. Set `continue: true`.
-- Penultimate turn: Call `reset()` if you used crop/zoom. Set `continue: true`.
-- Final: Complete analysis with all fields in ORIGINAL image coordinates. Set `continue: false`.
-
 **Output Format (JSON):**
 ```json
 {
@@ -128,4 +115,4 @@ Do NOT use every tool available. Fewer focused tools > many unfocused tools.
 }
 ```
 
-Begin analysis.
+Begin your analysis.

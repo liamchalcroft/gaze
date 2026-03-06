@@ -158,35 +158,6 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
                 "",
             ])
 
-        if self.use_tools:
-            prompt_parts.extend([
-                "## Available Tools",
-                "Use visual tools to examine the image more closely:",
-                "- `zoom`: Magnify regions of interest for detail",
-                "- `crop`: Focus on specific anatomical areas",
-                "- `adjust_brightness`/`adjust_contrast`: Independent window level/width control",
-                "- `adjust_sharpness`: Edge enhancement for boundary definition",
-                "- `window_level`: Clinical windowing with presets (brain, bone, soft_tissue, etc.)",
-                "- `threshold`: Highlight specific intensity ranges",
-                "- `equalize_histogram`/`adaptive_equalize`: Contrast equalization",
-                "- `detect_edges`: Edge detection (Sobel/Laplacian) for lesion boundaries",
-                "- `get_intensity_stats`: Quantitative intensity analysis",
-                "- `measure`: Measure distances between points",
-                "- `show_grid`: Overlay spatial reference grid",
-                "- `symmetry_diff`: Left-right difference map for asymmetries",
-                "- `annotate_region`: Draw bounding box overlay with label",
-                "",
-            ])
-
-        if self.use_web_search:
-            prompt_parts.extend([
-                "## Medical Reference",
-                "You can search for medical literature:",
-                "- `search_web`: Find diagnostic criteria and guidelines",
-                "- `search_images`: Find similar reference cases",
-                "",
-            ])
-
         prompt_parts.extend([
             "## Analysis Guidelines",
             "1. Start by examining the overall image quality and orientation",

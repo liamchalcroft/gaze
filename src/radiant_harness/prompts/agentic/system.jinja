@@ -1,11 +1,12 @@
 {# GENERIC AGENTIC SYSTEM PROMPT - Completely task-agnostic framework #}
-{# This template provides the multi-turn reasoning framework and tool documentation. #}
-{# Domain expertise and task-specific instructions come from the dataset implementation. #}
+{# Reference implementation for multi-turn reasoning. Dataset-specific #}
+{# implementations (e.g. examples/nova/) typically provide their own templates. #}
+{# Tool documentation is injected automatically by _run_analysis() from the #}
+{# ToolRegistry — templates should NOT hardcode tool lists. #}
 {#
   Required variables: (none — all are optional)
   Optional variables:
     - domain_expertise: str — domain-specific expertise description
-    - tool_documentation: str — generated documentation for available tools
     - analysis_workflow: str — domain-specific analysis workflow steps
     - has_images: bool — whether images are provided
     - enable_web_search: bool — whether web search is enabled
@@ -13,14 +14,6 @@
 
 {% if domain_expertise is defined and domain_expertise %}
 {{ domain_expertise }}
-{% endif %}
-
-{% if tool_documentation is defined and tool_documentation %}
-**AVAILABLE TOOLS:**
-
-You have access to the following tools through function calling. Call these tools to gather information, manipulate the image, or retrieve evidence. After each tool call, you will receive the result to continue your analysis.
-
-{{ tool_documentation }}
 {% endif %}
 
 {% if analysis_workflow is defined and analysis_workflow %}
