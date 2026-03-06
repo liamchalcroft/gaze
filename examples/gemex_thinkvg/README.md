@@ -13,7 +13,7 @@ This example demonstrates reinforcement learning fine-tuning using the Radiant H
 
 ## Dataset
 
-- **Source**: [GEMeX-ThinkVG on HuggingFace](https://huggingface.co/datasets/BoKelvin/BoKelvin/GEMeX-ThinkVG)
+- **Source**: [GEMeX-ThinkVG on HuggingFace](https://huggingface.co/datasets/BoKelvin/GEMeX-ThinkVG)
 - **Images**: Chest X-rays from MIMIC-CXR-JPG dataset
 - **Annotations**: Findings with bounding boxes and anatomical locations
 - **Format**: Chain-of-thought reasoning with visual grounding
@@ -58,12 +58,12 @@ pip install datasets huggingface-hub
 The dataset loader automatically handles MIMIC-CXR path resolution:
 
 ```python
-from src import GEMeXDataset
+from src.dataset import GEMeXDataset
 
 dataset = GEMeXDataset(
-    split="test",
-    image_root="/path/to/mimic-cxr-jpg",
-    cache_dir="./cache",
+    mimic_cxr_root="/path/to/mimic-cxr-jpg",
+    split="train",  # currently only "train" split available
+    max_samples=1000,
 )
 ```
 
@@ -82,12 +82,14 @@ env = load_environment(
 
 ```bash
 python train.py \
-    --dataset ./data/test.jsonl \
+    --dataset ./data/train.jsonl \
     --model gpt-4o \
     --learning-rate 1e-5 \
     --batch-size 8 \
     --epochs 3 \
-    --reward-weights 0.4,0.3,0.3
+    --answer-weight 0.4 \
+    --location-weight 0.3 \
+    --bbox-weight 0.3
 ```
 
 ### 5. Evaluate
@@ -212,28 +214,21 @@ gemex_thinkvg/
 This example integrates with the **verifiers** package for RL training:
 
 ```python
-import verifiers as vf
 from src import load_environment
 
 # Load multi-turn environment
 env = load_environment(dataset_path="gemex_train.jsonl")
 
-# Use with verifiers training loop
-trainer = vf.RLTrainer(
-    environment=env,
-    model="your-model",
-    learning_rate=1e-5,
-    # ...
-)
-trainer.train()
+# Use with verifiers training loop (see verifiers docs for trainer API)
+# env is a vf.MultiTurnEnv subclass compatible with verifiers RL training
 ```
 
 ## References
 
-- [GEMeX-ThinkVG Dataset](https://huggingface.co/datasets/BoKelvin/BoKelvin/GEMeX-ThinkVG)
+- [GEMeX-ThinkVG Dataset](https://huggingface.co/datasets/BoKelvin/GEMeX-ThinkVG)
 - [MIMIC-CXR-JPG Dataset](https://physionet.org/content/mimic-cxr-jpg/2.0.0/)
 - [Verifiers Documentation](https://docs.primeintellect.ai/verifiers)
-- [Radiant Harness](https://github.com/anthropics/radiant-harness)
+- [Radiant Harness](https://github.com/liamchalcroft/radiant_harness)
 
 ## License
 

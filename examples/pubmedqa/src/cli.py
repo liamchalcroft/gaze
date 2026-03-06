@@ -30,21 +30,9 @@ async def run_evaluation(
     max_turns: int,
     output_dir: Path,
     reasoning: bool,
-) -> dict[str, object]:
-    """Run PubmedQA evaluation.
-
-    Args:
-        model_name: Model to use
-        config: Dataset configuration
-        max_samples: Maximum samples to evaluate
-        use_search: Enable web search
-        max_turns: Maximum conversation turns
-        output_dir: Output directory for results
-        reasoning: Enable reasoning mode
-
-    Returns:
-        Evaluation metrics
-    """
+    base_url: str | None = None,
+) -> dict[str, float]:
+    """Run PubmedQA evaluation."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load dataset
@@ -52,12 +40,24 @@ async def run_evaluation(
     dataset = PubmedQADataset(config=config, max_samples=max_samples)
     logger.info(f"Loaded {len(dataset)} samples")
 
+    # Build adapter factory for custom base URLs (e.g. LM Studio)
+    adapter_factory = None
+    if base_url is not None:
+        from radiant_harness.models import LMStudioAdapter
+
+        _url = base_url
+        _model = model_name
+
+        def adapter_factory() -> LMStudioAdapter:
+            return LMStudioAdapter(model_name=_model, base_url=_url)
+
     # Create processor
     processor = PubmedQAProcessor(
         model_name=model_name,
         use_web_search=use_search,
         max_turns=max_turns,
         reasoning_enabled=reasoning,
+        adapter_factory=adapter_factory,
     )
 
     logger.info(f"Running evaluation with model: {model_name}")
@@ -67,6 +67,7 @@ async def run_evaluation(
     results: list[AgenticResult] = []
     predictions: list[str] = []
     references: list[str] = []
+    failures: list[dict[str, object]] = []
 
     for i, sample in enumerate(dataset):
         logger.info(f"Processing sample {i + 1}/{len(dataset)}")
@@ -113,12 +114,25 @@ async def run_evaluation(
 
         except AgenticProcessingError as e:
             logger.error(f"Failed to process sample {i}: {e}")
-            predictions.append("maybe")  # Default for failed samples
-            references.append(sample["answer"])
+            failures.append({"sample_id": i, "pubid": sample["pubid"], "error": str(e)})
+            # Exclude failed samples from metrics entirely — defaulting to
+            # "maybe" would silently inflate maybe-class accuracy.
+            continue
+
+    # Report failures
+    if failures:
+        logger.warning(
+            f"{len(failures)} of {len(dataset)} samples failed processing "
+            f"and are excluded from metrics"
+        )
 
     # Compute metrics
-    logger.info("Computing evaluation metrics...")
-    metrics = evaluate_pubmedqa(predictions, references)
+    if not predictions:
+        logger.error("All samples failed — no predictions to evaluate")
+        metrics: dict[str, float] = {"accuracy": 0.0, "macro_f1": 0.0}
+    else:
+        logger.info("Computing evaluation metrics...")
+        metrics = evaluate_pubmedqa(predictions, references)
 
     # Save summary
     summary_file = output_dir / "summary.json"
@@ -131,7 +145,10 @@ async def run_evaluation(
                     "use_search": use_search,
                     "max_turns": max_turns,
                 },
-                "num_samples": len(results),
+                "num_samples_total": len(dataset),
+                "num_samples_evaluated": len(predictions),
+                "num_failures": len(failures),
+                "failures": failures,
                 "metrics": metrics,
             },
             f,
@@ -153,7 +170,13 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="openai/gpt-4o",
-        help="Model name (OpenRouter format)",
+        help="Model name (OpenRouter format, or local model ID for --base-url)",
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument(
         "--config",
@@ -222,14 +245,16 @@ def main() -> None:
                 max_turns=args.max_turns,
                 output_dir=args.output_dir,
                 reasoning=args.reasoning,
+                base_url=args.base_url,
             )
         )
         print("\n=== PubmedQA Results ===")  # noqa: T201
         print(f"Accuracy: {metrics['accuracy']:.3f}")  # noqa: T201
         print(f"Macro F1: {metrics['macro_f1']:.3f}")  # noqa: T201
-        print(f"  Yes F1: {metrics['f1_yes']:.3f}")  # noqa: T201
-        print(f"  No F1:  {metrics['f1_no']:.3f}")  # noqa: T201
-        print(f"  Maybe F1: {metrics['f1_maybe']:.3f}")  # noqa: T201
+        if "f1_yes" in metrics:
+            print(f"  Yes F1: {metrics['f1_yes']:.3f}")  # noqa: T201
+            print(f"  No F1:  {metrics['f1_no']:.3f}")  # noqa: T201
+            print(f"  Maybe F1: {metrics['f1_maybe']:.3f}")  # noqa: T201
     except KeyboardInterrupt:
         logger.info("Evaluation interrupted by user")
     except Exception as e:

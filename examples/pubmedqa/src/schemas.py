@@ -1,11 +1,28 @@
 """PubmedQA JSON schemas for structured outputs.
 
-Defines the response schema for yes/no/maybe question answering.
+Defines the response schema for yes/no/maybe question answering,
+plus canonical answer normalization shared by evaluation and reward code.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+
+def normalize_pubmedqa_answer(answer: str) -> str:
+    """Normalize a PubmedQA answer to canonical form.
+
+    Maps common variations to yes/no/maybe. This is the single source
+    of truth used by both evaluation metrics and the RL reward function.
+    """
+    answer = answer.lower().strip()
+    if answer in {"yes", "y", "true", "positive"}:
+        return "yes"
+    if answer in {"no", "n", "false", "negative"}:
+        return "no"
+    if answer in {"maybe", "uncertain", "unclear", "unknown"}:
+        return "maybe"
+    return answer
 
 PUBMEDQA_SCHEMA: dict[str, Any] = {
     "type": "json_schema",

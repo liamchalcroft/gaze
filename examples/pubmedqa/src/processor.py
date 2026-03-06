@@ -13,15 +13,19 @@ from typing import Any
 
 from beartype import beartype
 
+from collections.abc import Callable
+
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
+from radiant_harness.models import AdapterProtocol
 from radiant_harness.utils import extract_json_from_text
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
 from radiant_harness.verifiers import extract_completion_text
 
 from .schemas import PUBMEDQA_SCHEMA
+from .schemas import normalize_pubmedqa_answer
 from .schemas import validate_pubmedqa_response
 
 
@@ -57,25 +61,14 @@ class PubmedQAVerifiersReward(BaseRewardFunction):
 
         # Get predicted and gold answers
         pred_answer = str(response.get("answer", "")).lower().strip()
-        gold_answer = str(info.get("answer", info.get("gold_answer", ""))).lower().strip()
+        # Support multiple gold-answer key conventions used across the codebase
+        raw_gold = info.get("answer") or info.get("gold_answer") or info.get("gold") or ""
+        gold_answer = str(raw_gold).lower().strip()
 
-        # Normalize common variations
-        pred_normalized = self._normalize_answer(pred_answer)
-        gold_normalized = self._normalize_answer(gold_answer)
+        pred_normalized = normalize_pubmedqa_answer(pred_answer)
+        gold_normalized = normalize_pubmedqa_answer(gold_answer)
 
         return 1.0 if pred_normalized == gold_normalized else 0.0
-
-    def _normalize_answer(self, answer: str) -> str:
-        """Normalize PubmedQA answer."""
-        answer = answer.lower().strip()
-        # Handle common variations
-        if answer in {"yes", "y", "true", "positive"}:
-            return "yes"
-        if answer in {"no", "n", "false", "negative"}:
-            return "no"
-        if answer in {"maybe", "uncertain", "unclear", "unknown"}:
-            return "maybe"
-        return answer
 
     def _extract_text(self, completion: Any) -> str:
         """Extract text from completion."""
@@ -87,12 +80,13 @@ class PubmedQAVerifiersReward(BaseRewardFunction):
         if result is not None:
             return result
 
-        # Fallback: check for direct yes/no/maybe using word boundaries
-        # to avoid false positives like "no" in "know" or "yes" in "eyes"
+        # Fallback: check for direct yes/no/maybe using word boundaries.
+        # Take the LAST match — models typically state reasoning first
+        # (e.g. "some say yes") and give the actual answer last.
         text_lower = text.lower()
-        match = re.search(r"\b(yes|no|maybe)\b", text_lower)
-        if match:
-            return {"answer": match.group(1)}
+        matches = re.findall(r"\b(yes|no|maybe)\b", text_lower)
+        if matches:
+            return {"answer": matches[-1]}
 
         return None
 
@@ -129,23 +123,16 @@ class PubmedQAProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         max_turns: int = 5,
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
+        adapter_factory: Callable[[], AdapterProtocol] | None = None,
     ) -> None:
-        """Initialize PubmedQA processor.
-
-        Args:
-            model_name: Model to use for analysis
-            use_web_search: Enable PubMed search for additional context
-            max_turns: Maximum conversation turns
-            reasoning_enabled: Enable model reasoning mode
-            reasoning_effort: Reasoning effort level
-        """
         super().__init__(
             model_name=model_name,
-            use_tools=False,  # No visual tools for text-only
+            use_tools=False,
             use_web_search=use_web_search,
             max_turns=max_turns,
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
+            adapter_factory=adapter_factory,
         )
 
     def get_reward_function(self) -> BaseRewardFunction:

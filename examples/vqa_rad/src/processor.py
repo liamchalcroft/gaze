@@ -64,8 +64,8 @@ class VQARadVerifiersReward(BaseRewardFunction):
         pred_answer = str(response.get("answer", ""))
         gold_answer = str(info.get("answer", info.get("gold_answer", "")))
 
-        # Determine question type
-        question_type = info.get("question_type", "open")
+        # Determine question type — dataset uses "answer_type" key
+        question_type = info.get("answer_type", info.get("question_type", "open"))
 
         if question_type == "closed":
             return self._compute_closed_reward(pred_answer, gold_answer)
@@ -94,7 +94,7 @@ class VQARadVerifiersReward(BaseRewardFunction):
         ref_tokens = set(normalize_answer(reference).split())
 
         if not pred_tokens or not ref_tokens:
-            return 1.0 if pred_tokens == ref_tokens else 0.0
+            return 0.0
 
         intersection = pred_tokens & ref_tokens
         if not intersection:

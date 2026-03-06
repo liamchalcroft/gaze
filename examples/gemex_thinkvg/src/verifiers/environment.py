@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 from typing import List
 
 import verifiers as vf
 from datasets import Dataset
+
+from radiant_harness.utils import extract_json_from_text
 
 from ..rewards import GEMeXVerifiersReward
 from ..rewards import RewardWeights
@@ -106,50 +107,65 @@ def _log_debug(line: str) -> None:
 def _last_assistant_text(messages: vf.Messages) -> str:
     for m in reversed(messages):
         if isinstance(m, dict) and m.get("role") == "assistant":
-            return str(m.get("content", ""))
+            content = m.get("content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                texts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                ]
+                if texts:
+                    return "\n".join(texts)
+            return str(content)
     return ""
 
 
 def _extract_json_response(text: str) -> dict[str, Any] | None:
-    """Extract JSON response from assistant message."""
-    # Try to find JSON block
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
+    """Extract JSON response from assistant message.
 
-    # Try to parse as raw JSON
-    try:
-        # Find JSON object in text
-        start = text.find("{")
-        if start != -1:
-            # Find matching closing brace
-            depth = 0
-            for i, c in enumerate(text[start:], start):
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return json.loads(text[start : i + 1])
-    except json.JSONDecodeError:
-        pass
+    Uses the shared ``extract_json_from_text`` utility (raw_decode based)
+    so that this parser agrees with the reward function's parser.
+    Falls back to XML-style ``parse_thinkvg_response`` with defaults
+    injected for ``reasoning``/``confidence``/``continue``.
+    """
+    result = extract_json_from_text(text)
+    if result is not None:
+        return result
 
-    # Try XML-style parsing as fallback
-    return parse_thinkvg_response(text)
+    xml_result = parse_thinkvg_response(text)
+    if xml_result is not None:
+        xml_result.setdefault("reasoning", "")
+        xml_result.setdefault("confidence", 0.5)
+        xml_result.setdefault("continue", False)
+        return xml_result
+
+    return None
+
+
+# Normalise raw question-type strings from the HuggingFace dataset
+# (e.g. "closed_ended_questions" → "closed_ended") so that downstream
+# reward weighting always matches.
+_QUESTION_TYPE_MAP: dict[str, str] = {
+    "open_ended_questions": "open_ended",
+    "closed_ended_questions": "closed_ended",
+    "single_choice_questions": "single_choice",
+    "multi_choice_questions": "multi_choice",
+}
 
 
 def _prepare_case(raw: dict[str, Any]) -> dict[str, Any]:
     """Prepare a GEMeX case for the environment."""
+    raw_qt = raw.get("question_type", "open_ended")
+    question_type = _QUESTION_TYPE_MAP.get(raw_qt, raw_qt)
     return {
         "question": raw.get("question", ""),
-        "question_type": raw.get("question_type", "open_ended"),
+        "question_type": question_type,
         "image_path": raw.get("image_path", ""),
         "image_url": raw.get("image_url", ""),
         "gold_answer": raw.get("answer", ""),
-        "gold_location": raw.get("location_reference", ""),
+        "gold_location": raw.get("location_reference", raw.get("location_ref", "")),
         "gold_bbox": raw.get("bbox", [0, 0, 0, 0]),
         "options": raw.get("options", []),
     }
@@ -364,14 +380,16 @@ def load_environment(
     dataset_path: str | None = None,
     cases: list[dict[str, Any]] | None = None,
     max_turns: int = 8,
+    reward_weights: RewardWeights | None = None,
     **kwargs: Any,
-) -> vf.Environment:
+) -> GEMeXThinkVGToolEnv:
     """Load GEMeX-ThinkVG environment.
 
     Args:
         dataset_path: Path to JSONL dataset
         cases: Pre-loaded cases
         max_turns: Maximum conversation turns
+        reward_weights: Custom reward weights (default 0.4/0.3/0.3)
         **kwargs: Additional environment arguments
 
     Returns:
@@ -381,5 +399,6 @@ def load_environment(
         cases=cases,
         dataset_path=dataset_path,
         max_turns=max_turns,
+        reward_weights=reward_weights,
         **kwargs,
     )

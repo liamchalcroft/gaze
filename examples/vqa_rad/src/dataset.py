@@ -14,8 +14,6 @@ from beartype import beartype
 from datasets import load_dataset
 from PIL import Image
 
-from .evaluation import normalize_binary
-
 
 @beartype
 class VQARadDataset:
@@ -124,8 +122,12 @@ class VQARadDataset:
         question = item.get("question", "")
         answer = item.get("answer", "")
 
-        # Determine answer type (closed vs open) using centralized normalization
-        is_closed = normalize_binary(answer) is not None
+        # Determine answer type (closed vs open).
+        # Only treat explicit "yes"/"no" (and minor variants like "y"/"n")
+        # as closed.  Do NOT treat "1"/"0"/"true"/"false" as closed because
+        # VQA-RAD uses those as legitimate open answers (e.g. counting).
+        _closed_answers = frozenset({"yes", "no", "y", "n"})
+        is_closed = answer.strip().lower() in _closed_answers
 
         return {
             "image_path": image_path,

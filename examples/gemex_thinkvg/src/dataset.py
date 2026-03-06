@@ -156,7 +156,7 @@ class GEMeXDataset:
 
         return {
             "answer": parsed.get("answer", ""),
-            "location_ref": location.get("reference", ""),
+            "location_reference": location.get("reference", ""),
             "bbox": location.get("bbox", [0, 0, 0, 0]),
         }
 
@@ -209,7 +209,7 @@ class GEMeXDataset:
             "question_type": question_type,
             # Ground truth for verification
             "answer": ground_truth["answer"],
-            "location_ref": ground_truth["location_ref"],
+            "location_reference": ground_truth["location_reference"],
             "bbox": ground_truth["bbox"],
             # Full reasoning chain (for SFT or reference)
             "thinkvg_reasoning": thinkvg_text,

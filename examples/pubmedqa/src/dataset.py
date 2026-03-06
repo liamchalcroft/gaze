@@ -10,6 +10,7 @@ from typing import Any
 
 from beartype import beartype
 from datasets import load_dataset
+from loguru import logger
 
 
 @beartype
@@ -50,6 +51,12 @@ class PubmedQADataset:
                 f"Invalid config '{config}'. Must be one of: {self.VALID_CONFIGS}"
             )
 
+        if config == "pqa_unlabeled":
+            logger.warning(
+                "pqa_unlabeled has no ground-truth labels (final_decision is None). "
+                "Evaluation metrics will be meaningless. Use pqa_labeled or pqa_artificial."
+            )
+
         self.config = config
         self.split = split
         self._dataset = load_dataset("qiaojin/PubMedQA", config, split=split)
@@ -82,6 +89,10 @@ class PubmedQADataset:
         """
         context_data = item.get("context", {})
 
+        # final_decision is None for pqa_unlabeled samples
+        raw_answer = item.get("final_decision")
+        answer = raw_answer if isinstance(raw_answer, str) else ""
+
         return {
             "pubid": item.get("pubid"),
             "question": item.get("question", ""),
@@ -89,7 +100,7 @@ class PubmedQADataset:
             "labels": context_data.get("labels", []),
             "meshes": context_data.get("meshes", []),
             "long_answer": item.get("long_answer", ""),
-            "answer": item.get("final_decision", ""),  # Ground truth: yes/no/maybe
+            "answer": answer,  # Ground truth: yes/no/maybe (empty for unlabeled)
             "metadata": {
                 "pubid": item.get("pubid"),
                 "config": self.config,

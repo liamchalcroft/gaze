@@ -78,6 +78,7 @@ async def run_evaluation(
 
         metadata = {
             "question": sample["question"],
+            "answer_type": sample["answer_type"],
         }
 
         try:

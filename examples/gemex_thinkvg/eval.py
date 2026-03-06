@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src import RewardWeights
+from src import RewardWeights  # now exported from src/__init__
 from src import load_environment
 
 
@@ -73,10 +73,11 @@ def main() -> None:
         raise ValueError("--reward-weights must have 3 values")
     reward_weights = RewardWeights(answer=weights[0], location=weights[1], bbox=weights[2])
 
-    # Load environment
+    # Load environment (pass reward_weights so the rubric uses them)
     env = load_environment(
         dataset_path=args.dataset,
         max_turns=args.max_turns,
+        reward_weights=reward_weights,
     )
 
     # Sample dataset if requested

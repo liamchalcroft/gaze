@@ -20,10 +20,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import verifiers as vf
-
 from src.processor import GEMeXProcessor
 from src.rewards import RewardWeights
+from src.verifiers import GEMeXThinkVGToolEnv
 
 
 def parse_args() -> argparse.Namespace:
@@ -147,20 +146,19 @@ def load_cases(dataset_path: str) -> list[dict[str, Any]]:
 
 async def run_evaluation(
     processor: GEMeXProcessor,
-    env_cls: type[vf.MultiTurnEnv],
+    env: GEMeXThinkVGToolEnv,
     output_dir: Path,
 ) -> dict[str, float]:
     """Run evaluation using verifiers environment.
 
     Args:
         processor: Configured GEMeX processor
-        env_cls: Verifiers environment class
+        env: Configured GEMeX environment
         output_dir: Directory for saving results
 
     Returns:
         Dictionary of evaluation metrics
     """
-    env = env_cls()
     print(f"Loaded {len(env.dataset)} evaluation cases")
 
     # Run evaluation episodes
@@ -214,7 +212,7 @@ async def run_evaluation(
 
 def run_training(
     processor: GEMeXProcessor,
-    env_cls: type[vf.MultiTurnEnv],
+    env: GEMeXThinkVGToolEnv,
     config: dict[str, Any],
     output_dir: Path,
 ) -> None:
@@ -222,11 +220,10 @@ def run_training(
 
     Args:
         processor: Configured GEMeX processor
-        env_cls: Verifiers environment class
+        env: Configured GEMeX environment
         config: Training configuration
         output_dir: Directory for checkpoints
     """
-    env = env_cls()
     print(f"Loaded {len(env.dataset)} training cases")
 
     # Save config
@@ -286,7 +283,7 @@ def main() -> None:
         bbox=args.bbox_weight,
     )
 
-    # Create processor with mixin
+    # Create processor (still useful for reward function introspection)
     processor = GEMeXProcessor(
         model_name=args.model,
         use_tools=args.use_tools,
@@ -299,22 +296,18 @@ def main() -> None:
     cases = load_cases(args.dataset)
     print(f"Loaded {len(cases)} cases from {args.dataset}")
 
-    # Create verifiers environment from processor
-    image_base_path = Path(args.image_dir) if args.image_dir else None
-    env_cls = processor.as_verifiers_env(
-        max_turns=args.max_turns,
+    # Create GEMeXThinkVGToolEnv directly — same env class used by eval.py
+    # to guarantee training/evaluation parity.
+    env = GEMeXThinkVGToolEnv(
         cases=cases,
-        image_base_path=image_base_path,
-        model_name=args.model,
-        use_tools=args.use_tools,
-        use_web_search=args.use_web_search,
+        max_turns=args.max_turns,
         reward_weights=reward_weights,
     )
 
     output_dir = Path(args.output)
 
     if args.mode == "eval":
-        asyncio.run(run_evaluation(processor, env_cls, output_dir))
+        asyncio.run(run_evaluation(processor, env, output_dir))
     else:
         config = {
             "model": args.model,
@@ -327,7 +320,7 @@ def main() -> None:
             "location_weight": args.location_weight,
             "bbox_weight": args.bbox_weight,
         }
-        run_training(processor, env_cls, config, output_dir)
+        run_training(processor, env, config, output_dir)
 
 
 if __name__ == "__main__":

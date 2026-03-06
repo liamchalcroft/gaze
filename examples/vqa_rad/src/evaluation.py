@@ -93,7 +93,7 @@ def compute_token_f1(pred: str, ref: str) -> float:
     ref_tokens = set(normalize_answer(ref).split())
 
     if not pred_tokens or not ref_tokens:
-        return 1.0 if pred_tokens == ref_tokens else 0.0
+        return 0.0
 
     common = pred_tokens & ref_tokens
 
@@ -156,13 +156,22 @@ def evaluate_vqa_rad(
         if len(answer_types) != len(predictions):
             raise ValueError("answer_types length must match predictions")
 
-        closed_matches = []
-        open_matches = []
-        open_f1s = []
+        closed_matches: list[bool] = []
+        open_matches: list[bool] = []
+        open_f1s: list[float] = []
 
-        for i, (_, _, t) in enumerate(zip(predictions, references, answer_types, strict=True)):
+        for i, (pred, ref, t) in enumerate(
+            zip(predictions, references, answer_types, strict=True)
+        ):
             if t == "closed":
-                closed_matches.append(exact_matches[i])
+                # Use normalize_binary for closed questions (first-token
+                # yes/no extraction) to match the reward function and
+                # evaluate_closed_only, rather than full-string exact match.
+                pred_bin = normalize_binary(pred)
+                ref_bin = normalize_binary(ref)
+                closed_matches.append(
+                    pred_bin is not None and ref_bin is not None and pred_bin == ref_bin
+                )
             else:
                 open_matches.append(exact_matches[i])
                 open_f1s.append(token_f1s[i])
@@ -203,7 +212,10 @@ def evaluate_closed_only(
     preds_binary = [normalize_binary(p) for p in predictions]
     refs_binary = [normalize_binary(r) for r in references]
 
-    # Filter to valid yes/no pairs (both ref and pred must be recognized)
+    # Filter to valid yes/no pairs.  We require the *reference* to be a
+    # recognized binary value (otherwise the sample isn't truly closed).
+    # Predictions that don't normalize to yes/no (e.g. "possibly") stay as
+    # None and will simply fail the equality check, counting as incorrect.
     valid_pairs = [(p, r) for p, r in zip(preds_binary, refs_binary, strict=True) if r is not None]
 
     if not valid_pairs:

@@ -106,16 +106,24 @@ def _normalize(s: str) -> str:
     return s
 
 
-def _to_text(completion: Any) -> str:
-    """Extract text from completion."""
-    return extract_completion_text(completion)
-
-
 def _last_assistant_text(messages: vf.Messages) -> str:
     """Get last assistant message text."""
+    if isinstance(messages, str):
+        return messages
     for m in reversed(messages):
-        if isinstance(m, dict) and m.get("role") == "assistant":
-            return str(m.get("content", ""))
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        content = m.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = [
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            ]
+            if texts:
+                return "\n".join(texts)
     return ""
 
 
@@ -129,8 +137,8 @@ def _log_debug(line: str) -> None:
         pass
 
 
-def _build_prompt(case: dict[str, Any]) -> dict[str, str]:
-    """Build initial prompt for a case.
+def _build_prompt(case: dict[str, Any]) -> list[dict[str, str]]:
+    """Build initial prompt messages for a case.
 
     Only includes the chief complaint and answer choices -- patient history
     and exam data must be gathered through multi-turn interaction.
@@ -148,12 +156,15 @@ def _build_prompt(case: dict[str, Any]) -> dict[str, str]:
         "2) When ready, provide ONE diagnosis as EXACTLY one of the answer choices inside {Diagnosis} "
         "with no extra words and no punctuation inside the braces."
     )
-    return {"system": SYSTEM_PROMPT, "user": user}
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
 
 
 # ---------- Reward Functions ----------
 def accuracy_reward(
-    prompt: str,  # noqa: ARG001 - Required by verifiers interface
+    prompt: Any,  # noqa: ARG001 - Required by verifiers interface
     completion: Any,
     info: dict[str, Any],
 ) -> float:
@@ -162,11 +173,10 @@ def accuracy_reward(
     answers = (info or {}).get("answers", []) or []
     answer_texts = [str(opt.get("text", "")) for opt in answers]
 
-    comp_text = _to_text(completion)
+    comp_text = extract_completion_text(completion)
     pred = _brace_content(comp_text, answer_texts) or comp_text
     pred_clean = pred.strip().strip(".{} ")
 
-    # If gold missing, fallback to correct answer from answers
     if not gold and answers:
         gold = _extract_gold(answers)
 
@@ -180,7 +190,6 @@ def accuracy_reward(
         f"norm_gold={gold_norm!r} norm_pred={pred_norm!r} ok={ok}"
     )
 
-    # Extra fallback: check if pred_norm equals any other correct option
     if not ok and answers:
         for opt in answers:
             if _normalize(opt.get("text", "")) == pred_norm and _is_correct_flag(
@@ -193,19 +202,14 @@ def accuracy_reward(
 
 
 class AgentClinicAccuracyReward(BaseRewardFunction):
-    """Verifiers-compatible reward function for AgentClinic NEJM.
-
-    Wraps the accuracy_reward function to match the radiant_harness
-    BaseRewardFunction interface.
-    """
+    """Verifiers-compatible accuracy reward for AgentClinic NEJM."""
 
     def __call__(
         self,
-        prompt: str,
+        prompt: Any,  # noqa: ARG002 - Required by interface
         completion: Any,
         info: dict[str, Any],
     ) -> float:
-        """Compute accuracy reward for diagnosis."""
         return accuracy_reward(prompt, completion, info)
 
 
@@ -216,7 +220,7 @@ _COMBINED_REWARD = CombinedReward(
 
 
 def combined_reward(
-    prompt: str,
+    prompt: Any,
     completion: Any,
     info: dict[str, Any],
 ) -> float:
@@ -234,9 +238,7 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
         *,
         dataset_path: str | None = None,
         max_turns: int = 10,
-        name: str = "AgentClinicNEJM",
     ) -> None:
-        """Initialize environment."""
         if cases is None:
             data_path = dataset_path or DEFAULT_DATASET_PATH
             raw_cases = _read_jsonl(data_path)
@@ -249,13 +251,7 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
         infos: list[dict[str, Any]] = []
 
         for idx, case in enumerate(prepared):
-            p = _build_prompt(case)
-            prompts.append(
-                [
-                    {"role": "system", "content": p["system"]},
-                    {"role": "user", "content": p["user"]},
-                ]
-            )
+            prompts.append(_build_prompt(case))
             infos.append(
                 {
                     "case_index": idx,
@@ -276,82 +272,56 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
             }
         )
 
-        super().__init__(name=name, dataset=dataset)
-        self._cases = prepared
-        self._max_turns = max_turns
+        rubric = vf.Rubric(funcs=[combined_reward], weights=[1.0])
 
-        self.rubric = vf.Rubric(
-            funcs=[combined_reward],
-            weights=[1.0],
+        super().__init__(
+            max_turns=max_turns,
+            dataset=dataset,
+            rubric=rubric,
         )
+        self._cases = prepared
 
-    def get_system_prompt(self) -> str:
-        return SYSTEM_PROMPT
+    async def setup_state(self, state: vf.State) -> vf.State:
+        """Initialize custom episode state fields."""
+        state["asked"] = False
+        return state
 
-    def build_initial_state(
-        self,
-        prompt: vf.Messages,  # noqa: ARG002 - Required by interface
-        info: dict[str, Any],
-    ) -> vf.State:
-        """Build initial state for episode."""
-        return {"turn": 0, "info": info, "asked": False}
-
-    async def is_completed(
-        self,
-        messages: vf.Messages,
-        state: vf.State,
-        info: dict[str, Any] | None = None,
-    ) -> bool:
-        """Check if episode is complete."""
-        if state.get("turn", 0) >= self._max_turns:
-            return True
-
-        last_asst = _last_assistant_text(messages)
-        if not last_asst:
-            return False
-
+    @vf.stop
+    async def diagnosis_given(self, state: vf.State) -> bool:
+        """Stop when assistant has asked for info and provided a brace-wrapped diagnosis."""
         if not state.get("asked", False):
             return False
-
-        # Done only if assistant provided a brace-wrapped answer
-        current_info = info or state.get("info", {}) or {}
-        answers = current_info.get("answers", []) or []
+        trajectory = state.get("trajectory", [])
+        if not trajectory:
+            return False
+        last_completion = trajectory[-1].get("completion", [])
+        last_text = _last_assistant_text(last_completion)
+        if not last_text:
+            return False
+        info = state.get("info", {}) or {}
+        answers = info.get("answers", []) or []
         answer_texts = [str(opt.get("text", "")) for opt in answers]
-        return bool(_brace_content(last_asst, answer_texts))
+        return bool(_brace_content(last_text, answer_texts))
 
     async def env_response(
         self,
         messages: vf.Messages,
         state: vf.State,
-        info: dict[str, Any] | None = None,  # noqa: ARG002 - Required by interface
-    ) -> tuple[vf.Messages, vf.State]:
+        **kwargs: Any,  # noqa: ARG002 - Required by verifiers interface
+    ) -> vf.Messages:
         """Generate environment response to assistant message."""
-        turn = state.get("turn", 0)
-        new_state = dict(state)
-        new_state["turn"] = turn + 1
-
         last_asst = _last_assistant_text(messages)
+        info = state.get("info", {}) or {}
 
-        case_info = state.get("info", {})
-        answers = case_info.get("answers", []) or []
-        answer_texts = [str(opt.get("text", "")) for opt in answers]
-
-        # If assistant gave brace answer and has asked, end episode
-        if last_asst and _brace_content(last_asst, answer_texts) and state.get("asked", False):
-            return [], new_state
-
-        # Reply with requested section
         text_lower = (last_asst or "").lower()
-
-        asked = False
         reply_content: str | list[dict[str, Any]] = ""
 
         if "history" in text_lower or "symptom" in text_lower:
             reply_content = (
                 "Patient History\n"
-                f"{case_info.get('patient_info', 'No additional history available.')}"
+                f"{info.get('patient_info', 'No additional history available.')}"
             )
-            asked = True
+            state["asked"] = True
         elif any(
             k in text_lower
             for k in [
@@ -368,11 +338,11 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
         ):
             reply_content = (
                 "Physical Examination and Test Results\n"
-                f"{case_info.get('physical_exams', 'No additional findings available.')}"
+                f"{info.get('physical_exams', 'No additional findings available.')}"
             )
-            asked = True
+            state["asked"] = True
         elif "image" in text_lower or "photo" in text_lower or "picture" in text_lower:
-            image_url = case_info.get("image_url", "")
+            image_url = info.get("image_url", "")
             if image_url:
                 reply_content = [
                     {"type": "text", "text": "Medical Image:"},
@@ -380,7 +350,7 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
                 ]
             else:
                 reply_content = "No medical image is available for this case."
-            asked = True
+            state["asked"] = True
         else:
             reply_content = (
                 "You can request HISTORY, EXAM_AND_TESTS, or IMAGE. "
@@ -388,22 +358,16 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
                 "with no extra words and no punctuation."
             )
 
-        if asked:
-            new_state["asked"] = True
-
-        return [{"role": "user", "content": reply_content}], new_state
+        return [{"role": "user", "content": reply_content}]
 
 
 # ---------- Loader ----------
 def load_environment(
     dataset_path: str | None = None,
     max_turns: int = 10,
-    **kwargs: Any,
-) -> vf.Environment:
+) -> AgentClinicNEJMMultiTurn:
     """Load AgentClinic NEJM environment."""
     return AgentClinicNEJMMultiTurn(
-        cases=None,
         dataset_path=dataset_path or DEFAULT_DATASET_PATH,
         max_turns=max_turns,
-        **kwargs,
     )

@@ -17,12 +17,14 @@ from __future__ import annotations
 
 from .processor import GEMeXProcessor
 from .rewards import GEMeXRewardFunction
+from .rewards import RewardWeights
 from .rewards import compute_combined_reward
 from .verifiers import GEMeXThinkVGToolEnv, load_environment
 
 __all__ = [
     "GEMeXProcessor",
     "GEMeXRewardFunction",
+    "RewardWeights",
     "compute_combined_reward",
     "GEMeXThinkVGToolEnv",
     "load_environment",

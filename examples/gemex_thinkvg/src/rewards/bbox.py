@@ -69,6 +69,12 @@ def clamp_bbox(
     """
     x1, y1, x2, y2 = bbox
 
+    # Normalize ordering so x1 <= x2, y1 <= y2 before clamping
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
+
     x1 = max(0, min(int(x1), image_size - 1))
     y1 = max(0, min(int(y1), image_size - 1))
     x2 = max(x1 + 1, min(int(x2), image_size))
@@ -84,6 +90,9 @@ def compute_iou(
 ) -> float:
     """Compute Intersection over Union between two bounding boxes.
 
+    Normalizes coordinate ordering (x1 <= x2, y1 <= y2) before computing
+    IoU, matching the shared ``radiant_harness.utils.iou.compute_iou``.
+
     Args:
         bbox1: First bbox [x1, y1, x2, y2]
         bbox2: Second bbox [x1, y1, x2, y2]
@@ -91,7 +100,7 @@ def compute_iou(
     Returns:
         IoU score in [0, 1]
     """
-    # Clamp to valid coordinates
+    # Clamp to valid coordinates (clamp_bbox normalizes ordering internally)
     b1 = clamp_bbox(bbox1)
     b2 = clamp_bbox(bbox2)
 

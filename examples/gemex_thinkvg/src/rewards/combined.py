@@ -360,10 +360,23 @@ class GEMeXVerifiersReward(BaseRewardFunction):
 
     @staticmethod
     def _extract_json_response(text: str) -> dict[str, Any] | None:
-        """Extract JSON response from text, with XML fallback."""
+        """Extract JSON response from text, with XML fallback.
+
+        The XML parser (``parse_thinkvg_response``) does not produce
+        ``reasoning`` or ``confidence`` fields, so we inject sensible
+        defaults so that downstream validation can succeed.
+        """
         from ..schemas import parse_thinkvg_response
 
         result = extract_json_from_text(text)
         if result is not None:
             return result
-        return parse_thinkvg_response(text)
+
+        xml_result = parse_thinkvg_response(text)
+        if xml_result is not None:
+            xml_result.setdefault("reasoning", "")
+            xml_result.setdefault("confidence", 0.5)
+            xml_result.setdefault("continue", False)
+            return xml_result
+
+        return None

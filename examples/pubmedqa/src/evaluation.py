@@ -10,21 +10,7 @@ from collections.abc import Sequence
 
 from beartype import beartype
 
-
-def _normalize_answer(answer: str) -> str:
-    """Normalize a PubmedQA answer to canonical form.
-
-    Maps common variations to yes/no/maybe so that evaluation
-    matches the reward function's normalization logic.
-    """
-    answer = answer.lower().strip()
-    if answer in {"yes", "y", "true", "positive"}:
-        return "yes"
-    if answer in {"no", "n", "false", "negative"}:
-        return "no"
-    if answer in {"maybe", "uncertain", "unclear", "unknown"}:
-        return "maybe"
-    return answer
+from .schemas import normalize_pubmedqa_answer as _normalize_answer
 
 
 @beartype

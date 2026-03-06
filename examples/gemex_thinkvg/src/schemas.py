@@ -51,17 +51,12 @@ GEMEX_SCHEMA: dict[str, Any] = {
                     "maximum": 1.0,
                     "description": "Confidence in the answer (0.0-1.0)",
                 },
-                "question_type": {
-                    "type": "string",
-                    "enum": ["open_ended", "closed_ended", "single_choice", "multi_choice"],
-                    "description": "Type of question being answered",
-                },
                 "continue": {
                     "type": "boolean",
                     "description": "true if more analysis needed, false when complete",
                 },
             },
-            "required": ["reasoning", "answer", "location", "confidence"],
+            "required": ["reasoning", "answer", "location", "confidence", "continue"],
             "additionalProperties": False,
         },
     },
