@@ -16,14 +16,17 @@ install: ## Install dependencies
 	uv sync
 
 check: ## Run all quality checks (lint, typecheck, lock, test)
-	uv run ruff check src/
-	uv run ruff format --check src/
+	uv run ruff check .
+	uv run ruff format --check .
 	uv run pyright src/
 	uv lock --check
+	uv run pytest tests/ examples/nova/tests/ -x --tb=short
+
+test: ## Run test suite (core tests only)
 	uv run pytest tests/ -x --tb=short
 
-test: ## Run test suite
-	uv run pytest tests/ -x --tb=short
+test-all: ## Run all tests (core + examples + environments)
+	uv run pytest tests/ examples/nova/tests/ -x --tb=short
 
 test-cov: ## Run tests with coverage
 	uv run pytest tests/ --cov=radiant_harness --cov-report=html

@@ -14,7 +14,7 @@ fi
 
 # Install dependencies
 echo "📦 Installing dependencies..."
-uv sync --dev
+uv sync
 
 # Install pre-commit hooks
 echo "🔧 Installing pre-commit hooks..."

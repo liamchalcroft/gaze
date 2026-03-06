@@ -4016,7 +4016,6 @@ dependencies = [
     { name = "pillow" },
     { name = "requests" },
     { name = "tenacity" },
-    { name = "verifiers" },
 ]
 
 [package.optional-dependencies]
@@ -4037,6 +4036,9 @@ nova = [
     { name = "torchmetrics" },
     { name = "torchvision" },
 ]
+verifiers = [
+    { name = "verifiers" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -4053,6 +4055,7 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
     { name = "typeguard" },
+    { name = "verifiers" },
 ]
 rl = [
     { name = "accelerate" },
@@ -4086,10 +4089,10 @@ requires-dist = [
     { name = "torch", marker = "extra == 'nova'" },
     { name = "torchmetrics", marker = "extra == 'nova'" },
     { name = "torchvision", marker = "extra == 'nova'" },
-    { name = "verifiers", specifier = ">=0.1,<1" },
-    { name = "verifiers", marker = "extra == 'medmarks'", specifier = ">=0.1.6" },
+    { name = "verifiers", marker = "extra == 'medmarks'", specifier = ">=0.1.6,<1" },
+    { name = "verifiers", marker = "extra == 'verifiers'", specifier = ">=0.1,<1" },
 ]
-provides-extras = ["nova", "medmarks"]
+provides-extras = ["nova", "medmarks", "verifiers"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4106,6 +4109,7 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
     { name = "typeguard" },
+    { name = "verifiers", specifier = ">=0.1,<1" },
 ]
 rl = [
     { name = "accelerate" },
