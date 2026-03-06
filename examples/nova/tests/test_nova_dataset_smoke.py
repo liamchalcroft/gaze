@@ -111,53 +111,47 @@ def test_ground_truth_multiple_boxes(tmp_path: Path) -> None:
     assert sample.localizations[1].bbox == (100.0, 100.0, 130.0, 140.0)
 
 
-@pytest.mark.asyncio
-async def test_nova_dataset_smoke(monkeypatch, tmp_path: Path) -> None:
-    datasets = pytest.importorskip("datasets")
-    from datasets import Dataset as HFDataset  # type: ignore
-    from datasets import Features  # type: ignore
-    from datasets import Image as HFImage  # type: ignore
+def test_nova_dataset_smoke(monkeypatch, tmp_path: Path) -> None:
+    """Smoke test for NovaDataset using parquet + snapshot_download."""
+    pd = pytest.importorskip("pandas")
 
     from src.data import nova_dataset
     from src.data.nova_dataset import NovaDataset
 
-    # Prepare minimal ground-truth CSVs
-    captions = tmp_path / "captions.csv"
-    case_meta = tmp_path / "case_metadata.csv"
-    bboxes = tmp_path / "bboxes_gold.csv"
+    # Build a minimal parquet file matching the real dataset schema
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
 
-    _write_csv(
-        captions,
-        ["filename", "case_id", "scan_id", "caption"],
-        [["case1.png", "c1", "s1", "caption text"]],
-    )
-    _write_csv(
-        case_meta,
-        ["case_id", "clinical_history", "final_diagnosis"],
-        [["c1", "history text", "diagnosis text"]],
-    )
-    _write_csv(
-        bboxes,
-        ["filename", "x", "y", "width", "height"],
-        [["case1.png", "1.0", "2.0", "3.0", "4.0"]],
-    )
-
-    # Create a tiny PIL image with filename metadata for alignment
-    img_path = tmp_path / "case1.png"
+    img_path = images_dir / "case1.png"
     pil_img = Image.new("RGB", (4, 4), color=(123, 124, 125))
     pil_img.save(img_path)
-    pil_img.filename = str(img_path)
 
-    # Build a lightweight HF dataset in-memory
-    fake_ds: HFDataset = datasets.Dataset.from_dict(
-        {"image": [pil_img]},
-        features=Features({"image": HFImage()}),
+    df = pd.DataFrame(
+        [
+            {
+                "filename": "case1.png",
+                "case_id": "c1",
+                "scan_id": "s1",
+                "caption_text": "caption text",
+                "image_path": "images/case1.png",
+                "meta": {
+                    "clinical_history": "history text",
+                    "final_diagnosis": "diagnosis text",
+                },
+                "bboxes": [
+                    {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0, "source": "gold"},
+                ],
+            }
+        ]
     )
+    df.to_parquet(data_dir / "nova-v1.parquet")
 
-    # Monkeypatch load_dataset to avoid network access
-    monkeypatch.setattr(nova_dataset, "load_dataset", lambda *_, **__: fake_ds)
+    # Monkeypatch snapshot_download to return our tmp_path
+    monkeypatch.setattr(nova_dataset, "snapshot_download", lambda *_a, **_kw: str(tmp_path))
 
-    ds = NovaDataset(data_dir=str(tmp_path), ground_truth_dir=str(tmp_path), transform=None)
+    ds = NovaDataset(data_dir=str(tmp_path), transform=None)
     sample = ds[0]
 
     assert sample["has_ground_truth"] is True
@@ -170,8 +164,7 @@ async def test_nova_dataset_smoke(monkeypatch, tmp_path: Path) -> None:
 
     locs = gt["localizations"]
     assert len(locs) == 1
-    # Ground truth converts (x, y, width, height) -> (x1, y1, x2, y2)
-    # CSV row: x=1, y=2, width=3, height=4 -> bbox=(1, 2, 1+3, 2+4) = (1, 2, 4, 6)
+    # Parquet stores (x, y, width, height) -> dataset converts to (x1, y1, x2, y2)
     assert locs[0]["bbox"] == (1.0, 2.0, 4.0, 6.0)
 
 
@@ -275,18 +268,16 @@ def test_processor_mode_parameter() -> None:
 
 
 def test_config_mode_field() -> None:
-    """NOVAConfig supports mode and ground_truth_dir fields."""
+    """NOVAConfig supports mode field."""
     from src.config import NOVAConfig
 
     # Default mode is agentic
     config = NOVAConfig()
     assert config.mode == "agentic"
-    assert config.ground_truth_dir is None
 
     # Can override
-    config2 = NOVAConfig(mode="single_turn", ground_truth_dir=config.data_dir)
+    config2 = NOVAConfig(mode="single_turn")
     assert config2.mode == "single_turn"
-    assert config2.ground_truth_dir == config.data_dir
 
 
 def test_detection_iou_range_thresholds() -> None:

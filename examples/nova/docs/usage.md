@@ -26,13 +26,9 @@ OUTPUT_DIR=./runs
 
 ## Data
 
-- Images load from the HuggingFace dataset `c-i-ber/Nova` at runtime.
-- Ground-truth CSVs must exist in `DATA_DIR`:
-  - `captions.csv`
-  - `case_metadata.csv`
-  - `bboxes_gold.csv`
-
-The CLI fails fast if these files are missing.
+- Both images and ground-truth annotations load from the HuggingFace dataset `c-i-ber/Nova` (parquet format) at runtime.
+- No local CSV files are required by default.
+- If `--data-dir` is provided, the CLI checks for local CSVs (`captions.csv`, `case_metadata.csv`, `bboxes_gold.csv`) and uses them as an override; otherwise it falls back to the HuggingFace dataset.
 
 ## CLI
 

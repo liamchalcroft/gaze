@@ -481,14 +481,18 @@ async def evaluate_diagnosis_nova_official(
             method = "exact_match" if pred_norm == ref_norm else "synonym_match"
             judgment_log.add(JudgmentRecord(pred=pred, ref=ref, method=method, verdict=True))
             return True
-        # Containment pre-check: if one string contains the other, it's a match
+        # Containment pre-check: if one string contains the other, it's a match.
+        # Require the shorter string to have at least 2 words to prevent
+        # single-word predictions like "cyst" from matching all cyst subtypes.
         pred_lower = pred.strip().lower()
         ref_lower = ref.strip().lower()
         if pred_lower and ref_lower and (pred_lower in ref_lower or ref_lower in pred_lower):
-            judgment_log.add(
-                JudgmentRecord(pred=pred, ref=ref, method="containment_match", verdict=True)
-            )
-            return True
+            shorter = pred_lower if len(pred_lower) <= len(ref_lower) else ref_lower
+            if len(shorter.split()) >= 2:
+                judgment_log.add(
+                    JudgmentRecord(pred=pred, ref=ref, method="containment_match", verdict=True)
+                )
+                return True
         async with sem:
             verdict, record = await llm_semantic_match_async(pred, ref, model_name, num_votes)
             judgment_log.add(record)
@@ -525,10 +529,10 @@ async def evaluate_diagnosis_nova_official(
         "top5": top5_count / scored_n,
     }
 
-    # Coverage: unique predictions vs unique references
+    # Coverage: unique predictions vs unique references (capped at 1.0)
     uniq_preds = len({str(p).strip().lower() for p in all_preds})
     uniq_refs = len({str(r).strip().lower() for r in refs})
-    results["coverage"] = uniq_preds / uniq_refs if uniq_refs > 0 else 0.0
+    results["coverage"] = min(1.0, uniq_preds / uniq_refs) if uniq_refs > 0 else 0.0
 
     # Entropy of prediction distribution (Shannon entropy in bits)
     pred_counts = Counter(str(p).strip().lower() for p in all_preds)
@@ -540,6 +544,7 @@ async def evaluate_diagnosis_nova_official(
         entropy -= p_i * math.log2(p_i)
 
     results["entropy"] = entropy
+    results["semantic_match_model"] = model_name
     results["judgment_log"] = judgment_log.to_dicts()
 
     total = len(judgment_log.records)

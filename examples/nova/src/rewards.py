@@ -141,6 +141,8 @@ _ABBREVIATION_MAPPING: dict[str, str] = {
     "da": "diffuse axonal injury",
     "sah": "subarachnoid hemorrhage",
     "ich": "intracerebral hemorrhage",
+    "ms": "multiple sclerosis",
+    "nph": "normal pressure hydrocephalus",
 }
 
 _DASH_PATTERN = re.compile(r"\s*[–—]\s*")
@@ -200,7 +202,7 @@ def _area_penalty(
         return 1.0
     if penalty_start >= 1.0:
         return 1.0
-    pred_area = (box[2] - box[0]) * (box[3] - box[1])
+    pred_area = abs(box[2] - box[0]) * abs(box[3] - box[1])
     area_ratio = pred_area / image_area
     if area_ratio <= penalty_start:
         return 1.0

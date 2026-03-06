@@ -35,7 +35,6 @@ class NovaDataset:
     def __init__(
         self,
         data_dir: str | None = None,
-        ground_truth_dir: str | None = None,
         transform: Compose | None = None,
     ) -> None:
         """Initialize complete NOVA dataset.
@@ -43,7 +42,6 @@ class NovaDataset:
         Args:
             data_dir: Optional local directory override. If None, downloads
                       from HuggingFace (recommended).
-            ground_truth_dir: Unused, kept for backward compatibility.
             transform: Optional torchvision transforms to apply to images.
         """
         self.transform = transform
@@ -166,7 +164,8 @@ class NovaDataset:
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        image = Image.open(image_path).convert("RGB")
+        with Image.open(image_path) as src:
+            image = src.convert("RGB")
 
         if self.transform:
             image = self.transform(image)

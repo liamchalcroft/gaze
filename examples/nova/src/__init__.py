@@ -32,6 +32,9 @@ from .schemas import validate_nova_response
 # Lazy imports for torch-dependent modules
 if TYPE_CHECKING:
     from .data import NovaDataset
+    from .evaluation.caption import evaluate_caption
+    from .evaluation.detection import evaluate_detection
+    from .evaluation.diagnosis import evaluate_diagnosis_nova_official
 
 __version__ = "0.1.0"
 
@@ -45,6 +48,9 @@ __all__ = [
     "get_required_fields",
     "validate_nova_response",
     "NovaDataset",
+    "evaluate_caption",
+    "evaluate_detection",
+    "evaluate_diagnosis_nova_official",
 ]
 
 

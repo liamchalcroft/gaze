@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -24,6 +25,7 @@ _DICT_LIKE = (dict, MappingProxyType)
 
 from loguru import logger
 
+from radiant_harness._frozen import deep_thaw
 from radiant_harness import AgenticResult
 
 from .config import NOVAConfig
@@ -33,6 +35,7 @@ from .evaluation.caption import evaluate_caption
 from .evaluation.detection import clamp_and_validate_box
 from .evaluation.detection import evaluate_detection
 from .evaluation.detection import rescale_and_clamp_box
+from .evaluation.diagnosis import DEFAULT_SEMANTIC_MATCH_MODEL
 from .evaluation.diagnosis import evaluate_diagnosis_nova_official
 from .processor import NOVAAgenticProcessor
 
@@ -46,6 +49,37 @@ class _SafeEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def _write_json_file(
+    path: Path,
+    payload: object,
+    encoder_cls: type[json.JSONEncoder] | None = None,
+) -> None:
+    """Write JSON from a worker thread to keep the event loop responsive."""
+    with path.open("w") as f:
+        if encoder_cls is None:
+            json.dump(payload, f, indent=2)
+        else:
+            json.dump(payload, f, indent=2, cls=encoder_cls)
+
+
+def _summary_metrics(metrics: dict[str, object]) -> tuple[dict[str, object], list[dict[str, Any]]]:
+    """Keep large diagnosis audit logs out of summary.json hot reads."""
+    summary_metrics = dict(metrics)
+    judgment_log: list[dict[str, Any]] = []
+
+    diagnosis = metrics.get("diagnosis")
+    if isinstance(diagnosis, dict):
+        diagnosis_summary = dict(diagnosis)
+        raw_log = diagnosis_summary.pop("judgment_log", None)
+        if isinstance(raw_log, list):
+            judgment_log = raw_log
+            diagnosis_summary["judgment_log_file"] = "diagnosis_judgment_log.json"
+            diagnosis_summary["judgment_log_entries"] = len(raw_log)
+        summary_metrics["diagnosis"] = diagnosis_summary
+
+    return summary_metrics, judgment_log
+
+
 async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     """Run NOVA benchmark evaluation.
 
@@ -56,12 +90,10 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         Dictionary of evaluation results
     """
     # Load NOVA dataset (images + ground truth from HuggingFace by default)
-    gt_dir_str = str(config.ground_truth_dir) if config.ground_truth_dir else None
     data_dir_str = str(config.data_dir) if config.data_dir else None
-    logger.info(f"Loading NOVA dataset (data_dir={data_dir_str}, gt_dir={gt_dir_str})")
+    logger.info(f"Loading NOVA dataset (data_dir={data_dir_str})")
     dataset = NovaDataset(
         data_dir=data_dir_str,
-        ground_truth_dir=gt_dir_str,
     )
 
     # Build adapter factory for custom base URLs (e.g. LM Studio)
@@ -87,188 +119,199 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         adapter_factory=adapter_factory,
     )
 
-    logger.info(f"Running NOVA evaluation with model: {config.model_name}")
-    logger.info(
-        "Task: {}, Tools: {}, Max turns: {}",
-        config.task.value,
-        config.use_tools,
-        config.max_turns,
-    )
+    try:
+        logger.info(f"Running NOVA evaluation with model: {config.model_name}")
+        logger.info(
+            "Task: {}, Tools: {}, Max turns: {}",
+            config.task.value,
+            config.use_tools,
+            config.max_turns,
+        )
 
-    # Process samples concurrently using batch_size as concurrency limit
-    semaphore = asyncio.Semaphore(config.batch_size)
-    results: list[AgenticResult] = []
-    ground_truth: list[dict[str, Any]] = []
+        # Process samples concurrently using batch_size as concurrency limit
+        semaphore = asyncio.Semaphore(config.batch_size)
+        results: list[AgenticResult] = []
+        ground_truth: list[dict[str, Any]] = []
 
-    # Pre-validate and collect work items; load cached results for skipped samples.
-    # max_samples caps the TOTAL samples considered (cached + new).
-    # Uses get_sample_metadata() to avoid loading all images into memory upfront;
-    # images are loaded on-demand inside _process_sample instead.
-    sample_limit = config.max_samples if config.max_samples > 0 else len(dataset)
-    work_items: list[int] = []
-    cached_count = 0
-    for i in range(len(dataset)):
-        if cached_count + len(work_items) >= sample_limit:
-            break
-        sample_meta = dataset.get_sample_metadata(i)
-        if config.skip_existing:
-            result_file = config.output_dir / f"sample_{i}.json"
-            if result_file.exists():
-                # Load cached result so metrics cover all completed samples
-                try:
-                    with result_file.open() as f:
-                        cached = json.load(f)
-                    results.append(
-                        AgenticResult(
-                            final_response=cached["response"],
-                            turns=(),
-                            total_tokens=cached.get("total_tokens", 0),
-                            confidence=cached.get("confidence", 0.0),
+        # Pre-validate and collect work items; load cached results for skipped samples.
+        # max_samples caps the TOTAL samples considered (cached + new).
+        # Uses get_sample_metadata() to avoid loading all images into memory upfront;
+        # images are loaded on-demand inside _process_sample instead.
+        sample_limit = config.max_samples if config.max_samples > 0 else len(dataset)
+        work_items: list[int] = []
+        cached_count = 0
+        for i in range(len(dataset)):
+            if cached_count + len(work_items) >= sample_limit:
+                break
+            sample_meta = dataset.get_sample_metadata(i)
+            if config.skip_existing:
+                result_file = config.output_dir / f"sample_{i}.json"
+                if result_file.exists():
+                    # Load cached result so metrics cover all completed samples
+                    try:
+                        with result_file.open() as f:
+                            cached = json.load(f)
+                        results.append(
+                            AgenticResult(
+                                final_response=cached["response"],
+                                turns=(),
+                                total_tokens=cached.get("total_tokens", 0),
+                                confidence=cached.get("confidence", 0.0),
+                            )
                         )
-                    )
-                    gt = dict(sample_meta["ground_truth"])
-                    img_w, img_h = sample_meta["image_size"]
-                    gt["image_width"] = img_w
-                    gt["image_height"] = img_h
-                    ground_truth.append(gt)
-                    cached_count += 1
-                except (json.JSONDecodeError, KeyError) as exc:
-                    logger.warning(f"Corrupt cached result {result_file}, re-processing: {exc}")
-                    # Fall through to re-process this sample
-                else:
-                    continue
-        if "ground_truth" not in sample_meta:
-            raise KeyError(f"Sample {i} missing ground truth data")
-        work_items.append(i)
+                        gt = dict(sample_meta["ground_truth"])
+                        img_w, img_h = sample_meta["image_size"]
+                        gt["image_width"] = img_w
+                        gt["image_height"] = img_h
+                        ground_truth.append(gt)
+                        cached_count += 1
+                    except (json.JSONDecodeError, KeyError) as exc:
+                        logger.warning(f"Corrupt cached result {result_file}, re-processing: {exc}")
+                        # Fall through to re-process this sample
+                    else:
+                        continue
+            if "ground_truth" not in sample_meta:
+                raise KeyError(f"Sample {i} missing ground truth data")
+            work_items.append(i)
 
-    if cached_count:
-        print(f"  Loaded {cached_count} cached results from previous run")  # noqa: T201
+        if cached_count:
+            print(f"  Loaded {cached_count} cached results from previous run")  # noqa: T201
 
-    async def _process_sample(
-        idx: int,
-    ) -> tuple[int, AgenticResult, dict[str, Any]]:
-        async with semaphore:
-            logger.info(f"Processing sample {idx + 1}/{len(dataset)}")
-            # Load image on demand — keeps peak memory at O(batch_size)
-            # instead of O(N) when all images were pre-loaded.
-            sample = dataset[idx]
-            image = sample["image"]
-            metadata = dict(sample.get("metadata", {}))
-            metadata.setdefault("clinical_history", "")
-            metadata.setdefault("modality", "MRI")
-            metadata.setdefault("image_id", f"sample_{idx}")
+        async def _process_sample(
+            idx: int,
+        ) -> tuple[int, AgenticResult, dict[str, Any]]:
+            async with semaphore:
+                logger.info(f"Processing sample {idx + 1}/{len(dataset)}")
+                # Load image on demand — keeps peak memory at O(batch_size)
+                # instead of O(N) when all images were pre-loaded.
+                sample = await asyncio.to_thread(dataset.__getitem__, idx)
+                image = sample["image"]
+                metadata = dict(sample.get("metadata", {}))
+                metadata.setdefault("clinical_history", "")
+                metadata.setdefault("modality", "MRI")
+                metadata.setdefault("image_id", f"sample_{idx}")
 
-            # Pass PIL Image directly — avoids temp-file PNG save + re-read
-            result = await processor.analyze(
-                images=image,
-                metadata=metadata,
-            )
-
-            # Build detailed tool call log for analysis.
-            tool_call_log: list[dict[str, Any]] = []
-            for turn in result.turns:
-                for tc in turn.tool_calls:
-                    tool_call_log.append({"name": tc.name, "arguments": tc.arguments})
-                for tr in turn.tool_results:
-                    # Capture search queries and key metadata (skip large blobs).
-                    meta: dict[str, Any] = {}
-                    for k in ("query", "search_type", "modality", "body_part", "results_count"):
-                        if k in tr.metadata:
-                            meta[k] = tr.metadata[k]
-                    tool_call_log.append(
-                        {
-                            "name": tr.tool_name,
-                            "result_description": tr.description,
-                            "success": tr.success,
-                            **meta,
-                        }
-                    )
-
-            result_file = config.output_dir / f"sample_{idx}.json"
-            with result_file.open("w") as f:
-                json.dump(
-                    {
-                        "sample_id": idx,
-                        "response": result.final_response,
-                        "num_turns": result.num_turns,
-                        "tools_used": list(result.get_tools_used()),
-                        "tool_call_log": tool_call_log,
-                        "confidence": result.confidence,
-                        "total_tokens": result.total_tokens,
-                    },
-                    f,
-                    indent=2,
-                    cls=_SafeEncoder,
+                # Pass PIL Image directly — avoids temp-file PNG save + re-read
+                result = await processor.analyze(
+                    images=image,
+                    metadata=metadata,
                 )
 
-            logger.info(
-                f"Sample {idx}: {result.num_turns} turns, "
-                f"{result.tool_call_count} tool calls, "
-                f"confidence: {result.confidence:.2f}"
+                # Build detailed tool call log for analysis.
+                tool_call_log: list[dict[str, Any]] = []
+                for turn in result.turns:
+                    for tc in turn.tool_calls:
+                        tool_call_log.append(
+                            {
+                                "name": tc.name,
+                                "arguments": tc.arguments
+                                if isinstance(tc.arguments, str)
+                                else deep_thaw(tc.arguments),
+                            }
+                        )
+                    for tr in turn.tool_results:
+                        # Capture search queries and key metadata (skip large blobs).
+                        meta: dict[str, Any] = {}
+                        for k in ("query", "search_type", "modality", "body_part", "results_count"):
+                            if k in tr.metadata:
+                                meta[k] = tr.metadata[k]
+                        tool_call_log.append(
+                            {
+                                "name": tr.tool_name,
+                                "result_description": tr.description,
+                                "success": tr.success,
+                                **meta,
+                            }
+                        )
+
+                sample_payload = {
+                    "sample_id": idx,
+                    "response": result.final_response,
+                    "num_turns": result.num_turns,
+                    "tools_used": list(result.get_tools_used()),
+                    "tool_call_log": tool_call_log,
+                    "confidence": result.confidence,
+                    "total_tokens": result.total_tokens,
+                }
+                result_file = config.output_dir / f"sample_{idx}.json"
+                await asyncio.to_thread(_write_json_file, result_file, sample_payload, _SafeEncoder)
+
+                logger.info(
+                    f"Sample {idx}: {result.num_turns} turns, "
+                    f"{result.tool_call_count} tool calls, "
+                    f"confidence: {result.confidence:.2f}"
+                )
+
+                gt = dict(sample["ground_truth"])
+                gt["image_width"] = image.width
+                gt["image_height"] = image.height
+                return idx, result, gt
+
+        failed_samples: list[tuple[int, str]] = []
+        if work_items:
+            raw = await asyncio.gather(
+                *(_process_sample(idx) for idx in work_items),
+                return_exceptions=True,
+            )
+            # Separate successes from failures
+            for item, idx in zip(raw, work_items, strict=True):
+                if isinstance(item, BaseException):
+                    logger.error(f"Sample {idx} failed: {item}")
+                    failed_samples.append((idx, str(item)))
+                else:
+                    results.append(item[1])
+                    ground_truth.append(item[2])
+
+        # Report failures (always print to stdout, not just logger, so errors
+        # are visible even without -v)
+        if failed_samples:
+            print(  # noqa: T201
+                f"  {len(failed_samples)}/{len(work_items)} samples failed: "
+                f"{[i for i, _ in failed_samples]}"
+            )
+            # Show first error to help diagnose API/auth issues
+            first_idx, first_err = failed_samples[0]
+            print(f"  First error (sample {first_idx}): {first_err[:300]}")  # noqa: T201
+
+        # Compute evaluation metrics (empty dict if no results)
+        metrics: dict[str, object] = {}
+        if results:
+            logger.info("Computing evaluation metrics...")
+            eval_set = set(config.eval_tasks) if config.eval_tasks else None
+            metrics = await compute_metrics(results, ground_truth, config.task, eval_set)
+        else:
+            logger.warning("All samples failed — skipping metric computation")
+
+        # Compute token cost summary stats
+        token_counts = [r.total_tokens for r in results]
+        token_summary: dict[str, object] = {}
+        if token_counts:
+            sorted_tokens = sorted(token_counts)
+            mid = len(sorted_tokens) // 2
+            median = (
+                sorted_tokens[mid]
+                if len(sorted_tokens) % 2 == 1
+                else (sorted_tokens[mid - 1] + sorted_tokens[mid]) / 2
+            )
+            token_summary = {
+                "mean_tokens": sum(token_counts) / len(token_counts),
+                "median_tokens": median,
+                "max_tokens": max(token_counts),
+                "total_tokens": sum(token_counts),
+            }
+
+        summary_metrics, diagnosis_judgment_log = _summary_metrics(metrics)
+        if diagnosis_judgment_log:
+            await asyncio.to_thread(
+                _write_json_file,
+                config.output_dir / "diagnosis_judgment_log.json",
+                diagnosis_judgment_log,
             )
 
-            gt = dict(sample["ground_truth"])
-            gt["image_width"] = image.width
-            gt["image_height"] = image.height
-            return idx, result, gt
-
-    failed_samples: list[tuple[int, str]] = []
-    if work_items:
-        raw = await asyncio.gather(
-            *(_process_sample(idx) for idx in work_items),
-            return_exceptions=True,
-        )
-        # Separate successes from failures
-        for item, idx in zip(raw, work_items, strict=True):
-            if isinstance(item, BaseException):
-                logger.error(f"Sample {idx} failed: {item}")
-                failed_samples.append((idx, str(item)))
-            else:
-                results.append(item[1])
-                ground_truth.append(item[2])
-
-    # Report failures (always print to stdout, not just logger, so errors
-    # are visible even without -v)
-    if failed_samples:
-        print(  # noqa: T201
-            f"  {len(failed_samples)}/{len(work_items)} samples failed: "
-            f"{[i for i, _ in failed_samples]}"
-        )
-        # Show first error to help diagnose API/auth issues
-        first_idx, first_err = failed_samples[0]
-        print(f"  First error (sample {first_idx}): {first_err[:300]}")  # noqa: T201
-
-    # Compute evaluation metrics (empty dict if no results)
-    metrics: dict[str, object] = {}
-    if results:
-        logger.info("Computing evaluation metrics...")
-        eval_set = set(config.eval_tasks) if config.eval_tasks else None
-        metrics = await compute_metrics(results, ground_truth, config.task, eval_set)
-    else:
-        logger.warning("All samples failed — skipping metric computation")
-
-    # Compute token cost summary stats
-    token_counts = [r.total_tokens for r in results]
-    token_summary: dict[str, object] = {}
-    if token_counts:
-        sorted_tokens = sorted(token_counts)
-        mid = len(sorted_tokens) // 2
-        median = (
-            sorted_tokens[mid]
-            if len(sorted_tokens) % 2 == 1
-            else (sorted_tokens[mid - 1] + sorted_tokens[mid]) / 2
-        )
-        token_summary = {
-            "mean_tokens": sum(token_counts) / len(token_counts),
-            "median_tokens": median,
-            "max_tokens": max(token_counts),
-            "total_tokens": sum(token_counts),
-        }
-
-    # Save summary (always, even if all samples failed)
-    summary_file = config.output_dir / "summary.json"
-    with summary_file.open("w") as f:
-        json.dump(
+        # Save summary (always, even if all samples failed)
+        await asyncio.to_thread(
+            _write_json_file,
+            config.output_dir / "summary.json",
             {
                 "config": {
                     "model": config.model_name,
@@ -277,23 +320,24 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "use_tools": config.use_tools,
                     "use_web_search": config.use_web_search,
                     "max_turns": config.max_turns,
+                    "diagnosis_judge_model": DEFAULT_SEMANTIC_MATCH_MODEL,
                 },
                 "num_samples": len(results),
                 "failed_samples": [{"sample_id": idx, "error": err} for idx, err in failed_samples],
-                "metrics": metrics,
+                "metrics": summary_metrics,
                 "token_summary": token_summary,
             },
-            f,
-            indent=2,
         )
 
-    logger.info(f"Results saved to {config.output_dir}")
-    if not results:
-        raise ValueError(
-            f"All {len(failed_samples)} samples failed. "
-            f"First error: {failed_samples[0][1][:200] if failed_samples else 'unknown'}"
-        )
-    return metrics
+        logger.info(f"Results saved to {config.output_dir}")
+        if not results:
+            raise ValueError(
+                f"All {len(failed_samples)} samples failed. "
+                f"First error: {failed_samples[0][1][:200] if failed_samples else 'unknown'}"
+            )
+        return metrics
+    finally:
+        await processor.aclose()
 
 
 async def compute_metrics(
@@ -332,6 +376,7 @@ async def compute_metrics(
 
     metrics: dict[str, object] = {}
     predictions = [r.final_response for r in results]
+    pending_metrics: dict[str, asyncio.Task[object]] = {}
 
     if _should_compute("caption"):
         pred_captions = []
@@ -356,7 +401,9 @@ async def compute_metrics(
             parts.extend(str(f) for f in caption.get("findings", []))
             pred_captions.append(" ".join(parts))
         gt_captions = [gt.get("caption", "") for gt in ground_truth]
-        metrics["caption"] = evaluate_caption(pred_captions, gt_captions)
+        pending_metrics["caption"] = asyncio.create_task(
+            asyncio.to_thread(evaluate_caption, pred_captions, gt_captions)
+        )
 
     if _should_compute("diagnosis"):
         pred_diagnoses = []
@@ -392,7 +439,9 @@ async def compute_metrics(
             if not diag:
                 logger.warning("Sample %d has empty ground truth diagnosis", i)
             gt_diagnoses.append(diag)
-        metrics["diagnosis"] = await evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
+        pending_metrics["diagnosis"] = asyncio.create_task(
+            evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
+        )
 
     if _should_compute("localization"):
         pred_boxes = []
@@ -446,7 +495,14 @@ async def compute_metrics(
                 }
             )
 
-        metrics["localization"] = evaluate_detection(pred_boxes, gt_boxes)
+        pending_metrics["localization"] = asyncio.create_task(
+            asyncio.to_thread(evaluate_detection, pred_boxes, gt_boxes)
+        )
+
+    if pending_metrics:
+        computed = await asyncio.gather(*pending_metrics.values())
+        for name, value in zip(pending_metrics, computed, strict=True):
+            metrics[name] = value
 
     return metrics
 
@@ -482,12 +538,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Path to local NOVA CSV directory (default: load from HuggingFace)",
-    )
-    parser.add_argument(
-        "--ground-truth-dir",
-        type=Path,
-        default=None,
-        help="Path to ground truth CSV directory (defaults to --data-dir)",
     )
     parser.add_argument(
         "--output-dir",
@@ -544,6 +594,12 @@ def parse_args() -> argparse.Namespace:
         help="Metrics to compute (default: all matching --task)",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
+    )
+    parser.add_argument(
         "--no-skip-existing",
         action="store_true",
         help="Reprocess existing results",
@@ -562,6 +618,9 @@ def main() -> None:
     """Main entry point."""
     args = parse_args()
 
+    if args.seed is not None:
+        random.seed(args.seed)
+
     # Configure logging
     if args.verbose:
         logger.enable("src")
@@ -575,7 +634,6 @@ def main() -> None:
         base_url=args.base_url,
         task=TaskType(args.task),
         data_dir=args.data_dir,
-        ground_truth_dir=args.ground_truth_dir,
         output_dir=args.output_dir,
         use_tools=args.use_tools,
         use_web_search=args.use_web_search,

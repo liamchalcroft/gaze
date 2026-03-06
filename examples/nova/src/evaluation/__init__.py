@@ -8,7 +8,6 @@ from pathlib import Path
 
 from beartype import beartype
 
-from .detection import evaluate_detection
 from .diagnosis import evaluate_diagnosis_nova_official
 
 
@@ -42,6 +41,8 @@ async def evaluate_async(
     result_metrics = {}
 
     if task == "localization":
+        from .detection import evaluate_detection
+
         # Validate required fields - fail fast on missing data
         pred_boxes = []
         for i, p in enumerate(preds):
@@ -174,6 +175,5 @@ def evaluate(
 __all__ = [
     "evaluate",
     "evaluate_async",
-    "evaluate_detection",
     "evaluate_diagnosis_nova_official",
 ]

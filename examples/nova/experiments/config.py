@@ -73,14 +73,14 @@ def _main_results() -> Iterator[tuple[str, dict[str, Any]]]:
 
 
 def _tool_ablation() -> Iterator[tuple[str, dict[str, Any]]]:
-    configs = [
-        ("single_turn", False, False),
-        ("agentic", False, False),
-        ("agentic", True, False),
-        ("agentic", False, True),
-        ("agentic", True, True),
+    configs: list[tuple[str, bool, bool, str]] = [
+        ("single_turn", False, False, "Single-shot baseline"),
+        ("agentic", False, False, "Multi-turn (no tools)"),
+        ("agentic", True, False, "Multi-turn + visual tools"),
+        ("agentic", False, True, "Multi-turn + web search"),
+        ("agentic", True, True, "Multi-turn + visual + search"),
     ]
-    for mode, tools, search in configs:
+    for mode, tools, search, _condition_label in configs:
         slug = run_label(ABLATION_LABEL, mode, tools, search, 10, "all")
         yield (
             slug,

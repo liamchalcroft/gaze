@@ -21,7 +21,7 @@ class TaskType(Enum):
 
 
 @beartype
-@dataclass
+@dataclass(frozen=True)
 class NOVAConfig:
     """Configuration for NOVA benchmark evaluation.
 
@@ -45,7 +45,6 @@ class NOVAConfig:
     # NOVA-specific settings
     task: TaskType = TaskType.ALL
     data_dir: Path | None = None  # Local CSV dir; None = load from HuggingFace
-    ground_truth_dir: Path | None = None  # Separate GT dir; None = use data_dir or HF
     output_dir: Path = field(default_factory=lambda: Path("./runs"))
     batch_size: int = 4
     eval_tasks: tuple[str, ...] | None = None  # None = use task; e.g. ("caption", "localization")

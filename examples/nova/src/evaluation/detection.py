@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -9,6 +10,8 @@ from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 # Import shared IoU utility
 from radiant_harness.utils.iou import compute_iou
+
+logger = logging.getLogger(__name__)
 
 # NOVA benchmark IoU thresholds
 #
@@ -95,6 +98,11 @@ def rescale_and_clamp_box(
     if max_x > w or max_y > h:
         scale_x = w / max_x if max_x > w else 1.0
         scale_y = h / max_y if max_y > h else 1.0
+        logger.debug(
+            "rescale_and_clamp_box: box [%.1f,%.1f,%.1f,%.1f] exceeds %dx%d, "
+            "rescaling x=%.3f y=%.3f",
+            x1, y1, x2, y2, int(w), int(h), scale_x, scale_y,
+        )
         x1 *= scale_x
         x2 *= scale_x
         y1 *= scale_y
@@ -303,16 +311,12 @@ def evaluate_detection(
     res30 = m30.compute()
     map30 = float(res30["map"])
 
-    # mAP at standard threshold
-    m50 = MeanAveragePrecision(iou_thresholds=[IOU_THRESHOLD_STANDARD])
-    m50.update(preds_tensors, refs_tensors)
-    res50 = m50.compute()
-    map50 = float(res50["map"])
-
-    # mAP@[50:95] per NOVA protocol
+    # mAP@[50:95] per NOVA protocol. torchmetrics also exposes map_50 from
+    # the same pass, so we avoid a redundant full traversal for mAP@0.5.
     m5095 = MeanAveragePrecision(iou_thresholds=_MAP_RANGE_IOU_THRESHOLDS)
     m5095.update(preds_tensors, refs_tensors)
     res5095 = m5095.compute()
+    map50 = float(res5095["map_50"])
     map50_95 = float(res5095["map"])
 
     return {

@@ -176,7 +176,13 @@ def perform_statistical_test(
     if test_type == "ttest":
         result = stats.ttest_ind(group1, group2, alternative=alternative)
         statistic, p_value = float(result.statistic), float(result.pvalue)
-        test_name = "Student's t-test"
+        test_name = "Student's t-test (independent)"
+    elif test_type == "paired_ttest":
+        if n1 != n2:
+            raise ValueError("Paired t-test requires equal-length groups (same samples, two conditions)")
+        result = stats.ttest_rel(group1, group2, alternative=alternative)
+        statistic, p_value = float(result.statistic), float(result.pvalue)
+        test_name = "Paired t-test"
     elif test_type == "mannwhitney":
         result = stats.mannwhitneyu(group1, group2, alternative=alternative)
         statistic, p_value = float(result.statistic), float(result.pvalue)

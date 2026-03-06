@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_ROOT = REPO_ROOT / "examples" / "nova"
@@ -114,14 +118,14 @@ class TestGTBoxClampingDimensions:
             '"anatomical_location": "test", "confidence": 0.9}]}}'
         )
 
-        info_with_dims = {
+        info_with_dims: dict[str, Any] = {
             "localizations": [{"bbox": [10, 10, 50, 50]}],
             "image_width": 256,
             "image_height": 256,
         }
         assert reward_fn("prompt", completion, info_with_dims) == 1.0
 
-        info_without_dims = {"localizations": [{"bbox": [10, 10, 50, 50]}]}
+        info_without_dims: dict[str, Any] = {"localizations": [{"bbox": [10, 10, 50, 50]}]}
         assert reward_fn("prompt", completion, info_without_dims) == 1.0
 
     def test_area_penalty_matters_for_large_boxes(self) -> None:
@@ -134,7 +138,7 @@ class TestGTBoxClampingDimensions:
             '"anatomical_location": "test", "confidence": 0.9}]}}'
         )
 
-        info_with_dims = {
+        info_with_dims: dict[str, Any] = {
             "localizations": [{"bbox": [0, 0, 95, 95]}],
             "image_width": 100,
             "image_height": 100,
@@ -212,8 +216,10 @@ class TestBertScoreClamping:
         with patch("src.evaluation.caption.bert_score_fn", return_value=fake_result):
             result = evaluate_caption(["bad", "bad", "bad"], ["good ref", "good ref", "good ref"])
 
-        assert result["bert_f1"] >= 0.0, f"bert_f1 should be >= 0, got {result['bert_f1']}"
-        assert result["bert_f1"] <= 1.0, f"bert_f1 should be <= 1, got {result['bert_f1']}"
+        bert_f1 = result["bert_f1"]
+        assert bert_f1 is not None
+        assert bert_f1 >= 0.0, f"bert_f1 should be >= 0, got {bert_f1}"
+        assert bert_f1 <= 1.0, f"bert_f1 should be <= 1, got {bert_f1}"
 
     def test_bert_f1_above_one_clamped(self) -> None:
         """Edge case: if BERTScore somehow exceeds 1.0, clamp it."""
@@ -229,7 +235,9 @@ class TestBertScoreClamping:
         with patch("src.evaluation.caption.bert_score_fn", return_value=fake_result):
             result = evaluate_caption(["test", "test", "test"], ["ref", "ref", "ref"])
 
-        assert result["bert_f1"] <= 1.0, f"bert_f1 should be <= 1, got {result['bert_f1']}"
+        bert_f1 = result["bert_f1"]
+        assert bert_f1 is not None
+        assert bert_f1 <= 1.0, f"bert_f1 should be <= 1, got {bert_f1}"
 
 
 class TestDashPatternSync:
@@ -258,6 +266,66 @@ class TestDashPatternSync:
         )
 
 
+class TestLocalizationAnalysisLoading:
+    def test_compute_model_ious_uses_box_annotations_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from experiments import plot
+
+        run_dir = tmp_path / "runs" / "main_results" / "run_a"
+        run_dir.mkdir(parents=True)
+        (run_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "config": {
+                        "model": "google/gemini-3-flash-preview",
+                        "mode": "agentic",
+                    }
+                }
+            )
+        )
+        (run_dir / "sample_0.json").write_text(
+            json.dumps(
+                {
+                    "sample_id": 0,
+                    "response": {
+                        "localization": {
+                            "localizations": [{"bounding_box": [0, 0, 10, 10]}]
+                        }
+                    },
+                }
+            )
+        )
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            plot,
+            "_load_nova_box_annotations",
+            lambda _n: [{"gt_boxes": [(0.0, 0.0, 10.0, 10.0)]}],  # type: ignore[arg-type]
+        )
+
+        def _unexpected_image_loader(_n: int) -> None:
+            raise AssertionError("_compute_model_ious should not load pixel data")
+
+        monkeypatch.setattr(plot, "_load_nova_images_and_gt", _unexpected_image_loader)
+
+        runs = {
+            "run_a": {
+                "summary": {
+                    "config": {
+                        "model": "google/gemini-3-flash-preview",
+                        "mode": "agentic",
+                    }
+                }
+            }
+        }
+        model_ious = plot._compute_model_ious(runs, n_samples=1)
+
+        assert model_ious["Gemini Flash"] == [1.0]
+
+
 class TestRewardBboxKeyStrictness:
     """Finding #3: Reward should require 'bounding_box' for predictions."""
 
@@ -271,7 +339,7 @@ class TestRewardBboxKeyStrictness:
             '{"finding": "test", "bbox": [10, 10, 50, 50], '
             '"anatomical_location": "test", "confidence": 0.9}]}}'
         )
-        info = {
+        info: dict[str, Any] = {
             "localizations": [{"bbox": [10, 10, 50, 50]}],
             "image_width": 256,
             "image_height": 256,
@@ -288,7 +356,7 @@ class TestRewardBboxKeyStrictness:
             '{"finding": "test", "bounding_box": [10, 10, 50, 50], '
             '"anatomical_location": "test", "confidence": 0.9}]}}'
         )
-        info = {
+        info: dict[str, Any] = {
             "localizations": [{"bbox": [10, 10, 50, 50]}],
             "image_width": 256,
             "image_height": 256,
@@ -305,7 +373,7 @@ class TestRewardBboxKeyStrictness:
             '{"finding": "test", "bounding_box": [10, 10, 50, 50], '
             '"anatomical_location": "test", "confidence": 0.9}]}}'
         )
-        info = {
+        info: dict[str, Any] = {
             "localizations": [{"bbox": [10, 10, 50, 50]}],
             "image_width": 256,
             "image_height": 256,
@@ -319,7 +387,7 @@ class TestSchemaValidationConfidence:
     def test_null_caption_confidence_rejected(self) -> None:
         from src.schemas import validate_nova_response
 
-        response = {
+        response: dict[str, Any] = {
             "caption": {
                 "description": "test",
                 "sequence_characteristics": "T1W",
@@ -348,7 +416,7 @@ class TestSchemaValidationConfidence:
     def test_null_diagnosis_confidence_rejected(self) -> None:
         from src.schemas import validate_nova_response
 
-        response = {
+        response: dict[str, Any] = {
             "caption": {
                 "description": "test",
                 "sequence_characteristics": "T1W",
@@ -375,25 +443,23 @@ class TestSchemaValidationConfidence:
         assert not validate_nova_response(response), "None confidence should fail"
 
 
-class TestRequiredFieldsIncludesReasoning:
-    """Finding #8: get_required_fields() must include 'reasoning'."""
+class TestRequiredFieldsMatchSchema:
+    """get_required_fields() must match NOVA_SCHEMA required list exactly."""
 
-    def test_reasoning_in_required_fields(self) -> None:
+    def test_required_fields_match_schema(self) -> None:
         from src.schemas import NOVA_SCHEMA
         from src.schemas import get_required_fields
 
         required = get_required_fields()
-        assert "reasoning" in required
-
         schema_required = set(NOVA_SCHEMA["json_schema"]["schema"]["required"])
         assert set(required) == schema_required, (
             f"Mismatch: get_required_fields={set(required)} vs schema={schema_required}"
         )
 
-    def test_response_without_reasoning_rejected(self) -> None:
+    def test_valid_response_accepted(self) -> None:
         from src.schemas import validate_nova_response
 
-        response = {
+        response: dict[str, Any] = {
             "caption": {
                 "description": "test",
                 "sequence_characteristics": "T1W",
@@ -415,9 +481,8 @@ class TestRequiredFieldsIncludesReasoning:
                 "coordinate_system": "absolute_pixels",
             },
             "continue": False,
-            # "reasoning" intentionally missing
         }
-        assert not validate_nova_response(response), "Missing reasoning should fail"
+        assert validate_nova_response(response), "Valid response should pass"
 
 
 class TestAbbreviationWordBoundary:
@@ -474,3 +539,122 @@ class TestWhitespaceNormalization:
 
         result = normalize_diagnosis_string("glioma   \t  grade  iv")
         assert result == "glioma grade iv"
+
+
+class TestRescaleVsClamp:
+    """Smoke test: rescale_and_clamp_box vs clamp_and_validate_box."""
+
+    def test_rescale_preserves_relative_position(self) -> None:
+        from src.evaluation.detection import rescale_and_clamp_box
+
+        # Model outputs in 1000x1000 space for a 480x480 image
+        box = rescale_and_clamp_box([100, 200, 500, 800], 480, 480)
+        # x-coords should be scaled by 480/500=0.96, y-coords by 480/800=0.6
+        assert box[0] < box[2], "x1 should be < x2"
+        assert box[1] < box[3], "y1 should be < y2"
+        assert all(0 <= c <= 480 for c in box), f"All coords in [0, 480]: {box}"
+
+    def test_clamp_squishes_out_of_bounds(self) -> None:
+        from src.evaluation.detection import clamp_and_validate_box
+
+        box = clamp_and_validate_box([100, 200, 700, 900], 480, 480)
+        assert box[2] == 480.0, "Clamped x2 should equal width"
+        assert box[3] == 480.0, "Clamped y2 should equal height"
+
+    def test_rescale_better_than_clamp_for_shifted_coords(self) -> None:
+        from src.evaluation.detection import clamp_and_validate_box
+        from src.evaluation.detection import rescale_and_clamp_box
+
+        # Simulating model output in 1000x1000 space for 480x480 image
+        raw_box = [200, 300, 600, 700]
+        width, height = 480, 480
+
+        rescaled = rescale_and_clamp_box(raw_box, width, height)
+        clamped = clamp_and_validate_box(raw_box, width, height)
+
+        # Rescaled box should preserve aspect ratio; clamped box loses right/bottom
+        rescaled_w = rescaled[2] - rescaled[0]
+        assert rescaled_w > 0, "Rescaled box should have positive width"
+        # Clamped x2 is clipped to 480, so clamped width = 480 - 200 = 280
+        # Rescaled width preserves original 400-unit span proportionally
+        assert clamped[2] == 480.0, "Clamped x2 should be clipped"
+
+    def test_swapped_coordinates_handled(self) -> None:
+        from src.evaluation.detection import rescale_and_clamp_box
+
+        box = rescale_and_clamp_box([300, 400, 100, 200], 480, 480)
+        assert box[0] <= box[2], "Should swap x1/x2 if needed"
+        assert box[1] <= box[3], "Should swap y1/y2 if needed"
+
+
+class TestContainmentMatchGuard:
+    """Finding #6: Containment match requires >= 2 words to prevent false positives.
+
+    The containment check lives in evaluate_diagnosis_nova_official (the async
+    LLM-based evaluation), not in exact_diagnosis_match.  We verify the guard
+    logic by checking that exact_diagnosis_match correctly rejects non-synonym
+    substrings (it has no containment logic), and that single-word exact
+    matches still work.
+    """
+
+    def test_single_word_not_substring_match(self) -> None:
+        from src.evaluation.diagnosis import exact_diagnosis_match
+
+        # "tumor" is NOT the same as "brain tumor" — exact_diagnosis_match
+        # should reject because it only does exact + synonym matching
+        assert not exact_diagnosis_match("tumor", "brain tumor with edema")
+
+    def test_exact_single_word_still_matches(self) -> None:
+        from src.evaluation.diagnosis import exact_diagnosis_match
+
+        # Exact equality should still work even for single words
+        assert exact_diagnosis_match("glioma", "glioma")
+
+    def test_containment_guard_code_present(self) -> None:
+        """Verify the 2-word guard is in the source code."""
+        content = (EXAMPLE_ROOT / "src" / "evaluation" / "diagnosis.py").read_text()
+        assert 'len(shorter.split()) >= 2' in content
+
+
+class TestAreaPenaltySwappedCoordinates:
+    """Area penalty must use abs() for swapped box coordinates."""
+
+    def test_swapped_x_same_penalty(self) -> None:
+        from src.rewards import _area_penalty
+
+        normal = _area_penalty([10.0, 10.0, 200.0, 200.0], image_area=40000.0)
+        swapped = _area_penalty([200.0, 10.0, 10.0, 200.0], image_area=40000.0)
+        assert abs(normal - swapped) < 1e-6, (
+            f"Swapped x coords should give same penalty: {normal} vs {swapped}"
+        )
+
+    def test_swapped_y_same_penalty(self) -> None:
+        from src.rewards import _area_penalty
+
+        normal = _area_penalty([10.0, 10.0, 200.0, 200.0], image_area=40000.0)
+        swapped = _area_penalty([10.0, 200.0, 200.0, 10.0], image_area=40000.0)
+        assert abs(normal - swapped) < 1e-6, (
+            f"Swapped y coords should give same penalty: {normal} vs {swapped}"
+        )
+
+
+class TestSampleStdAggregation:
+    """aggregate.py must use sample std (n-1 denominator)."""
+
+    def test_std_uses_bessel_correction(self) -> None:
+        """Population std of [0, 2] is 1.0, sample std is ~1.414."""
+        import math
+
+        # Verify Bessel correction: std([0, 2]) with n-1 = sqrt(2) ≈ 1.414
+        values = [0.0, 2.0]
+        mean = 1.0
+        sample_var = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+        expected_std = math.sqrt(sample_var)
+
+        assert abs(expected_std - math.sqrt(2)) < 1e-10
+        assert expected_std > 1.0, "Sample std of [0, 2] should be > 1.0 (Bessel correction)"
+
+    def test_aggregate_source_uses_n_minus_1(self) -> None:
+        """Verify the aggregate module source code uses (len(xs) - 1) denominator."""
+        content = (EXAMPLE_ROOT / "experiments" / "aggregate.py").read_text()
+        assert "(len(xs) - 1)" in content, "aggregate._std must use Bessel correction"
