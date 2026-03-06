@@ -584,13 +584,14 @@ class AgenticProcessorBase(ABC):
     ) -> AgenticResult:
         """Run the analysis loop."""
         system_prompt = self.get_system_prompt(images=images, metadata=metadata)
-        policy_lines = [
-            f"Multi-turn session with a maximum of {self.max_turns} turns.",
-            'Return JSON every turn with a boolean field "continue".',
-            'Set "continue": true when you need more tools/analysis; false when final.',
-            "Final response must satisfy the provided response schema.",
-        ]
-        system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
+        if self.max_turns > 1:
+            policy_lines = [
+                f"Multi-turn session with a maximum of {self.max_turns} turns.",
+                'Return JSON every turn with a boolean field "continue".',
+                'Set "continue": true when you need more tools/analysis; false when final.',
+                "Final response must satisfy the provided response schema.",
+            ]
+            system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
         if tool_registry and self.max_turns > 1:
             tool_docs = tool_registry.get_documenter().generate_prompt_documentation()

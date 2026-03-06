@@ -15,6 +15,8 @@ from beartype import beartype
 from verifiers.types import Messages
 from verifiers.types import State
 
+from radiant_harness._frozen import deep_thaw
+
 from .. import AgenticProcessorBase
 from ..types import AgenticResult
 
@@ -69,12 +71,13 @@ class RadiantHarnessAdapter:
         agentic_result = await self.processor.analyze(images=images, metadata=metadata)
         tool_calls = self._collect_tool_calls(agentic_result)
         tool_results = self._collect_tool_results(agentic_result)
-        response_text = json.dumps(agentic_result.final_response)
+        response_payload = deep_thaw(agentic_result.final_response)
+        response_text = json.dumps(response_payload)
         should_continue = bool(agentic_result.final_response.get("continue"))
 
         return {
-            "response": agentic_result.final_response,
-            "messages": self._convert_response_to_messages(response_text, tool_results),
+            "response": response_payload,
+            "messages": self._convert_response_to_messages(response_text, tool_calls, tool_results),
             "tool_calls": tool_calls,
             "turns": agentic_result.num_turns,
             "is_complete": not should_continue,
@@ -87,7 +90,9 @@ class RadiantHarnessAdapter:
             {
                 "id": tool_call.id,
                 "name": tool_call.name,
-                "arguments": tool_call.arguments,
+                "arguments": tool_call.arguments
+                if isinstance(tool_call.arguments, str)
+                else deep_thaw(tool_call.arguments),
             }
             for turn in result.turns
             for tool_call in turn.tool_calls
@@ -101,7 +106,7 @@ class RadiantHarnessAdapter:
                 "tool_name": tool_result.tool_name,
                 "description": tool_result.description,
                 "error": tool_result.error,
-                "metadata": dict(tool_result.metadata),
+                "metadata": deep_thaw(tool_result.metadata),
             }
             for turn in result.turns
             for tool_result in turn.tool_results
@@ -111,6 +116,7 @@ class RadiantHarnessAdapter:
     def _convert_response_to_messages(
         self,
         response_text: str,
+        tool_calls: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
     ) -> Messages:
         """Convert a harness response to verifiers messages format."""
@@ -126,11 +132,13 @@ class RadiantHarnessAdapter:
 
         if tool_results:
             for idx, tool_result in enumerate(tool_results):
+                # Use actual tool call ID when available, fall back to index
+                tool_call_id = tool_calls[idx]["id"] if idx < len(tool_calls) else str(idx)
                 messages.append(
                     {
                         "role": "tool",
                         "content": json.dumps(tool_result),
-                        "tool_call_id": str(idx),
+                        "tool_call_id": tool_call_id,
                     }
                 )
 

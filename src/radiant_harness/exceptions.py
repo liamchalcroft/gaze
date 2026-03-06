@@ -85,10 +85,11 @@ class AgenticProcessingError(HarnessError):
         super().__init__(message)
 
 
-class SchemaValidationError(HarnessError):
+class SchemaValidationError(AgenticProcessingError):
     """Raised when a response fails schema validation.
 
     Attributes:
+        turns_completed: Number of turns completed before the invalid response
         missing_fields: List of missing required fields
         response: The invalid response
     """
@@ -96,12 +97,13 @@ class SchemaValidationError(HarnessError):
     def __init__(
         self,
         message: str,
+        turns_completed: int,
         missing_fields: list[str] | None = None,
         response: dict[str, Any] | None = None,
     ) -> None:
         self.missing_fields = missing_fields or []
         self.response = response
-        super().__init__(message)
+        super().__init__(message, turns_completed=turns_completed, partial_response=response)
 
 
 class ModelError(HarnessError):

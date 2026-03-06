@@ -20,7 +20,7 @@ def main() -> int:
     print("To run the NOVA benchmark example:")
     print()
     print("    cd examples/nova")
-    print("    python -m src.cli task=localization model.name=openai/gpt-4o")
+    print("    python -m src.cli --task localization --model openai/gpt-4o")
     print()
     print("For more information, see the README.md or CLAUDE.md files.")
     return 0

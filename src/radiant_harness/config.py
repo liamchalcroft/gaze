@@ -11,12 +11,15 @@ import ipaddress
 import threading
 from collections.abc import Iterator
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field
 from types import MappingProxyType
 from urllib.parse import urlparse
 
 from beartype import beartype
+
+from radiant_harness._frozen import deep_freeze
 
 
 @dataclass(frozen=True)
@@ -234,7 +237,7 @@ class SearchConfig:
     rate_limit_delay_seconds: float = 1.0
     max_results_per_engine: int = 5
     max_total_results: int = 10
-    max_content_preview_length: int = 2000
+    max_content_preview_length: int = 500
     max_snippet_length: int = 100
     max_content_for_llm: int = 5000
     ncbi_base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
@@ -321,12 +324,11 @@ class RankingWeights:
                 raise ValueError(f"{attr} must be >= 0, got {val}")
         if self.recency_decay_years < 1:
             raise ValueError(f"recency_decay_years must be >= 1, got {self.recency_decay_years}")
-        # Deep-freeze the nested dict to enforce immutability
-        if not isinstance(self.content_type_boosts, MappingProxyType):
-            frozen = MappingProxyType(
-                {k: MappingProxyType(dict(v)) for k, v in self.content_type_boosts.items()}
-            )
-            object.__setattr__(self, "content_type_boosts", frozen)
+        # Deep-freeze nested mappings even when callers pass pre-wrapped proxies.
+        frozen = deep_freeze(self.content_type_boosts)
+        if not isinstance(frozen, MappingProxyType):
+            raise TypeError("content_type_boosts must freeze to a mapping proxy")
+        object.__setattr__(self, "content_type_boosts", frozen)
 
 
 @dataclass(frozen=True)
@@ -398,36 +400,49 @@ class HarnessConfig:
 
 
 class _ConfigHolder:
-    """Thread-safe container for global configuration.
+    """Container for global defaults plus context-local overrides.
 
-    Uses a class to avoid module-level global statement while maintaining
-    singleton pattern for configuration management.
+    ``set()`` updates the process-wide default config. ``get()`` first checks
+    for an active context override so concurrent threads/tasks can isolate
+    temporary config changes without stomping on each other.
     """
 
     _lock = threading.Lock()
     _config: HarnessConfig = HarnessConfig()
+    _context_config: ContextVar[HarnessConfig | None] = ContextVar(
+        "radiant_harness_context_config",
+        default=None,
+    )
 
     @classmethod
     def get(cls) -> HarnessConfig:
-        """Get the current configuration.
-
-        No lock needed: Python's GIL makes reference reads atomic.
-        The write-side lock on set() is sufficient for correctness.
-        """
-        return cls._config
+        """Get the effective configuration for the current thread/task."""
+        context_config = cls._context_config.get()
+        return context_config if context_config is not None else cls._config
 
     @classmethod
     def set(cls, config: HarnessConfig) -> None:
-        """Set the configuration."""
+        """Set the global default configuration."""
         with cls._lock:
             cls._config = config
+
+    @classmethod
+    def set_context(cls, config: HarnessConfig):
+        """Set a context-local configuration override."""
+        return cls._context_config.set(config)
+
+    @classmethod
+    def reset_context(cls, token) -> None:
+        """Reset the current context-local override."""
+        cls._context_config.reset(token)
 
 
 @beartype
 def get_config() -> HarnessConfig:
     """Get the current default configuration.
 
-    Thread-safe access to the global configuration instance.
+    Returns the context-local override when one is active, otherwise the
+    process-wide default configuration.
 
     Returns:
         The global default HarnessConfig instance
@@ -467,10 +482,11 @@ def reset_config() -> None:
 
 @contextlib.contextmanager
 def config_context(config: HarnessConfig) -> Iterator[HarnessConfig]:
-    """Temporarily replace the global configuration.
+    """Temporarily override configuration for the current thread/task only.
 
-    Saves the current config, applies *config*, and restores the
-    original on exit — even if the body raises.
+    This does not mutate the process-wide default set by :func:`set_config`.
+    Nested contexts restore correctly, and concurrent threads/tasks keep their
+    own overrides.
 
     Args:
         config: Temporary configuration to use inside the block.
@@ -486,9 +502,8 @@ def config_context(config: HarnessConfig) -> Iterator[HarnessConfig]:
             ...
         # original config is restored here
     """
-    previous = _ConfigHolder.get()
-    _ConfigHolder.set(config)
+    token = _ConfigHolder.set_context(config)
     try:
         yield config
     finally:
-        _ConfigHolder.set(previous)
+        _ConfigHolder.reset_context(token)

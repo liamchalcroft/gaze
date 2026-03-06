@@ -6,6 +6,7 @@ and the verifiers package for RL training and evaluation.
 
 from __future__ import annotations
 
+import os
 from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,7 +38,8 @@ def _safe_resolve_image_path(base: Path, relative: str) -> str:
     # The resolved path must either *be* the base directory or start with
     # it followed by a separator (to avoid prefix confusion like
     # /data/images vs /data/images_evil).
-    if resolved != base_resolved and not str(resolved).startswith(str(base_resolved) + "/"):
+    # Use os.sep for cross-platform compatibility.
+    if resolved != base_resolved and not str(resolved).startswith(str(base_resolved) + os.sep):
         raise ValueError(
             f"Image path traversal blocked: '{relative}' resolves outside base directory"
         )

@@ -28,6 +28,7 @@ import aiohttp
 from beartype import beartype
 from loguru import logger
 
+from radiant_harness._frozen import deep_freeze
 from radiant_harness.cache import TTLCache
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import SearchConfig
@@ -115,7 +116,7 @@ def _atexit_cleanup_temp_dirs() -> None:
 
 atexit.register(_atexit_cleanup_temp_dirs)
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
@@ -130,6 +131,8 @@ def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
         value = value[:max_length]
     return value
 
+
+_PMCID_RE = re.compile(r"^PMC\d{1,10}$")
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
@@ -163,8 +166,10 @@ class ImageSearchResult:
     metadata: Mapping[str, Any] = MappingProxyType({})
 
     def __post_init__(self) -> None:
-        if not isinstance(self.metadata, MappingProxyType):
-            object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        frozen = deep_freeze(self.metadata)
+        if not isinstance(frozen, MappingProxyType):
+            raise TypeError("metadata must freeze to a mapping proxy")
+        object.__setattr__(self, "metadata", frozen)
 
 
 class ImageSearchError(SearchEngineError):
@@ -371,6 +376,8 @@ class OpenISearchEngine(ImageSearchEngine):
             body_part = self._extract_body_part(combined_text)
 
             pmcid = _sanitize_api_field(item.get("pmcid", ""), max_length=30)
+            if pmcid and not _PMCID_RE.match(pmcid):
+                pmcid = ""
             source_url = (
                 f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
                 if pmcid
@@ -393,8 +400,12 @@ class OpenISearchEngine(ImageSearchEngine):
                 reliability_score=0.90,
                 metadata={
                     "pmcid": pmcid,
-                    "mesh_terms": item.get("meshMajor", []),
-                    "image_type": item.get("imgType", ""),
+                    "mesh_terms": [
+                        _sanitize_api_field(term, max_length=100)
+                        for term in item.get("meshMajor", [])
+                        if isinstance(term, str)
+                    ],
+                    "image_type": _sanitize_api_field(str(item.get("imgType", "")), max_length=50),
                 },
             )
             results.append(result)
@@ -520,8 +531,13 @@ class MedicalImageSearchManager:
 
     async def _get_download_session(self) -> aiohttp.ClientSession:
         if self._download_session is None or self._download_session.closed:
+            import radiant_harness
+
             self._download_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=30),
+                headers={
+                    "User-Agent": f"radiant_harness/{radiant_harness.__version__}",
+                },
             )
         return self._download_session
 
@@ -717,7 +733,7 @@ class MedicalImageSearchManager:
         # SSRF gate: reject non-HTTPS, private, and loopback URLs before
         # making any network request.  The URL originates from an untrusted
         # external API response (e.g. Open-i).
-        _validate_download_url(result.image_url)
+        await asyncio.to_thread(_validate_download_url, result.image_url)
 
         async with session.get(
             result.image_url,

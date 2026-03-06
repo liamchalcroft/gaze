@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from beartype import beartype
 from loguru import logger
 
+from radiant_harness.config import get_config
 from radiant_harness.retrieval.image_search import ImageSearchError
 from radiant_harness.retrieval.web_search import SearchError
 from radiant_harness.tools.registry import Tool
@@ -36,7 +37,7 @@ async def _execute_search_web(
     try:
         manager = registry.get_web_search_manager()
         search_results = await manager.search(query, search_type=search_type)
-    except SearchError as e:
+    except (SearchError, ValueError) as e:
         return ToolResult(
             tool_name="search_web",
             description=f"PubMed search failed for '{query}'",
@@ -51,10 +52,15 @@ async def _execute_search_web(
             metadata={"query": query, "search_type": search_type, "results_count": 0},
         )
 
+    search_config = get_config().search
+    max_preview = search_config.max_content_preview_length
+    max_total = search_config.max_content_for_llm
+
     formatted_results: list[str] = []
     sources: set[str] = set()
     total_reliability = 0.0
     content_types: set[str] = set()
+    total_length = len("\n## PubMed Search Results\n\n")
 
     for i, result in enumerate(search_results, 1):
         sources.add(result.source)
@@ -71,12 +77,22 @@ async def _execute_search_web(
         if result.journal:
             lines.append(f"   **Journal:** {result.journal}")
         if result.content and result.content != result.title:
-            content_preview = result.content[:500] + ("..." if len(result.content) > 500 else "")
+            content_preview = result.content[:max_preview] + (
+                "..." if len(result.content) > max_preview else ""
+            )
             lines.append(f"   **Content:** {content_preview}")
         if result.extracted_entities:
             lines.append(f"   **Key terms:** {', '.join(result.extracted_entities[:5])}")
         lines.append(f"   **URL:** {result.url}")
-        formatted_results.append("\n".join(lines))
+
+        entry = "\n".join(lines)
+        entry_cost = len(entry) + 2  # +2 for "\n\n" separator
+        if total_length + entry_cost > max_total and formatted_results:
+            remaining = len(search_results) - i + 1
+            formatted_results.append(f"[{remaining} more results truncated]")
+            break
+        formatted_results.append(entry)
+        total_length += entry_cost
 
     formatted_summary = "\n## PubMed Search Results\n\n" + "\n\n".join(formatted_results)
     avg_reliability = total_reliability / len(search_results)
@@ -117,7 +133,7 @@ async def _execute_search_images(
             modality=modality_filter,
             body_part=body_part_filter,
         )
-    except ImageSearchError as e:
+    except (ImageSearchError, ValueError) as e:
         return ToolResult(
             tool_name="search_images",
             description=f"Image search failed for '{query}'",
@@ -137,9 +153,14 @@ async def _execute_search_images(
             },
         )
 
+    search_config = get_config().search
+    max_preview = search_config.max_content_preview_length
+    max_total = search_config.max_content_for_llm
+
     formatted_results: list[str] = []
     modalities_found: set[str] = set()
     body_parts_found: set[str] = set()
+    total_length = len("\n## Reference Medical Images\n\n")
 
     for i, result in enumerate(search_results, 1):
         if result.modality:
@@ -153,13 +174,23 @@ async def _execute_search_images(
             f"   **Modality:** {result.modality or 'Unknown'} | **Body Part:** {result.body_part or 'Unknown'}",
         ]
         if result.caption:
-            caption_preview = result.caption[:400] + ("..." if len(result.caption) > 400 else "")
+            caption_preview = result.caption[:max_preview] + (
+                "..." if len(result.caption) > max_preview else ""
+            )
             lines.append(f"   **Caption:** {caption_preview}")
         if result.article_title:
             lines.append(f"   **Article:** {result.article_title[:100]}")
         lines.append(f"   **Image URL:** {result.image_url}")
         lines.append(f"   **Source Article:** {result.source_url}")
-        formatted_results.append("\n".join(lines))
+
+        entry = "\n".join(lines)
+        entry_cost = len(entry) + 2
+        if total_length + entry_cost > max_total and formatted_results:
+            remaining = len(search_results) - i + 1
+            formatted_results.append(f"[{remaining} more results truncated]")
+            break
+        formatted_results.append(entry)
+        total_length += entry_cost
 
     formatted_summary = "\n## Reference Medical Images\n\n" + "\n\n".join(formatted_results)
 

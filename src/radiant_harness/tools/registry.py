@@ -340,6 +340,8 @@ class ToolRegistry:
         image_path: Path | None = None,
         tools: list[Tool] | None = None,
         max_history: int = 100,
+        web_search_manager: Any | None = None,
+        image_search_manager: Any | None = None,
     ) -> None:
         """Initialize refactored tool registry."""
         # Initialize specialized managers
@@ -352,8 +354,10 @@ class ToolRegistry:
 
         # Lazily-created search managers — reused across tool calls within a
         # single agentic session to keep TCP connections alive.
-        self._web_search_manager: WebSearchManager | None = None
-        self._image_search_manager: MedicalImageSearchManager | None = None
+        self._web_search_manager = web_search_manager
+        self._image_search_manager = image_search_manager
+        self._owns_web_search_manager = web_search_manager is None
+        self._owns_image_search_manager = image_search_manager is None
 
         # Set initial image if provided
         if image_path:
@@ -385,12 +389,12 @@ class ToolRegistry:
     async def aclose(self) -> None:
         """Close all resources including async search manager sessions."""
         close_tasks: list[asyncio.Task[None]] = []
-        if self._web_search_manager is not None:
+        if self._web_search_manager is not None and self._owns_web_search_manager:
             close_tasks.append(asyncio.ensure_future(self._web_search_manager.close()))
-            self._web_search_manager = None
-        if self._image_search_manager is not None:
+        if self._image_search_manager is not None and self._owns_image_search_manager:
             close_tasks.append(asyncio.ensure_future(self._image_search_manager.close()))
-            self._image_search_manager = None
+        self._web_search_manager = None
+        self._image_search_manager = None
         if close_tasks:
             await asyncio.gather(*close_tasks)
         self.close()

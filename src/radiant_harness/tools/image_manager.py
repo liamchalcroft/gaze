@@ -34,6 +34,7 @@ class ImageManager:
         self._original_image: Image.Image | None = None
         self._original_encoding: Any = None
         self._image_lock = asyncio.Lock()
+        self._modified: bool = False
 
     @property
     def current_image(self) -> Image.Image | None:
@@ -49,6 +50,16 @@ class ImageManager:
     def has_image(self) -> bool:
         """Check if an image is currently loaded."""
         return self._current_image is not None
+
+    @property
+    def is_modified(self) -> bool:
+        """Whether the current image has been modified from the original.
+
+        Set ``True`` by :meth:`transform_image`, cleared by
+        :meth:`reset_to_original`, :meth:`set_image`,
+        :meth:`set_preloaded_image`, and :meth:`close`.
+        """
+        return self._modified
 
     @property
     def original_encoding(self) -> Any:
@@ -112,6 +123,7 @@ class ImageManager:
             raise ToolExecutionError(f"Failed to read image file {image_path}: {e}") from e
 
         self._image_path = resolved
+        self._modified = False
         logger.debug(f"Loaded image: {resolved} ({self._current_image.size})")
 
     @beartype
@@ -156,6 +168,7 @@ class ImageManager:
 
             self._original_image = loaded
             self._current_image = loaded.copy()
+            self._modified = False
 
     @beartype
     def transform_image(self, operation: Callable[[Image.Image], Image.Image]) -> None:
@@ -184,6 +197,7 @@ class ImageManager:
 
         old_image = self._current_image
         self._current_image = operation(old_image)
+        self._modified = True
         # Safe to always close: current is never aliased to original.
         if old_image is not self._current_image:
             old_image.close()
@@ -218,6 +232,7 @@ class ImageManager:
             self._original_image = image.copy()
         self._current_image = self._original_image.copy()
         self._image_path = resolved
+        self._modified = False
 
     @beartype
     def reset_to_original(self) -> None:
@@ -234,6 +249,7 @@ class ImageManager:
 
         old_image = self._current_image
         self._current_image = self._original_image.copy()
+        self._modified = False
         if old_image is not None:
             old_image.close()
         logger.debug("Reset image to original")
@@ -249,3 +265,4 @@ class ImageManager:
         self._original_image = None
         self._image_path = None
         self._original_encoding = None
+        self._modified = False

@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING
 
 from radiant_harness.models.adapter_protocol import AdapterProtocol
 from radiant_harness.models.adapter_protocol import GenerationLog
+from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
 if TYPE_CHECKING:
     from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
     from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
-    from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
 
 __all__ = [
     "AdapterProtocol",
@@ -42,9 +42,5 @@ def __getattr__(name: str):
         from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
 
         return HuggingFaceVLMAdapter
-    if name == "LMStudioAdapter":
-        from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
-
-        return LMStudioAdapter
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)

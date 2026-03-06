@@ -51,6 +51,7 @@ from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
+from radiant_harness.models import LMStudioAdapter
 from radiant_harness.models import OpenAIAdapter
 
 if TYPE_CHECKING:
@@ -110,6 +111,7 @@ __all__ = [
     "encode_image",
     # Adapters
     "OpenAIAdapter",
+    "LMStudioAdapter",
     "HuggingFaceAdapter",
     "HuggingFaceVLMAdapter",
     "GenerationLog",

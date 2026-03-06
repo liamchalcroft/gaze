@@ -698,6 +698,31 @@ def apply_window_level(
     upper = center + width / 2
 
     gray = np.array(image.convert("L"), dtype=np.float64)
+
+    # Check that the window meaningfully covers the image's actual data range.
+    # CT presets (e.g. bone: center=400, width=1800) applied to 8-bit images
+    # compress the output to very few levels, producing misleading results.
+    # Skip for uniform images (img_min == img_max): the result is deterministic
+    # regardless of window settings and there is no information to destroy.
+    img_min, img_max = float(gray.min()), float(gray.max())
+    if img_min < img_max:
+        effective_lower = max(lower, img_min)
+        effective_upper = min(upper, img_max)
+        if effective_upper <= effective_lower:
+            raise ValueError(
+                f"Window [center={center}, width={width}] does not overlap with "
+                f"image intensity range [{img_min:.0f}, {img_max:.0f}]. "
+                f"No data would be visible."
+            )
+        effective_levels = int((effective_upper - effective_lower) / (upper - lower) * 255)
+        if effective_levels < cfg.min_window_width:
+            raise ValueError(
+                f"Window [center={center}, width={width}] compresses image range "
+                f"[{img_min:.0f}, {img_max:.0f}] to only {effective_levels} output "
+                f"levels (minimum: {cfg.min_window_width}). Use a narrower window "
+                f"suited to this image's bit depth."
+            )
+
     gray = np.clip(gray, lower, upper)
     gray = (gray - lower) / (upper - lower) * 255 if upper > lower else np.zeros_like(gray)
     return Image.fromarray(np.clip(gray, 0, 255).astype(np.uint8))
@@ -758,7 +783,7 @@ def adaptive_equalize(
 
             # Clip histogram
             n_pixels = tile.size
-            clip_count = int(clip_limit * n_pixels / n_bins)
+            clip_count = max(1, int(clip_limit * n_pixels / n_bins))
             excess = np.sum(np.maximum(hist - clip_count, 0))
             hist = np.minimum(hist, clip_count)
             hist += excess // n_bins  # redistribute excess uniformly
@@ -1079,6 +1104,26 @@ async def _transform_and_encode(
     return await asyncio.to_thread(_work, image_manager)
 
 
+async def _read_only_encode(
+    registry: ToolRegistry,
+    operation: Callable[[Image.Image], Image.Image],
+) -> tuple[Image.Image, EncodedImage]:
+    """Apply *operation* and encode the result WITHOUT mutating image state.
+
+    Used for visualization-only tools (annotations, grid overlays) that
+    should return a rendered image for the model to see without
+    contaminating the image manager's state for subsequent tools.
+    """
+    image = _require_image(registry)
+
+    def _work() -> tuple[Image.Image, EncodedImage]:
+        result = operation(image)
+        encoded = encode_image(result)
+        return result, encoded
+
+    return await asyncio.to_thread(_work)
+
+
 async def _execute_zoom(registry: ToolRegistry, factor: float) -> ToolResult:
     """Execute zoom tool."""
     image = _require_image(registry)
@@ -1178,6 +1223,7 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
     """Execute intensity threshold tool."""
     image = _require_image(registry)
     original_size = image.size
+    was_modified = registry.get_image_manager().is_modified
 
     try:
         _, encoded = await _transform_and_encode(
@@ -1186,9 +1232,12 @@ async def _execute_threshold(registry: ToolRegistry, lower: int, upper: int) -> 
     except ValueError as e:
         raise ToolExecutionError(f"Invalid threshold bounds: {e}") from e
 
+    desc = f"Applied threshold [{lower}, {upper}] (converts to grayscale)"
+    if was_modified:
+        desc += " WARNING: applied to already-modified image, not original intensities"
     return ToolResult(
         tool_name="threshold",
-        description=f"Applied threshold [{lower}, {upper}]",
+        description=desc,
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
         metadata={"lower": lower, "upper": upper, "size": original_size},
@@ -1365,9 +1414,13 @@ async def _execute_intensity_stats(
         raise ToolExecutionError(f"Invalid box coordinates: {e}") from e
 
     region = f" for region {box}" if box is not None else ""
+    desc = f"Computed intensity statistics{region}"
+    if registry.get_image_manager().is_modified:
+        desc += " (on modified image — use 'reset' for original values)"
+    stats["image_size"] = image.size
     return ToolResult(
         tool_name="get_intensity_stats",
-        description=f"Computed intensity statistics{region}",
+        description=desc,
         image_base64=None,
         image_mime_type=None,
         metadata=stats,
@@ -1378,14 +1431,16 @@ async def _execute_measure(
     registry: ToolRegistry, point1: list[float], point2: list[float]
 ) -> ToolResult:
     """Execute distance measurement tool."""
-    image = _require_image(registry)
+    # Validate length before normalization to avoid silent truncation
+    for name, pt in [("point1", point1), ("point2", point2)]:
+        if len(pt) != 2:
+            raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
 
+    image = _require_image(registry)
     point1 = _maybe_normalize_point(point1, image)
     point2 = _maybe_normalize_point(point2, image)
 
     for name, pt in [("point1", point1), ("point2", point2)]:
-        if len(pt) != 2:
-            raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
         for i, value in enumerate(pt):
             if not 0 <= value <= 1:
                 raise ToolExecutionError(
@@ -1400,9 +1455,12 @@ async def _execute_measure(
         raise ToolExecutionError(f"Invalid measurement points: {e}") from e
 
     dist = result["distance_pixels"]
+    desc = f"Measured distance: {dist:.1f} pixels"
+    if registry.get_image_manager().is_modified:
+        desc += " (on modified image — use 'reset' for original-space measurement)"
     return ToolResult(
         tool_name="measure",
-        description=f"Measured distance: {dist:.1f} pixels",
+        description=desc,
         image_base64=None,
         image_mime_type=None,
         metadata=result,
@@ -1410,11 +1468,11 @@ async def _execute_measure(
 
 
 async def _execute_show_grid(registry: ToolRegistry, divisions: int) -> ToolResult:
-    """Execute grid overlay tool."""
+    """Execute grid overlay tool (read-only — does not mutate image state)."""
     _require_image(registry)
 
     try:
-        current, encoded = await _transform_and_encode(
+        current, encoded = await _read_only_encode(
             registry, lambda img: draw_grid_overlay(img, divisions)
         )
     except ValueError as e:
@@ -1427,7 +1485,7 @@ async def _execute_show_grid(registry: ToolRegistry, divisions: int) -> ToolResu
 
     return ToolResult(
         tool_name="show_grid",
-        description=f"Applied {divisions}x{divisions} grid overlay",
+        description=f"Applied {divisions}x{divisions} grid overlay (visual only, image unchanged)",
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
         metadata={"divisions": divisions, "cell_labels": cell_labels, "size": current.size},
@@ -1499,7 +1557,7 @@ async def _execute_annotate_region(
     box_tuple = (box[0], box[1], box[2], box[3])
 
     try:
-        current, encoded = await _transform_and_encode(
+        current, encoded = await _read_only_encode(
             registry, lambda img: annotate_region(img, box_tuple, color=color, label=label)
         )
     except ValueError as e:
@@ -1507,7 +1565,10 @@ async def _execute_annotate_region(
 
     return ToolResult(
         tool_name="annotate_region",
-        description=f"Annotated region [{box[0]:.2f}, {box[1]:.2f}, {box[2]:.2f}, {box[3]:.2f}]",
+        description=(
+            f"Annotated region [{box[0]:.2f}, {box[1]:.2f}, {box[2]:.2f}, {box[3]:.2f}] "
+            f"(visual only, image unchanged)"
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
         metadata={"box": box, "color": color, "label": label, "size": current.size},
@@ -1537,6 +1598,7 @@ async def _execute_window_level(
 ) -> ToolResult:
     """Execute clinical window/level tool."""
     _require_image(registry)
+    was_modified = registry.get_image_manager().is_modified
 
     try:
         current, encoded = await _transform_and_encode(
@@ -1557,6 +1619,9 @@ async def _execute_window_level(
         if preset
         else f"Applied window center={center} width={width}"
     )
+    desc += " (converts to grayscale)"
+    if was_modified:
+        desc += " WARNING: applied to already-modified image, not original intensities"
     return ToolResult(
         tool_name="window_level",
         description=desc,
@@ -1600,14 +1665,16 @@ async def _execute_intensity_profile(
     registry: ToolRegistry, point1: list[float], point2: list[float]
 ) -> ToolResult:
     """Execute intensity profile tool."""
-    image = _require_image(registry)
+    # Validate length before normalization to avoid silent truncation
+    for name, pt in [("point1", point1), ("point2", point2)]:
+        if len(pt) != 2:
+            raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
 
+    image = _require_image(registry)
     point1 = _maybe_normalize_point(point1, image)
     point2 = _maybe_normalize_point(point2, image)
 
     for name, pt in [("point1", point1), ("point2", point2)]:
-        if len(pt) != 2:
-            raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
         for i, value in enumerate(pt):
             if not 0 <= value <= 1:
                 raise ToolExecutionError(
@@ -1621,9 +1688,13 @@ async def _execute_intensity_profile(
     except ValueError as e:
         raise ToolExecutionError(f"Invalid profile points: {e}") from e
 
+    desc = f"Sampled {result['n_samples']} points along line"
+    if registry.get_image_manager().is_modified:
+        desc += " (on modified image — use 'reset' for original intensities)"
+    result["image_size"] = image.size
     return ToolResult(
         tool_name="intensity_profile",
-        description=f"Sampled {result['n_samples']} points along line",
+        description=desc,
         image_base64=None,
         image_mime_type=None,
         metadata=result,
@@ -1687,13 +1758,9 @@ async def _execute_morphological(
 
 
 # Static prompt documentation for tools with fixed parameters
-CROP_PROMPT_DOC = (
-    """**crop** - Extract region [x1, y1, x2, y2] with normalized coordinates (0-1)""".strip()
-)
+CROP_PROMPT_DOC = """**crop** - Extract region [x1, y1, x2, y2] normalized (0-1); pixel coords auto-converted""".strip()
 
-THRESHOLD_PROMPT_DOC = (
-    """**threshold** - Apply intensity windowing (lower: 0-254, upper: 1-255)""".strip()
-)
+THRESHOLD_PROMPT_DOC = """**threshold** - Apply intensity windowing, converts to grayscale (lower: 0-254, upper: 1-255)""".strip()
 
 FLIP_HORIZONTAL_PROMPT_DOC = """**flip_horizontal** - Mirror image left-right""".strip()
 
@@ -1709,21 +1776,19 @@ EQUALIZE_PROMPT_DOC = (
     """**equalize_histogram** - Equalize intensity distribution (grayscale)""".strip()
 )
 
-INTENSITY_STATS_PROMPT_DOC = """**get_intensity_stats** - Get intensity statistics (optional box [x1,y1,x2,y2] 0-1)""".strip()
+INTENSITY_STATS_PROMPT_DOC = """**get_intensity_stats** - Get intensity statistics (optional box [x1,y1,x2,y2] 0-1; pixel coords auto-converted)""".strip()
 
-MEASURE_PROMPT_DOC = (
-    """**measure** - Measure distance between two points (point1, point2: [x,y] 0-1)""".strip()
+MEASURE_PROMPT_DOC = """**measure** - Measure distance between two points (point1, point2: [x,y] 0-1; pixel coords auto-converted)""".strip()
+
+SYMMETRY_DIFF_PROMPT_DOC = """**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale)""".strip()
+
+INVERT_PROMPT_DOC = (
+    """**invert** - Invert image intensities, converts to grayscale (negative)""".strip()
 )
 
-SYMMETRY_DIFF_PROMPT_DOC = (
-    """**symmetry_diff** - Compute left-right symmetry difference map""".strip()
-)
+INTENSITY_PROFILE_PROMPT_DOC = """**intensity_profile** - Sample intensities along a line (point1, point2: [x,y] 0-1; pixel coords auto-converted)""".strip()
 
-INVERT_PROMPT_DOC = """**invert** - Invert image intensities (negative)""".strip()
-
-INTENSITY_PROFILE_PROMPT_DOC = """**intensity_profile** - Sample intensities along a line (point1, point2: [x,y] 0-1)""".strip()
-
-ANNOTATE_REGION_PROMPT_DOC = """**annotate_region** - Draw bounding box overlay (box [x1,y1,x2,y2] 0-1, color, label)""".strip()
+ANNOTATE_REGION_PROMPT_DOC = """**annotate_region** - Draw bounding box overlay, visual only (box [x1,y1,x2,y2] 0-1, color, label)""".strip()
 
 
 @beartype
@@ -1901,7 +1966,8 @@ def create_visual_tools(
     if "window_level" not in disabled:
         presets_list = ", ".join(sorted(WINDOW_PRESETS.keys()))
         window_prompt_doc = (
-            f"**window_level** - Clinical windowing. "
+            f"**window_level** - Clinical windowing, converts to grayscale. "
+            f"Presets assume CT Hounsfield units; use center/width for 8-bit images. "
             f"Must provide EITHER preset ({presets_list}) OR both center and width."
         )
         tools.append(
@@ -2000,7 +2066,7 @@ def create_visual_tools(
                 },
                 execute=_execute_detect_edges,
                 requires_image=True,
-                prompt_documentation="**detect_edges** - Edge detection (method: sobel/laplacian)",
+                prompt_documentation="**detect_edges** - Edge detection, converts to grayscale (method: sobel/laplacian)",
                 category="visual",
             )
         )
@@ -2031,7 +2097,7 @@ def create_visual_tools(
 
     if "morphological" not in disabled:
         morph_prompt_doc = (
-            f"**morphological** - Morphological ops "
+            f"**morphological** - Morphological ops, converts to grayscale "
             f"(operation: erode/dilate/open/close, iterations: 1-{cfg.max_morphological_iterations})"
         )
         tools.append(
@@ -2237,9 +2303,7 @@ def create_visual_tools(
         )
 
     if "show_grid" not in disabled:
-        grid_prompt_doc = (
-            f"**show_grid** - Overlay labeled grid (divisions: 2-{cfg.max_grid_divisions})"
-        )
+        grid_prompt_doc = f"**show_grid** - Overlay labeled grid, visual only (divisions: 2-{cfg.max_grid_divisions})"
         tools.append(
             Tool(
                 name="show_grid",

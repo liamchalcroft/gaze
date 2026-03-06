@@ -33,8 +33,8 @@ class LMStudioAdapter(OpenAIAdapter):
        response format, putting output into ``reasoning_content`` instead
        of ``content``.  The prompts already instruct JSON output.
 
-    All generation logic (tool calling, vision, streaming, retries) is
-    inherited unchanged from :class:`OpenAIAdapter`.
+    6. No retries on completion — local timeouts usually indicate OOM or
+       model overload, not transient network issues.
     """
 
     supports_multipart_tool_content: bool = False
@@ -97,6 +97,16 @@ class LMStudioAdapter(OpenAIAdapter):
         return self._client
 
     @beartype
+    async def _create_completion_with_retry(self, **kwargs):  # type: ignore[override]
+        """Local models rarely recover from transient errors — no retries.
+
+        Overrides the parent's 5-retry strategy.  For LM Studio, timeouts
+        typically mean the model is too large or OOM — retrying just wastes
+        minutes.
+        """
+        return await self.client.chat.completions.create(**kwargs)
+
+    @beartype
     async def generate_chat(
         self,
         messages: list[dict[str, Any]],
@@ -114,9 +124,7 @@ class LMStudioAdapter(OpenAIAdapter):
         the parameter lets the prompt handle JSON formatting instead.
         """
         if response_format is not None:
-            logger.debug(
-                "LMStudioAdapter: stripping response_format (local model compatibility)"
-            )
+            logger.debug("LMStudioAdapter: stripping response_format (local model compatibility)")
         return await super().generate_chat(
             messages=messages,
             max_tokens=max_tokens,

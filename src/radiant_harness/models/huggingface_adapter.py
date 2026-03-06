@@ -15,6 +15,7 @@ import binascii
 import itertools
 import json
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -44,6 +45,8 @@ _TOOL_SYSTEM_PREAMBLE = (
     "```\n\n"
     "Available tools:\n"
 )
+
+_DECODED_IMAGE_CACHE_SIZE = 8
 
 
 def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
@@ -107,25 +110,37 @@ _JSON_MODE_INSTRUCTION = (
 )
 
 
-def _inject_json_mode(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _inject_json_mode(
+    messages: list[dict[str, Any]],
+    response_format: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Append a JSON-mode instruction to the system message.
 
-    Used when ``response_format={"type": "json_object"}`` is requested but the
-    model doesn't natively support structured output. The instruction nudges the
-    model to return valid JSON.
+    Used when ``response_format`` is requested but the model doesn't natively
+    support structured output. When *response_format* contains a
+    ``json_schema``, the schema is included in the prompt so the model knows
+    the expected output shape.
 
     The original list is never mutated.
     """
+    instruction = _JSON_MODE_INSTRUCTION
+
+    # If a json_schema is provided, include it so the model knows the shape.
+    if response_format is not None:
+        schema_obj = response_format.get("json_schema", {}).get("schema")
+        if schema_obj is not None:
+            instruction += f"\n\nYou must conform to this JSON schema:\n```json\n{json.dumps(schema_obj, indent=2)}\n```"
+
     messages = [dict(m) for m in messages]
 
     for msg in messages:
         if msg.get("role") == "system":
             content = msg.get("content", "")
             if isinstance(content, str):
-                msg["content"] = content + _JSON_MODE_INSTRUCTION
+                msg["content"] = content + instruction
             return messages
 
-    messages.insert(0, {"role": "system", "content": _JSON_MODE_INSTRUCTION.strip()})
+    messages.insert(0, {"role": "system", "content": instruction.strip()})
     return messages
 
 
@@ -354,7 +369,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         # HF models don't support response_format natively; emulate via prompt
         if response_format is not None:
             logger.debug("Emulating response_format via JSON-mode system instruction")
-            messages = _inject_json_mode(messages)
+            messages = _inject_json_mode(messages, response_format)
 
         # Convert messages to prompt
         prompt = self._format_messages(messages)
@@ -542,6 +557,21 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             max_input_length=max_input_length,
         )
         self._processor: Any = None
+        self._decoded_image_cache: OrderedDict[str, Any] = OrderedDict()
+
+    def _get_cached_image_copy(self, data_url: str) -> Image.Image | None:
+        cached = self._decoded_image_cache.get(data_url)
+        if cached is None:
+            return None
+        self._decoded_image_cache.move_to_end(data_url)
+        return cached.copy()
+
+    def _store_decoded_image(self, data_url: str, image: Image.Image) -> None:
+        self._decoded_image_cache[data_url] = image
+        self._decoded_image_cache.move_to_end(data_url)
+        while len(self._decoded_image_cache) > _DECODED_IMAGE_CACHE_SIZE:
+            _url, evicted = self._decoded_image_cache.popitem(last=False)
+            evicted.close()
 
     @property
     def processor(self):
@@ -641,7 +671,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         # HF models don't support response_format natively; emulate via prompt
         if response_format is not None:
             logger.debug("Emulating response_format via JSON-mode system instruction")
-            messages = _inject_json_mode(messages)
+            messages = _inject_json_mode(messages, response_format)
 
         # Extract images from messages
         images = self._extract_images(messages)
@@ -751,16 +781,20 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
 
                 try:
                     if url.startswith("data:"):
+                        cached = self._get_cached_image_copy(url)
+                        if cached is not None:
+                            images.append(cached)
+                            continue
                         # Base64 encoded image
                         # Format: data:image/png;base64,<data>
                         if not url.startswith("data:image/"):
-                            logger.warning(
-                                f"Skipping non-image data URI: {url[:40]}..."
-                            )
+                            logger.warning(f"Skipping non-image data URI: {url[:40]}...")
                             continue
                         _, data = url.split(",", 1)
                         image_data = base64.b64decode(data)
-                        image = PILImage.open(BytesIO(image_data))
+                        with PILImage.open(BytesIO(image_data)) as src:
+                            image = src.convert("RGB")
+                        self._store_decoded_image(url, image.copy())
                     elif url.startswith(("http://", "https://")):
                         # URL - would need httpx to fetch
                         # For now, skip remote URLs
@@ -774,7 +808,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                         )
                         continue
 
-                    images.append(image.convert("RGB"))
+                    images.append(image)
                 except (OSError, ValueError, binascii.Error) as e:
                     logger.warning(f"Failed to load image: {e}")
                     continue

@@ -190,9 +190,7 @@ def combine_prompts(
 
     if mode_enum == AnalysisMode.SINGLE_TURN:
         return (
-            f"{system_prompt}\n\n"
-            f"<analysis_instructions>\n{task_prompt}\n"
-            f"</analysis_instructions>"
+            f"{system_prompt}\n\n<analysis_instructions>\n{task_prompt}\n</analysis_instructions>"
         )
     if mode_enum == AnalysisMode.AGENTIC:
         return (

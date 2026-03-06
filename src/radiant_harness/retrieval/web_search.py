@@ -352,6 +352,8 @@ class PubMedSearchEngine(SearchEngine):
     async def _fetch_abstracts(self, pmid_list: list[str]) -> dict[str, str]:
         """Fetch abstracts via efetch XML (esummary does not include them).
 
+        Retries once on transient failure before degrading gracefully.
+
         Returns:
             Mapping of PMID → abstract text.  Missing abstracts are omitted.
         """
@@ -368,23 +370,28 @@ class PubMedSearchEngine(SearchEngine):
         if self.api_key:
             fetch_params["api_key"] = self.api_key
 
+        pmids_str = ",".join(pmid_list)
         session = await self._get_session()
-        try:
-            async with session.get(fetch_url, params=fetch_params) as response:
-                if response.status != 200:
-                    logger.warning(
-                        f"efetch returned status {response.status}; proceeding without abstracts"
+        for attempt in range(2):
+            try:
+                async with session.get(fetch_url, params=fetch_params) as response:
+                    response.raise_for_status()
+                    xml_text = await response.text()
+                return self._parse_abstracts_xml(xml_text)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                if attempt == 0:
+                    logger.debug(
+                        f"efetch attempt 1 failed ({_sanitize_exception_message(exc)}) "
+                        f"for PMIDs {pmids_str}; retrying"
                     )
-                    return {}
-                xml_text = await response.text()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.warning(
-                f"efetch request failed ({_sanitize_exception_message(exc)}); "
-                "proceeding without abstracts"
-            )
-            return {}
-
-        return self._parse_abstracts_xml(xml_text)
+                    await asyncio.sleep(1)
+                    continue
+                logger.warning(
+                    f"efetch failed after retry ({_sanitize_exception_message(exc)}) "
+                    f"for PMIDs {pmids_str}; proceeding without abstracts"
+                )
+                return {}
+        return {}  # unreachable but satisfies type checker
 
     @beartype
     def _parse_abstracts_xml(self, xml_text: str) -> dict[str, str]:

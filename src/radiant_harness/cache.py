@@ -127,6 +127,7 @@ class TTLCache(Generic[T]):
         """Store a value in the cache.
 
         Automatically triggers eviction if cache is over size limit.
+        Replacing an existing key closes the old value before overwriting it.
 
         Args:
             key: Cache key
@@ -135,6 +136,10 @@ class TTLCache(Generic[T]):
         with self._lock:
             # Evict before insert so the cache never exceeds max_cache_size
             self._evict_stale()
+            if key in self._cache:
+                _, existing_value = self._cache[key]
+                if existing_value is not value:
+                    self._close_value(key, existing_value, "replaced")
             self._cache[key] = (time.time(), value)
 
     @beartype

@@ -312,9 +312,7 @@ class IoUReward(BaseRewardFunction):
                 )
                 area_ratio = pred_area / image_area
                 if area_ratio > self.area_penalty_start:
-                    penalty = max(
-                        0.0, (1.0 - area_ratio) / (1.0 - self.area_penalty_start)
-                    )
+                    penalty = max(0.0, (1.0 - area_ratio) / (1.0 - self.area_penalty_start))
                     reward *= penalty
 
         return reward
@@ -356,9 +354,7 @@ class IoUReward(BaseRewardFunction):
                                     if isinstance(locs, list) and locs:
                                         first = locs[0]
                                         if isinstance(first, dict):
-                                            bbox = first.get(
-                                                "bounding_box", first.get("bbox")
-                                            )
+                                            bbox = first.get("bounding_box", first.get("bbox"))
                                             if isinstance(bbox, list) and len(bbox) >= 4:
                                                 return [float(x) for x in bbox[:4]]
                         except json.JSONDecodeError as e:
@@ -376,7 +372,10 @@ class IoUReward(BaseRewardFunction):
         # Fallback: regex for [x1, y1, x2, y2] pattern.
         # Use findall and take the LAST match — models often emit reasoning
         # arrays before the final bbox, so the last one is most likely correct.
-        pattern = r"\[(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\]"
+        # Support optional negative sign for coordinates that may be slightly OOB.
+        pattern = (
+            r"\[(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\]"
+        )
         matches = re.findall(pattern, text)
         if matches:
             return [float(x) for x in matches[-1]]
@@ -411,13 +410,12 @@ class CombinedReward(BaseRewardFunction):
         if len(self.weights) != len(self.rewards):
             raise ValueError("Number of weights must match number of rewards")
 
+        if any(w < 0.0 for w in self.weights):
+            raise ValueError("CombinedReward: weights must be non-negative")
+
         total = sum(self.weights)
         if abs(total - 1.0) > 1e-6:
-            logger.warning(
-                "CombinedReward: weights sum to {:.4f} (not 1.0), auto-normalizing",
-                total,
-            )
-            self.weights = [w / total for w in self.weights]
+            raise ValueError(f"CombinedReward: weights must sum to 1.0, got {total:.4f}")
 
     def __call__(
         self,
