@@ -18,22 +18,21 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from radiant_harness.base import AgenticProcessorBase, ImageInput, _COORD_MODIFYING_TOOLS
-from radiant_harness.exceptions import AgenticProcessingError
-from radiant_harness.models import AdapterProtocol, GenerationLog
-from radiant_harness.tools import Tool, ToolRegistry
-from radiant_harness.tools.visual import (
-    WINDOW_PRESETS,
-    apply_window_level,
-)
+from radiant_harness.base import _COORD_MODIFYING_TOOLS
+from radiant_harness.base import AgenticProcessorBase
+from radiant_harness.base import ImageInput
+from radiant_harness.models import AdapterProtocol
+from radiant_harness.models import GenerationLog
+from radiant_harness.tools import Tool
+from radiant_harness.tools import ToolRegistry
+from radiant_harness.tools.visual import WINDOW_PRESETS
+from radiant_harness.tools.visual import apply_window_level
 from radiant_harness.types import ToolResult
-from radiant_harness.verifiers.rewards import (
-    CombinedReward,
-    ExactMatchReward,
-    IoUReward,
-    TokenF1Reward,
-    extract_completion_text,
-)
+from radiant_harness.verifiers.rewards import CombinedReward
+from radiant_harness.verifiers.rewards import ExactMatchReward
+from radiant_harness.verifiers.rewards import IoUReward
+from radiant_harness.verifiers.rewards import TokenF1Reward
+from radiant_harness.verifiers.rewards import extract_completion_text
 
 # Import diagnosis module from examples/nova
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -51,9 +50,7 @@ class TestExtractCompletionTextMultimodal:
     """extract_completion_text must concatenate ALL text items, not just the first."""
 
     def test_single_text_item(self) -> None:
-        completion = [
-            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]}
-        ]
+        completion = [{"role": "assistant", "content": [{"type": "text", "text": "hello"}]}]
         assert extract_completion_text(completion) == "hello"
 
     def test_multiple_text_items_concatenated(self) -> None:
@@ -145,21 +142,16 @@ class TestBboxRegexLastMatch:
         assert bbox == [0.1, 0.2, 0.3, 0.4]
 
 
-class TestCombinedRewardWarning:
-    """CombinedReward must warn when auto-normalizing weights."""
+class TestCombinedRewardWeightError:
+    """CombinedReward must raise ValueError when weights don't sum to 1.0."""
 
-    def test_warning_on_non_unit_weights(self) -> None:
-        from loguru import logger as loguru_logger
+    def test_error_on_non_unit_weights(self) -> None:
+        import pytest
 
-        captured: list[str] = []
-        handler_id = loguru_logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
-        try:
-            r1 = ExactMatchReward()
-            r2 = TokenF1Reward()
+        r1 = ExactMatchReward()
+        r2 = TokenF1Reward()
+        with pytest.raises(ValueError, match="weights must sum to 1.0"):
             CombinedReward(rewards=[r1, r2], weights=[2.0, 3.0])
-        finally:
-            loguru_logger.remove(handler_id)
-        assert any("auto-normalizing" in msg for msg in captured)
 
     def test_no_warning_on_unit_weights(self) -> None:
         from loguru import logger as loguru_logger
@@ -188,7 +180,7 @@ class TestWindowLevelPresetSafety:
         from radiant_harness.config import get_config
 
         min_width = get_config().image.min_window_width
-        for name, (center, width) in WINDOW_PRESETS.items():
+        for name, (_center, width) in WINDOW_PRESETS.items():
             assert width >= min_width, (
                 f"Preset {name!r} has width={width} < min_window_width={min_width}. "
                 f"This destroys diagnostic information on 8-bit images."
@@ -359,16 +351,16 @@ class TestDiagnosisDefaultWarning:
         old_level = diag_logger.level
         diag_logger.setLevel(stdlib_logging.WARNING)
         try:
-            with patch(
-                "src.evaluation.diagnosis._get_semantic_match_client",
-                side_effect=ValueError("mocked - no real API call"),
+            with (
+                patch(
+                    "src.evaluation.diagnosis._get_semantic_match_client",
+                    side_effect=ValueError("mocked - no real API call"),
+                ),
+                pytest.raises(ValueError, match="mocked"),
             ):
-                with pytest.raises(ValueError, match="mocked"):
-                    asyncio.get_event_loop().run_until_complete(
-                        llm_semantic_match_async(
-                            "glioma", "glioblastoma", "openai/gpt-5-nano", 1
-                        )
-                    )
+                asyncio.get_event_loop().run_until_complete(
+                    llm_semantic_match_async("glioma", "glioblastoma", "openai/gpt-5-nano", 1)
+                )
         finally:
             diag_logger.removeHandler(handler)
             diag_logger.setLevel(old_level)

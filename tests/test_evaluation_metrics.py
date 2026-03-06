@@ -166,6 +166,37 @@ class TestDetectionEvaluation:
         with pytest.raises(ValueError, match="preds and refs must have same length"):
             evaluate_detection([{"boxes": []}], [{"boxes": []}, {"boxes": []}])
 
+    def test_map50_reuses_map50_95_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """mAP@0.5 should come from the COCO-range pass, not a separate third pass."""
+        from examples.nova.src.evaluation import detection as detection_module
+
+        calls: list[tuple[float, ...]] = []
+
+        class _FakeMap:
+            def __init__(self, *, iou_thresholds):
+                calls.append(tuple(float(t) for t in iou_thresholds))
+
+            def update(self, preds_tensors, refs_tensors) -> None:
+                assert preds_tensors
+                assert refs_tensors
+
+            def compute(self) -> dict[str, float]:
+                return {"map": 0.4, "map_50": 0.6}
+
+        monkeypatch.setattr(detection_module, "MeanAveragePrecision", _FakeMap)
+
+        preds = [{"boxes": [[10, 10, 20, 20]], "scores": [0.9], "labels": [1]}]
+        refs = [{"boxes": [[10, 10, 20, 20]], "scores": [1.0], "labels": [1]}]
+
+        results = evaluate_detection(preds, refs)
+
+        assert calls == [
+            (detection_module.IOU_THRESHOLD_LOOSE,),
+            tuple(detection_module._MAP_RANGE_IOU_THRESHOLDS),
+        ]
+        assert results["map30"] == 0.4
+        assert results["map50"] == 0.6
+
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestGroundTruthData:

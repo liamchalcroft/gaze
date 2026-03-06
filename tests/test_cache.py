@@ -152,6 +152,20 @@ class TestTTLCache:
         assert cache.delete("key") is False
         assert cache.delete("nonexistent") is False
 
+    def test_replacing_existing_key_closes_old_value(self):
+        """Overwriting a key must clean up the previous closeable value."""
+        config = CacheConfig(cache_duration_seconds=60)
+        cache: TTLCache[MagicMock] = TTLCache(config)
+
+        first = MagicMock()
+        second = MagicMock()
+
+        cache.set("key", first)
+        cache.set("key", second)
+
+        first.close.assert_called_once()
+        second.close.assert_not_called()
+
     def test_cache_has_respects_expiration(self):
         """Test that has() returns False for expired entries."""
         config = CacheConfig(cache_duration_seconds=0.1)
@@ -307,8 +321,8 @@ class TestTTLCacheStress:
 
         cache.set("a", "val")
 
-        cache.has("a")       # exists
-        cache.has("missing") # does not exist
+        cache.has("a")  # exists
+        cache.has("missing")  # does not exist
 
         stats = cache.stats()
         assert stats["hits"] == 0

@@ -214,17 +214,15 @@ class TestIoURewardContinuous:
         """
         reward = IoUReward(continuous=True, normalized=False)
         # Perfect overlap
-        score = reward("", self._make_completion([0, 0, 100, 100]), self._make_info([0, 0, 100, 100]))
+        score = reward(
+            "", self._make_completion([0, 0, 100, 100]), self._make_info([0, 0, 100, 100])
+        )
         assert score == 1.0
 
     def test_continuous_partial_overlap(self) -> None:
         """Partial overlap returns raw IoU, not 1.0 or 0.0."""
         reward = IoUReward(continuous=True, iou_threshold=0.5, normalized=False)
-        # Two 100x100 boxes offset by 50 pixels
-        # Box1: (0,0)-(100,100), Box2: (50,50)-(150,150)
-        # Intersection: 50*50 = 2500
-        # Union: 10000 + 10000 - 2500 = 17500
-        # IoU = 2500/17500 ≈ 0.1429
+        # Two 100x100 boxes offset by 50px → IoU = 2500/17500 ≈ 0.1429
         score = reward(
             "", self._make_completion([0, 0, 100, 100]), self._make_info([50, 50, 150, 150])
         )
@@ -235,11 +233,7 @@ class TestIoURewardContinuous:
     def test_continuous_above_threshold_not_clipped(self) -> None:
         """IoU above threshold should NOT be clipped to 1.0 in continuous mode."""
         reward = IoUReward(continuous=True, iou_threshold=0.3, normalized=False)
-        # Two 100x100 boxes offset by 20 pixels
-        # Box1: (0,0)-(100,100), Box2: (20,20)-(120,120)
-        # Intersection: 80*80 = 6400
-        # Union: 10000 + 10000 - 6400 = 13600
-        # IoU = 6400/13600 ≈ 0.4706
+        # Two 100x100 boxes offset by 20px → IoU = 6400/13600 ≈ 0.4706
         score = reward(
             "", self._make_completion([0, 0, 100, 100]), self._make_info([20, 20, 120, 120])
         )

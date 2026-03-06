@@ -523,7 +523,9 @@ class TestInvertImage:
 
 class TestApplyWindowLevel:
     def test_brain_preset(self) -> None:
-        img = _make_image()
+        # Use gradient image with range covering the brain window [0, 80]
+        arr = np.linspace(0, 80, 100 * 100, dtype=np.uint8).reshape(100, 100)
+        img = Image.fromarray(arr, mode="L")
         result = apply_window_level(img, preset="brain")
         assert result.mode == "L"
         assert result.size == img.size
@@ -544,10 +546,19 @@ class TestApplyWindowLevel:
             apply_window_level(img)
 
     def test_all_presets_work(self) -> None:
-        img = _make_image()
+        # Full 0-255 gradient ensures all presets overlap with image range
+        arr = np.linspace(0, 255, 100 * 100, dtype=np.uint8).reshape(100, 100)
+        img = Image.fromarray(arr, mode="L")
         for preset_name in WINDOW_PRESETS:
             result = apply_window_level(img, preset=preset_name)
             assert result.mode == "L"
+
+    def test_degenerate_window_raises(self) -> None:
+        """Window that doesn't overlap image range must raise."""
+        arr = np.arange(100, 200, dtype=np.uint8).reshape(10, 10)
+        img = Image.fromarray(arr, mode="L")
+        with pytest.raises(ValueError, match="does not overlap"):
+            apply_window_level(img, center=25, width=50)
 
 
 class TestAdaptiveEqualize:

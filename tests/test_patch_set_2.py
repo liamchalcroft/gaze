@@ -81,9 +81,7 @@ class TestExtractBboxAllJsonObjects:
         """Multiple JSON objects without bbox should return 0.0."""
         reward = IoUReward(continuous=True, area_penalty_start=1.0)
         completion = (
-            json.dumps({"reasoning": "analysis"})
-            + "\n"
-            + json.dumps({"diagnosis": "glioma"})
+            json.dumps({"reasoning": "analysis"}) + "\n" + json.dumps({"diagnosis": "glioma"})
         )
         score = reward("", completion, self._make_info([10, 20, 30, 40]))
         assert score == 0.0
@@ -92,7 +90,7 @@ class TestExtractBboxAllJsonObjects:
         """Invalid first JSON followed by valid second should find bbox."""
         reward = IoUReward(continuous=True, area_penalty_start=1.0)
         # Malformed first JSON, valid second
-        completion = '{invalid json}' + "\n" + json.dumps({"bbox": [10, 20, 30, 40]})
+        completion = "{invalid json}" + "\n" + json.dumps({"bbox": [10, 20, 30, 40]})
         score = reward("", completion, self._make_info([10, 20, 30, 40]))
         assert score == 1.0
 

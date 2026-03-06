@@ -8,6 +8,7 @@ import pytest
 from radiant_harness.base import AgenticProcessorBase
 from radiant_harness.base import ImageInput
 from radiant_harness.exceptions import AgenticProcessingError
+from radiant_harness.exceptions import SchemaValidationError
 from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
 from radiant_harness.tools import Tool
@@ -160,6 +161,65 @@ class FailingToolProcessor(AgenticProcessorBase):
         return ToolRegistry(image_path=None, tools=[tool])
 
 
+class InvalidFinalResponseAdapter(AdapterProtocol):
+    supports_multipart_tool_content: bool = True
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        return (
+            '{"continue": false}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+class InvalidFinalResponseProcessor(AgenticProcessorBase):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="test-model",
+            use_tools=False,
+            use_web_search=False,
+            max_turns=1,
+            adapter_factory=InvalidFinalResponseAdapter,
+        )
+
+    def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "system"
+
+    def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+        _ = images, metadata
+        return "user"
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "invalid-final",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "continue": {"type": "boolean"},
+                        "result": {"type": "string"},
+                    },
+                    "required": ["continue", "result"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        return {"continue", "result"} <= set(response)
+
+
 @pytest.mark.asyncio
 async def test_agentic_processor_runs_tool_and_finalizes() -> None:
     processor = FakeProcessor()
@@ -186,6 +246,18 @@ async def test_agentic_processor_surfaces_tool_errors_gracefully() -> None:
     assert "final turn" in str(exc.value).lower()
     assert exc.value.partial_response is not None
     assert exc.value.partial_response["error"] == "tools_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_invalid_final_response_raises_schema_validation_error() -> None:
+    processor = InvalidFinalResponseProcessor()
+
+    with pytest.raises(SchemaValidationError) as exc:
+        await processor.analyze(images=None, metadata={})
+
+    assert exc.value.turns_completed == 1
+    assert exc.value.missing_fields == ["result"]
+    assert exc.value.response == {"continue": False}
 
 
 # --- Adapters and processors for new edge-case tests ---
@@ -485,12 +557,16 @@ async def test_penultimate_turn_warning_injected() -> None:
     assert adapter.calls == 3
 
     # The 3rd call's messages should contain the penultimate warning
-    # (injected after turn 2, which is turn_idx=1, the penultimate of 3)
+    # (injected after turn 2, which is turn_idx=1, the penultimate of 3).
+    # Match the specific "Next turn" phrasing to distinguish from the
+    # always-present "FINAL turn" notice injected on the last turn itself.
     third_call_messages = adapter.messages_history[2]
     user_messages = [m for m in third_call_messages if m.get("role") == "user"]
-    warning_messages = [m for m in user_messages if "final turn" in str(m.get("content", "")).lower()]
-    assert len(warning_messages) == 1, (
-        f"Expected exactly 1 penultimate warning, found {len(warning_messages)}"
+    penultimate_warnings = [
+        m for m in user_messages if "next turn" in str(m.get("content", "")).lower()
+    ]
+    assert len(penultimate_warnings) == 1, (
+        f"Expected exactly 1 penultimate warning, found {len(penultimate_warnings)}"
     )
 
 
@@ -1329,7 +1405,7 @@ class NonDictJsonAdapter(AdapterProtocol):
         if self.calls == 1:
             # Return a JSON array — valid JSON but not a dict
             return (
-                '[1, 2, 3]',
+                "[1, 2, 3]",
                 None,
                 GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
             )
@@ -1392,7 +1468,7 @@ class NonDictJsonLastTurnAdapter(AdapterProtocol):
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
-            '[1, 2, 3]',
+            "[1, 2, 3]",
             None,
             GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
         )
@@ -1525,3 +1601,467 @@ async def test_asyncio_timeout_in_tool_is_caught_gracefully() -> None:
     assert len(tool_result_turns) == 1
     assert tool_result_turns[0].tool_results[0].error is not None
     assert "timed out" in tool_result_turns[0].tool_results[0].error.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_tool_registry_reuses_shared_search_managers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeSharedManager:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    fake_web = _FakeSharedManager()
+    fake_img = _FakeSharedManager()
+
+    import radiant_harness.retrieval.image_search as image_search_module
+    import radiant_harness.retrieval.web_search as web_search_module
+
+    monkeypatch.setattr(web_search_module, "WebSearchManager", lambda: fake_web)
+    monkeypatch.setattr(image_search_module, "MedicalImageSearchManager", lambda: fake_img)
+
+    class SearchReuseProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=True,
+                max_turns=1,
+                adapter_factory=InvalidFinalResponseAdapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            _ = response
+            return True
+
+    processor = SearchReuseProcessor()
+    registry1 = processor._create_tool_registry([])
+    registry2 = processor._create_tool_registry([])
+    assert registry1 is not None
+    assert registry2 is not None
+
+    assert registry1._web_search_manager is fake_web
+    assert registry2._web_search_manager is fake_web
+    assert registry1._image_search_manager is fake_img
+    assert registry2._image_search_manager is fake_img
+
+    await registry1.aclose()
+    await registry2.aclose()
+    assert fake_web.close_calls == 0
+    assert fake_img.close_calls == 0
+
+    await processor.aclose()
+    assert fake_web.close_calls == 1
+    assert fake_img.close_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Malformed tool arguments return error ToolResult, not crash (Finding 1)
+# ---------------------------------------------------------------------------
+
+
+class MalformedArgsAdapter(AdapterProtocol):
+    """Adapter: turn 1 returns tool call with invalid JSON args, turn 2 finalizes."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                "",
+                [{"id": "call-1", "name": "echo", "arguments": "NOT-VALID-JSON!!!"}],
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+            )
+        return (
+            '{"continue": false, "result": "recovered"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_args_returns_error_not_crash() -> None:
+    """Malformed JSON in tool arguments must produce an error ToolResult,
+    not crash the analysis with AgenticProcessingError."""
+    adapter = MalformedArgsAdapter()
+
+    class MalformedArgsProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = MalformedArgsProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "recovered"
+    assert adapter.calls == 2
+
+    # The malformed args error was reported as a ToolResult, not swallowed
+    tool_turns = [t for t in result.turns if t.role == "tool_result"]
+    assert len(tool_turns) == 1
+    tr = tool_turns[0].tool_results[0]
+    assert tr.error is not None
+    assert "json" in tr.error.lower() or "malformed" in tr.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_non_dict_tool_args_returns_error_not_crash() -> None:
+    """Tool arguments that are valid JSON but not an object (e.g. a list)
+    must return an error ToolResult, not crash."""
+
+    class ArrayArgsAdapter(AdapterProtocol):
+        supports_multipart_tool_content: bool = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_chat(
+            self,
+            messages: list[dict[str, Any]] | None = None,
+            max_tokens: int | None = None,
+            temperature: float | None = None,
+            tools: list[dict[str, Any]] | None = None,
+            response_format: dict[str, Any] | None = None,
+        ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+            _ = messages, max_tokens, temperature, tools, response_format
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    "",
+                    [{"id": "call-1", "name": "echo", "arguments": "[1, 2, 3]"}],
+                    GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+                )
+            return (
+                '{"continue": false, "result": "ok"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+
+    adapter = ArrayArgsAdapter()
+
+    class ArrayArgsProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            tool = Tool(
+                name="echo",
+                description="echo back",
+                parameters={"value": {"type": "integer", "description": "v"}},
+                execute=_echo_tool,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[tool])
+
+    processor = ArrayArgsProcessor()
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["result"] == "ok"
+    tool_turns = [t for t in result.turns if t.role == "tool_result"]
+    assert len(tool_turns) == 1
+    assert tool_turns[0].tool_results[0].error is not None
+
+
+# ---------------------------------------------------------------------------
+# coord_space_modified only set for successful tool calls (Finding 2)
+# ---------------------------------------------------------------------------
+
+
+async def _failing_crop(registry: ToolRegistry, **kwargs: Any) -> ToolResult:  # noqa: ARG001
+    raise ValueError("invalid crop region")
+
+
+@pytest.mark.asyncio
+async def test_failed_coord_tool_does_not_set_coord_space_modified() -> None:
+    """A failed crop/zoom/rotate should NOT trigger the coordinate warning."""
+
+    class FailingCropAdapter(AdapterProtocol):
+        supports_multipart_tool_content: bool = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_messages: list[dict[str, Any]] = []
+
+        async def generate_chat(
+            self,
+            messages: list[dict[str, Any]] | None = None,
+            max_tokens: int | None = None,
+            temperature: float | None = None,
+            tools: list[dict[str, Any]] | None = None,
+            response_format: dict[str, Any] | None = None,
+        ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+            _ = max_tokens, temperature, tools, response_format
+            self.last_messages = list(messages or [])
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    "",
+                    [{"id": "c1", "name": "crop", "arguments": '{"x1":0,"y1":0,"x2":-1,"y2":-1}'}],
+                    GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+                )
+            return (
+                '{"continue": false, "result": "done"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+
+    adapter = FailingCropAdapter()
+
+    class CropTestProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=2,  # Force turn 2 to be the last turn
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "continue": {"type": "boolean"},
+                            "result": {"type": "string"},
+                        },
+                        "required": ["continue", "result"],
+                    },
+                },
+            }
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            crop_tool = Tool(
+                name="crop",
+                description="crop image",
+                parameters={
+                    "x1": {"type": "integer"},
+                    "y1": {"type": "integer"},
+                    "x2": {"type": "integer"},
+                    "y2": {"type": "integer"},
+                },
+                execute=_failing_crop,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[crop_tool])
+
+    processor = CropTestProcessor()
+    result = await processor.analyze(images=None, metadata={})
+    assert result.final_response["result"] == "done"
+
+    # The final-turn message should NOT contain the coordinate warning
+    # because the crop failed.
+    final_user_msgs = [
+        m
+        for m in adapter.last_messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any("FINAL turn" in str(p.get("text", "")) for p in m["content"])
+    ]
+    assert len(final_user_msgs) == 1
+    final_text = str(final_user_msgs[0]["content"])
+    assert "WARNING" not in final_text
+    assert "changed the coordinate space" not in final_text
+
+
+# ---------------------------------------------------------------------------
+# Coordinate warning emitted even when response_schema is None (Finding 3)
+# ---------------------------------------------------------------------------
+
+
+async def _noop_crop(registry: ToolRegistry, **kwargs: Any) -> ToolResult:  # noqa: ARG001
+    return ToolResult(tool_name="crop", description="Cropped image to region")
+
+
+@pytest.mark.asyncio
+async def test_coord_warning_emitted_without_response_schema() -> None:
+    """The coordinate-space warning must appear on the final turn even when
+    get_response_schema() returns None (free-form responses)."""
+
+    class CoordWarningAdapter(AdapterProtocol):
+        supports_multipart_tool_content: bool = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_messages: list[dict[str, Any]] = []
+
+        async def generate_chat(
+            self,
+            messages: list[dict[str, Any]] | None = None,
+            max_tokens: int | None = None,
+            temperature: float | None = None,
+            tools: list[dict[str, Any]] | None = None,
+            response_format: dict[str, Any] | None = None,
+        ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+            _ = max_tokens, temperature, tools, response_format
+            self.last_messages = list(messages or [])
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    "",
+                    [{"id": "c1", "name": "crop", "arguments": '{"x1":0,"y1":0,"x2":10,"y2":10}'}],
+                    GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_call"),
+                )
+            # Second turn: continue to use up a turn so we get a final-turn injection
+            if self.calls == 2:
+                return (
+                    '{"continue": true, "result": "partial"}',
+                    None,
+                    GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+                )
+            return (
+                '{"continue": false, "result": "done"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+
+    adapter = CoordWarningAdapter()
+
+    class NoSchemaCoordProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=True,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "system"
+
+        def get_user_message(self, images: list[ImageInput], metadata: dict[str, Any]) -> str:
+            _ = images, metadata
+            return "user"
+
+        def get_response_schema(self) -> dict[str, Any] | None:
+            return None
+
+        def validate_response(self, response: dict[str, Any]) -> bool:
+            return "result" in response
+
+        def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
+            _ = images
+            crop_tool = Tool(
+                name="crop",
+                description="crop image",
+                parameters={
+                    "x1": {"type": "integer"},
+                    "y1": {"type": "integer"},
+                    "x2": {"type": "integer"},
+                    "y2": {"type": "integer"},
+                },
+                execute=_noop_crop,
+                requires_image=False,
+            )
+            return ToolRegistry(image_path=None, tools=[crop_tool])
+
+    processor = NoSchemaCoordProcessor()
+    result = await processor.analyze(images=None, metadata={})
+    assert result.final_response["result"] == "done"
+
+    # Even with response_schema=None, the final turn message must exist
+    final_user_msgs = [
+        m
+        for m in adapter.last_messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any("FINAL turn" in str(p.get("text", "")) for p in m["content"])
+    ]
+    assert len(final_user_msgs) == 1
+    final_text = str(final_user_msgs[0]["content"])
+    assert "FINAL turn" in final_text
+    assert "Do NOT attempt tool calls" in final_text

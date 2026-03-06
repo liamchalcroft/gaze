@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 import pytest
 
+from radiant_harness.config import RankingWeights
 from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.types import AgenticResult
 from radiant_harness.types import ToolCall
@@ -86,6 +87,28 @@ class TestTurnImmutability:
         assert turn.tool_results == ()
 
 
+class TestToolCallImmutability:
+    """ToolCall.arguments must freeze JSON-object inputs."""
+
+    def test_dict_arguments_are_mapping_proxy(self) -> None:
+        tc = ToolCall(id="1", name="zoom", arguments={"x": 1, "y": 2})
+        assert isinstance(tc.arguments, MappingProxyType)
+        assert tc.arguments["x"] == 1
+
+    def test_dict_arguments_cannot_be_mutated(self) -> None:
+        tc = ToolCall(id="1", name="zoom", arguments={"x": 1})
+        with pytest.raises(TypeError):
+            tc.arguments["x"] = 2  # type: ignore[index]
+
+    def test_nested_arguments_are_deep_frozen(self) -> None:
+        raw = {"box": [1, 2, {"x": 3}]}
+        tc = ToolCall(id="1", name="crop", arguments=raw)
+        raw["box"][2]["x"] = 9
+        assert tc.arguments["box"][2]["x"] == 3
+        with pytest.raises(TypeError):
+            tc.arguments["box"][2]["x"] = 4  # type: ignore[index]
+
+
 class TestAgenticResultImmutability:
     """AgenticResult must freeze its mutable inputs."""
 
@@ -115,6 +138,17 @@ class TestAgenticResultImmutability:
         result = self._make_result()
         with pytest.raises(TypeError):
             result.final_response["result"] = "hacked"  # type: ignore[index]
+
+    def test_final_response_pre_wrapped_proxy_is_still_deep_frozen(self) -> None:
+        nested = {"inner": {"x": 1}}
+        result = AgenticResult(
+            final_response=MappingProxyType(nested),
+            turns=[Turn(role="assistant", content="done")],
+            total_tokens=1,
+            confidence=1.0,
+        )
+        nested["inner"]["x"] = 9
+        assert result.final_response["inner"]["x"] == 1
 
     def test_turns_is_tuple(self) -> None:
         result = self._make_result()
@@ -297,6 +331,21 @@ class TestImageSearchResultFrozen:
         assert isinstance(isr.metadata, MappingProxyType)
         assert len(isr.metadata) == 0
 
+    def test_nested_metadata_is_deep_frozen(self) -> None:
+        from radiant_harness.retrieval.image_search import ImageSearchResult
+
+        nested = {"outer": {"x": 1}}
+        isr = ImageSearchResult(
+            title="Test",
+            image_url="https://x.com/img.png",
+            thumbnail_url=None,
+            source_url="https://x.com",
+            source="openi",
+            metadata=MappingProxyType(nested),
+        )
+        nested["outer"]["x"] = 9
+        assert isr.metadata["outer"]["x"] == 1
+
 
 class TestToolResultMetadataFrozen:
     """ToolResult.metadata must be a MappingProxyType."""
@@ -308,6 +357,18 @@ class TestToolResultMetadataFrozen:
             tr.metadata["key"] = "new"  # type: ignore[index]
 
     def test_metadata_already_proxy(self) -> None:
-        proxy = MappingProxyType({"a": 1})
+        proxy = MappingProxyType({"a": {"x": 1}})
         tr = ToolResult(tool_name="zoom", description="done", metadata=proxy)
-        assert tr.metadata is proxy
+        assert isinstance(tr.metadata, MappingProxyType)
+        with pytest.raises(TypeError):
+            tr.metadata["a"]["x"] = 2  # type: ignore[index]
+
+
+class TestRankingWeightsFrozen:
+    """RankingWeights must deep-freeze nested content_type_boosts mappings."""
+
+    def test_nested_mappings_are_deep_frozen_even_if_proxy_wrapped(self) -> None:
+        raw = {"diagnosis": {"guidelines": 0.3}}
+        weights = RankingWeights(content_type_boosts=MappingProxyType(raw))
+        raw["diagnosis"]["guidelines"] = 0.9
+        assert weights.content_type_boosts["diagnosis"]["guidelines"] == 0.3

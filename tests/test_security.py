@@ -93,12 +93,14 @@ class TestOpenAIAdapterBaseUrlValidation:
         from unittest.mock import patch
 
         env = {k: v for k, v in os.environ.items() if k != "RADIANT_ALLOW_CUSTOM_BASE_URL"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ModelError, match="RADIANT_ALLOW_CUSTOM_BASE_URL"):
-                OpenAIAdapter(
-                    model_name="test",
-                    base_url="https://my-custom-proxy.example.com/v1",
-                )
+        with (
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(ModelError, match="RADIANT_ALLOW_CUSTOM_BASE_URL"),
+        ):
+            OpenAIAdapter(
+                model_name="test",
+                base_url="https://my-custom-proxy.example.com/v1",
+            )
 
     def test_warns_on_unknown_https_host_with_opt_in(self) -> None:
         """Custom HTTPS endpoints are allowed with env-var opt-in and logged."""
@@ -329,9 +331,7 @@ class TestImageMagicByteValidation:
     def test_rejects_html_content(self) -> None:
         content = b"<html><body>not an image</body></html>"
         with pytest.raises(ImageDownloadError, match="known image format"):
-            MedicalImageSearchManager._validate_image_magic(
-                content, "http://example.com/img.png"
-            )
+            MedicalImageSearchManager._validate_image_magic(content, "http://example.com/img.png")
 
     def test_rejects_empty_content(self) -> None:
         with pytest.raises(ImageDownloadError, match="known image format"):
@@ -340,6 +340,4 @@ class TestImageMagicByteValidation:
     def test_rejects_pdf_content(self) -> None:
         content = b"%PDF-1.4 fake pdf content"
         with pytest.raises(ImageDownloadError, match="known image format"):
-            MedicalImageSearchManager._validate_image_magic(
-                content, "http://example.com/img.png"
-            )
+            MedicalImageSearchManager._validate_image_magic(content, "http://example.com/img.png")

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import pytest
 
 from radiant_harness.config import CacheConfig
@@ -73,6 +76,54 @@ class TestConfigContext:
             assert get_config().cache.max_cache_size == 10
 
         assert get_config().cache.max_cache_size == original_max
+
+    def test_thread_contexts_do_not_leak_into_each_other(self) -> None:
+        first_seen: list[int] = []
+        second_seen: list[int] = []
+        entered = threading.Barrier(2)
+
+        def first_worker() -> None:
+            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=111))):
+                entered.wait()
+                first_seen.append(get_config().cache.max_cache_size)
+
+        def second_worker() -> None:
+            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=222))):
+                entered.wait()
+                second_seen.append(get_config().cache.max_cache_size)
+
+        first = threading.Thread(target=first_worker)
+        second = threading.Thread(target=second_worker)
+        first.start()
+        second.start()
+        first.join()
+        second.join()
+
+        assert first_seen == [111]
+        assert second_seen == [222]
+        assert get_config().cache.max_cache_size == CacheConfig().max_cache_size
+
+    @pytest.mark.asyncio
+    async def test_async_task_contexts_do_not_leak_into_each_other(self) -> None:
+        first_ready = asyncio.Event()
+        second_ready = asyncio.Event()
+
+        async def first_task() -> int:
+            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=111))):
+                first_ready.set()
+                await second_ready.wait()
+                return get_config().cache.max_cache_size
+
+        async def second_task() -> int:
+            await first_ready.wait()
+            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=222))):
+                second_ready.set()
+                return get_config().cache.max_cache_size
+
+        first_result, second_result = await asyncio.gather(first_task(), second_task())
+        assert first_result == 111
+        assert second_result == 222
+        assert get_config().cache.max_cache_size == CacheConfig().max_cache_size
 
 
 class TestAutouseFixture:

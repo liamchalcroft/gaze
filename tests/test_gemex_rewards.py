@@ -105,9 +105,7 @@ class TestContainsMatchLengthPenalty:
 
     def test_slight_elaboration_high_score(self) -> None:
         """If pred is slightly longer, score should still be high."""
-        score = compute_contains_match(
-            "small pleural effusion", "pleural effusion"
-        )
+        score = compute_contains_match("small pleural effusion", "pleural effusion")
         # len("pleural effusion")=16, len("small pleural effusion")=22
         # After normalization. Score = 16/22 ≈ 0.73
         assert score > 0.6, f"Slight elaboration should score well: {score:.3f}"
@@ -120,9 +118,7 @@ class TestContainsMatchLengthPenalty:
         )
         score = compute_contains_match(kitchen_sink, "effusion")
         # "effusion" in kitchen_sink → True, but length ratio is tiny
-        assert score < 0.2, (
-            f"Kitchen-sink answer should be penalised, got {score:.3f}"
-        )
+        assert score < 0.2, f"Kitchen-sink answer should be penalised, got {score:.3f}"
 
     def test_ref_in_pred_penalised_proportionally(self) -> None:
         """Penalty should scale with length disparity."""
@@ -289,13 +285,15 @@ class TestCustomWeightsPropagation:
         # A case with perfect answer but wrong bbox/location
         import json
 
-        response = json.dumps({
-            "reasoning": "Test reasoning",
-            "answer": "pleural effusion",
-            "location": {"reference": "wrong region", "bbox": [0, 0, 1, 1]},
-            "confidence": 0.9,
-            "continue": False,
-        })
+        response = json.dumps(
+            {
+                "reasoning": "Test reasoning",
+                "answer": "pleural effusion",
+                "location": {"reference": "wrong region", "bbox": [0, 0, 1, 1]},
+                "confidence": 0.9,
+                "continue": False,
+            }
+        )
         completion = [{"role": "assistant", "content": response}]
 
         info = {

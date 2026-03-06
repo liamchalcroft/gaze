@@ -159,17 +159,18 @@ class TestCombinedReward:
         score = combined("", "Hello world", {"answer": "Hello"})
         assert abs(score - expected) < 1e-6
 
-    def test_weight_normalization(self) -> None:
+    def test_weight_validation_raises(self) -> None:
+        import pytest
+
         exact = ExactMatchReward()
         f1 = TokenF1Reward()
 
-        # Weights don't sum to 1, should normalize
-        combined = CombinedReward(
-            rewards=[exact, f1],
-            weights=[3, 2],  # Sum to 5, should normalize to 0.6, 0.4
-        )
-
-        assert combined.weights == [0.6, 0.4]
+        # Weights don't sum to 1 — must raise ValueError
+        with pytest.raises(ValueError, match="weights must sum to 1.0"):
+            CombinedReward(
+                rewards=[exact, f1],
+                weights=[3, 2],  # Sum to 5
+            )
 
     def test_combined_reward_does_not_mutate_info(self) -> None:
         """CombinedReward must not mutate the caller's info dict."""

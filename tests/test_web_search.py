@@ -1039,3 +1039,178 @@ class TestTreatmentDifferentialBoosts:
             "differential",
         ):
             assert search_type in boosts, f"Missing content_type_boosts for '{search_type}'"
+
+
+class TestEfetchRetry:
+    """efetch must retry once on transient failure before degrading."""
+
+    @pytest.mark.asyncio
+    async def test_efetch_503_retried_then_succeeds(self) -> None:
+        """Transient 503 from efetch should be retried; abstracts recovered."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        import aiohttp
+
+        config = SearchConfig(rate_limit_delay_seconds=0.0)
+        engine = PubMedSearchEngine(config=config)
+
+        efetch_call_count = 0
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            nonlocal efetch_call_count
+            mock_resp = AsyncMock()
+            if "efetch" in url:
+                efetch_call_count += 1
+                if efetch_call_count == 1:
+                    mock_resp.status = 503
+                    mock_resp.raise_for_status = MagicMock(
+                        side_effect=aiohttp.ClientResponseError(
+                            request_info=aiohttp.RequestInfo(
+                                url=url,
+                                method="GET",
+                                headers={},
+                                real_url=url,  # type: ignore[arg-type]
+                            ),
+                            history=(),
+                            status=503,
+                            message="Service Unavailable",
+                        )
+                    )
+                else:
+                    mock_resp.status = 200
+                    mock_resp.raise_for_status = MagicMock()
+                    abstract_xml = """
+                    <PubmedArticleSet>
+                      <PubmedArticle>
+                        <MedlineCitation>
+                          <PMID>12345</PMID>
+                          <Article>
+                            <Abstract>
+                              <AbstractText>Recovered abstract.</AbstractText>
+                            </Abstract>
+                          </Article>
+                        </MedlineCitation>
+                      </PubmedArticle>
+                    </PubmedArticleSet>
+                    """
+                    mock_resp.text = AsyncMock(return_value=abstract_xml)
+            else:
+                mock_resp.status = 200
+                mock_resp.raise_for_status = MagicMock()
+                mock_resp.json = AsyncMock(return_value={"result": {}})
+                mock_resp.text = AsyncMock(return_value="<PubmedArticleSet/>")
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+            abstracts = await engine._fetch_abstracts(["12345"])
+
+        assert efetch_call_count == 2
+        assert "12345" in abstracts
+        assert "Recovered abstract." in abstracts["12345"]
+
+    @pytest.mark.asyncio
+    async def test_efetch_persistent_failure_degrades(self) -> None:
+        """Persistent efetch failure must degrade gracefully, not crash."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        import aiohttp
+
+        config = SearchConfig(rate_limit_delay_seconds=0.0)
+        engine = PubMedSearchEngine(config=config)
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            mock_resp = AsyncMock()
+            mock_resp.status = 503
+            mock_resp.raise_for_status = MagicMock(
+                side_effect=aiohttp.ClientResponseError(
+                    request_info=aiohttp.RequestInfo(
+                        url=url,
+                        method="GET",
+                        headers={},
+                        real_url=url,  # type: ignore[arg-type]
+                    ),
+                    history=(),
+                    status=503,
+                    message="Service Unavailable",
+                )
+            )
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+            abstracts = await engine._fetch_abstracts(["12345"])
+
+        # Should degrade gracefully — empty dict, no crash
+        assert abstracts == {}
+
+    @pytest.mark.asyncio
+    async def test_efetch_warning_includes_pmids(self) -> None:
+        """efetch failure log must include the PMIDs being fetched."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        import aiohttp
+
+        config = SearchConfig(rate_limit_delay_seconds=0.0)
+        engine = PubMedSearchEngine(config=config)
+        warnings: list[str] = []
+
+        def capture_warning(msg: str) -> None:
+            warnings.append(msg)
+
+        @asynccontextmanager
+        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
+            mock_resp = AsyncMock()
+            mock_resp.status = 500
+            mock_resp.raise_for_status = MagicMock(
+                side_effect=aiohttp.ClientResponseError(
+                    request_info=aiohttp.RequestInfo(
+                        url=url,
+                        method="GET",
+                        headers={},
+                        real_url=url,  # type: ignore[arg-type]
+                    ),
+                    history=(),
+                    status=500,
+                    message="Internal Server Error",
+                )
+            )
+            yield mock_resp
+
+        mock_session = AsyncMock()
+        mock_session.get = mock_get
+
+        with (
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
+            patch("radiant_harness.retrieval.web_search.logger") as mock_logger,
+        ):
+            mock_logger.warning = capture_warning
+            mock_logger.debug = capture_warning
+            await engine._fetch_abstracts(["99999", "88888"])
+
+        all_msgs = " ".join(warnings)
+        assert "99999" in all_msgs
+        assert "88888" in all_msgs
+
+
+class TestContentPreviewConfigDefault:
+    """max_content_preview_length default must be 500 (matching live behavior)."""
+
+    def test_default_is_500(self) -> None:
+        config = SearchConfig()
+        assert config.max_content_preview_length == 500

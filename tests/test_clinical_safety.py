@@ -18,10 +18,8 @@ from radiant_harness.tools.visual import apply_intensity_threshold
 
 # Guard imports that chain through evaluation/__init__.py → detection.py → torch
 try:
-    from examples.nova.src.evaluation.diagnosis import (
-        exact_diagnosis_match,
-        normalize_diagnosis_string,
-    )
+    from examples.nova.src.evaluation.diagnosis import exact_diagnosis_match
+    from examples.nova.src.evaluation.diagnosis import normalize_diagnosis_string
 
     _HAS_DIAGNOSIS = True
 except (ImportError, ModuleNotFoundError):
@@ -302,9 +300,7 @@ class TestIoUAreaPenaltyBypass:
         reward = reward_fn("prompt", completion, info)
 
         # Without image_area, penalty is skipped → IoU=1.0 returned
-        assert reward == 1.0, (
-            f"Expected reward=1.0 when penalty skipped, got {reward}"
-        )
+        assert reward == 1.0, f"Expected reward=1.0 when penalty skipped, got {reward}"
 
     def test_normalized_mode_valid_coords_penalized(self) -> None:
         """Full-image box in [0,1] range gets full penalty."""
@@ -316,9 +312,7 @@ class TestIoUAreaPenaltyBypass:
         completion = "[0.0, 0.0, 1.0, 1.0]"
         reward = reward_fn("prompt", completion, info)
 
-        assert reward == 0.0, (
-            f"Full-image normalized box should get reward=0.0, got {reward}"
-        )
+        assert reward == 0.0, f"Full-image normalized box should get reward=0.0, got {reward}"
 
     def test_normalized_mode_small_box_no_penalty(self) -> None:
         """Small boxes below penalty_start should not be penalized."""
@@ -330,9 +324,7 @@ class TestIoUAreaPenaltyBypass:
         completion = "[0.2, 0.2, 0.3, 0.3]"
         reward = reward_fn("prompt", completion, info)
 
-        assert reward == 1.0, (
-            f"Small box with perfect IoU should get reward=1.0, got {reward}"
-        )
+        assert reward == 1.0, f"Small box with perfect IoU should get reward=1.0, got {reward}"
 
 
 # =====================================================================
@@ -551,16 +543,12 @@ class TestSchemaValidationDifferentialDiagnoses:
 
     def test_diff_missing_diagnosis_string_rejected(self) -> None:
         resp = _make_valid_response()
-        resp["diagnosis"]["differential_diagnoses"] = [
-            {"confidence": 0.5}
-        ]
+        resp["diagnosis"]["differential_diagnoses"] = [{"confidence": 0.5}]
         assert validate_nova_response(resp) is False
 
     def test_diff_missing_confidence_rejected(self) -> None:
         resp = _make_valid_response()
-        resp["diagnosis"]["differential_diagnoses"] = [
-            {"diagnosis": "meningioma"}
-        ]
+        resp["diagnosis"]["differential_diagnoses"] = [{"diagnosis": "meningioma"}]
         assert validate_nova_response(resp) is False
 
     def test_diff_confidence_above_one_rejected(self) -> None:

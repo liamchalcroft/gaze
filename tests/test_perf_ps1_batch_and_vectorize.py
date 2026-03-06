@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -18,7 +19,6 @@ import pytest
 from PIL import Image
 
 from radiant_harness.tools.visual import compute_intensity_profile
-
 
 # ---------------------------------------------------------------------------
 # 1. NovaDataset.get_sample_metadata
@@ -65,6 +65,7 @@ class _FakeNovaDataset:
 
 def _patch_nova_methods(fake: _FakeNovaDataset) -> _FakeNovaDataset:
     """Monkey-patch the real NovaDataset methods onto a fake instance."""
+    pytest.importorskip("torch")
     from examples.nova.src.data.nova_dataset import NovaDataset
 
     fake._extract_row_metadata = NovaDataset._extract_row_metadata.__get__(fake)  # type: ignore[attr-defined]
@@ -143,6 +144,7 @@ class TestCLIDeferredLoading:
         import ast
         import inspect
 
+        pytest.importorskip("torch")
         from examples.nova.src.cli import run_evaluation
 
         source = inspect.getsource(run_evaluation)
@@ -151,14 +153,17 @@ class TestCLIDeferredLoading:
         # Find the work_items annotation
         found_annotation = False
         for node in ast.walk(tree):
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if node.target.id == "work_items":
-                    # Check it's list[int], not list[tuple[...]]
-                    annotation_src = ast.dump(node.annotation) if node.annotation else ""
-                    assert "int" in annotation_src
-                    assert "tuple" not in annotation_src.lower()
-                    found_annotation = True
-                    break
+            if (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == "work_items"
+            ):
+                # Check it's list[int], not list[tuple[...]]
+                annotation_src = ast.dump(node.annotation) if node.annotation else ""
+                assert "int" in annotation_src
+                assert "tuple" not in annotation_src.lower()
+                found_annotation = True
+                break
 
         assert found_annotation, "work_items type annotation not found"
 
@@ -167,6 +172,7 @@ class TestCLIDeferredLoading:
         import ast
         import inspect
 
+        pytest.importorskip("torch")
         from examples.nova.src.cli import run_evaluation
 
         source = inspect.getsource(run_evaluation)
@@ -203,7 +209,9 @@ class TestIntensityProfileVectorized:
         assert len(profile) > 0
         # Profile should be monotonically non-decreasing (gradient L→R)
         for i in range(1, len(profile)):
-            assert profile[i] >= profile[i - 1], f"profile[{i}]={profile[i]} < profile[{i-1}]={profile[i-1]}"
+            assert profile[i] >= profile[i - 1], (
+                f"profile[{i}]={profile[i]} < profile[{i - 1}]={profile[i - 1]}"
+            )
         # First value near 0, last near 255
         assert profile[0] <= 5
         assert profile[-1] >= 250
@@ -237,7 +245,7 @@ class TestIntensityProfileVectorized:
         n = max(abs(x1 - x0), abs(y1 - y0), 1) + 1
         xs = np.clip(np.linspace(x0, x1, n).astype(int), 0, w - 1)
         ys = np.clip(np.linspace(y0, y1, n).astype(int), 0, h - 1)
-        expected = [int(gray[y, x]) for y, x in zip(ys, xs)]
+        expected = [int(gray[y, x]) for y, x in zip(ys, xs, strict=False)]
 
         assert profile == expected
 
@@ -272,3 +280,137 @@ class TestFinalTurnNoReset:
                         "Found reset_to_original() call in _run_analysis — "
                         "this should have been removed as dead code on the final turn"
                     )
+
+
+class TestNovaCliAsyncOffload:
+    @pytest.mark.asyncio
+    async def test_run_evaluation_offloads_blocking_work_and_writes_sidecar(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pytest.importorskip("torch")
+        from examples.nova.src import cli
+        from examples.nova.src.config import NOVAConfig
+        from examples.nova.src.config import TaskType
+        from radiant_harness import AgenticResult
+
+        class _FakeDataset:
+            def __len__(self) -> int:
+                return 1
+
+            def get_sample_metadata(self, idx: int) -> dict[str, Any]:
+                assert idx == 0
+                return {
+                    "ground_truth": {
+                        "caption": "reference caption",
+                        "final_diagnosis": "glioma",
+                        "localizations": [{"bbox": [0.0, 0.0, 10.0, 10.0]}],
+                    },
+                    "image_size": (16, 16),
+                }
+
+            def __getitem__(self, idx: int) -> dict[str, Any]:
+                assert idx == 0
+                return {
+                    "image": Image.new("RGB", (16, 16), color=(12, 34, 56)),
+                    "metadata": {"clinical_history": "hx"},
+                    "ground_truth": {
+                        "caption": "reference caption",
+                        "final_diagnosis": "glioma",
+                        "localizations": [{"bbox": [0.0, 0.0, 10.0, 10.0]}],
+                    },
+                }
+
+        class _FakeProcessor:
+            def __init__(self) -> None:
+                self.closed = 0
+
+            async def analyze(self, images, metadata):
+                assert images.size == (16, 16)
+                assert metadata["clinical_history"] == "hx"
+                return AgenticResult(
+                    final_response={
+                        "caption": {"description": "predicted caption", "findings": []},
+                        "diagnosis": {"primary_diagnosis": "glioma", "differential_diagnoses": []},
+                        "localization": {
+                            "image_dimensions": {"width": 16, "height": 16},
+                            "localizations": [
+                                {
+                                    "bounding_box": [0.0, 0.0, 10.0, 10.0],
+                                    "confidence": 0.9,
+                                }
+                            ],
+                        },
+                    },
+                    turns=(),
+                    total_tokens=123,
+                    confidence=0.8,
+                )
+
+            async def aclose(self) -> None:
+                self.closed += 1
+
+        fake_processor = _FakeProcessor()
+
+        def _fake_caption(preds, refs):
+            assert preds == ["predicted caption"]
+            assert refs == ["reference caption"]
+            return {"bleu": 1.0}
+
+        async def _fake_diagnosis(preds, refs):
+            assert preds == [["glioma"]]
+            assert refs == ["glioma"]
+            return {
+                "top1": 1.0,
+                "top5": 1.0,
+                "coverage": 1.0,
+                "entropy": 0.0,
+                "judgment_log": [{"pred": "glioma", "ref": "glioma", "method": "exact_match"}],
+            }
+
+        def _fake_detection(preds, refs):
+            assert preds[0]["boxes"] == [[0.0, 0.0, 10.0, 10.0]]
+            assert refs[0]["boxes"] == [[0.0, 0.0, 10.0, 10.0]]
+            return {"map50": 1.0}
+
+        offloaded: list[str] = []
+
+        async def _tracking_to_thread(func, *args, **kwargs):
+            offloaded.append(getattr(func, "__name__", type(func).__name__))
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "NovaDataset", lambda *args, **kwargs: _FakeDataset())
+        monkeypatch.setattr(cli, "NOVAAgenticProcessor", lambda **kwargs: fake_processor)
+        monkeypatch.setattr(cli, "evaluate_caption", _fake_caption)
+        monkeypatch.setattr(cli, "evaluate_diagnosis_nova_official", _fake_diagnosis)
+        monkeypatch.setattr(cli, "evaluate_detection", _fake_detection)
+        monkeypatch.setattr(cli.asyncio, "to_thread", _tracking_to_thread)
+
+        config = NOVAConfig(
+            model_name="test-model",
+            task=TaskType.ALL,
+            output_dir=tmp_path / "run",
+            batch_size=1,
+            skip_existing=False,
+            max_samples=1,
+            use_tools=False,
+            use_web_search=False,
+        )
+
+        metrics = await cli.run_evaluation(config)
+
+        assert metrics["diagnosis"]["judgment_log"][0]["method"] == "exact_match"
+        assert "__getitem__" in offloaded
+        assert "_write_json_file" in offloaded
+        assert "_fake_caption" in offloaded
+        assert "_fake_detection" in offloaded
+        assert fake_processor.closed == 1
+
+        summary = json.loads((config.output_dir / "summary.json").read_text())
+        assert "judgment_log" not in summary["metrics"]["diagnosis"]
+        assert summary["metrics"]["diagnosis"]["judgment_log_file"] == "diagnosis_judgment_log.json"
+        assert summary["metrics"]["diagnosis"]["judgment_log_entries"] == 1
+
+        sidecar = json.loads((config.output_dir / "diagnosis_judgment_log.json").read_text())
+        assert sidecar == [{"pred": "glioma", "ref": "glioma", "method": "exact_match"}]

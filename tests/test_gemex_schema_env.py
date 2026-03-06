@@ -21,21 +21,34 @@ from examples.gemex_thinkvg.src.schemas import validate_gemex_response
 # ── Finding #9: `continue` is optional ───────────────────────────────
 
 
-class TestContinueFieldOptional:
-    """The `continue` field should no longer be required."""
+class TestContinueFieldRequired:
+    """The `continue` field is now required (strict mode compatibility)."""
 
-    def test_schema_required_excludes_continue(self) -> None:
-        """continue should NOT be in the schema's required list."""
+    def test_schema_required_includes_continue(self) -> None:
+        """continue MUST be in the schema's required list for strict mode."""
         required = GEMEX_SCHEMA["json_schema"]["schema"]["required"]
-        assert "continue" not in required
+        assert "continue" in required
 
-    def test_schema_properties_still_has_continue(self) -> None:
-        """continue should still be ALLOWED (in properties)."""
+    def test_schema_properties_has_continue(self) -> None:
+        """continue should be in properties."""
         props = GEMEX_SCHEMA["json_schema"]["schema"]["properties"]
         assert "continue" in props
 
+    def test_question_type_removed_from_schema(self) -> None:
+        """question_type should NOT be in schema (it's input metadata, not output)."""
+        props = GEMEX_SCHEMA["json_schema"]["schema"]["properties"]
+        assert "question_type" not in props
+
+    def test_all_properties_in_required(self) -> None:
+        """Strict mode requires every property to be in required."""
+        schema = GEMEX_SCHEMA["json_schema"]["schema"]
+        prop_keys = set(schema["properties"].keys())
+        required_keys = set(schema["required"])
+        assert prop_keys == required_keys, f"Properties {prop_keys - required_keys} not in required"
+
     def test_valid_response_without_continue(self) -> None:
-        """A response missing `continue` should now pass validation."""
+        """A response missing `continue` still passes the validator
+        (validator is lenient; schema enforcement is API-side)."""
         response = {
             "reasoning": "Bilateral opacities seen in lower zones.",
             "answer": "pleural effusion",
@@ -72,25 +85,40 @@ class TestContinueFieldOptional:
     def test_missing_required_fields_still_fail(self) -> None:
         """Other required fields should still be enforced."""
         # Missing answer
-        assert validate_gemex_response({
-            "reasoning": "test",
-            "location": {"reference": "lung", "bbox": [0, 0, 1, 1]},
-            "confidence": 0.5,
-        }) is False
+        assert (
+            validate_gemex_response(
+                {
+                    "reasoning": "test",
+                    "location": {"reference": "lung", "bbox": [0, 0, 1, 1]},
+                    "confidence": 0.5,
+                }
+            )
+            is False
+        )
 
         # Missing location
-        assert validate_gemex_response({
-            "reasoning": "test",
-            "answer": "effusion",
-            "confidence": 0.5,
-        }) is False
+        assert (
+            validate_gemex_response(
+                {
+                    "reasoning": "test",
+                    "answer": "effusion",
+                    "confidence": 0.5,
+                }
+            )
+            is False
+        )
 
         # Missing reasoning
-        assert validate_gemex_response({
-            "answer": "effusion",
-            "location": {"reference": "lung", "bbox": [0, 0, 1, 1]},
-            "confidence": 0.5,
-        }) is False
+        assert (
+            validate_gemex_response(
+                {
+                    "answer": "effusion",
+                    "location": {"reference": "lung", "bbox": [0, 0, 1, 1]},
+                    "confidence": 0.5,
+                }
+            )
+            is False
+        )
 
 
 # ── Finding #9: is_completed respects continue=true ──────────────────
@@ -117,39 +145,59 @@ class TestIsCompletedContinueField:
 
     def test_complete_without_continue(self) -> None:
         """Valid response without continue → episode complete."""
-        assert self._make_env_and_check({
-            "reasoning": "Done.",
-            "answer": "effusion",
-            "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.8,
-        }) is True
+        assert (
+            self._make_env_and_check(
+                {
+                    "reasoning": "Done.",
+                    "answer": "effusion",
+                    "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
+                    "confidence": 0.8,
+                }
+            )
+            is True
+        )
 
     def test_complete_with_continue_false(self) -> None:
         """Valid response with continue=false → episode complete."""
-        assert self._make_env_and_check({
-            "reasoning": "Done.",
-            "answer": "effusion",
-            "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.8,
-            "continue": False,
-        }) is True
+        assert (
+            self._make_env_and_check(
+                {
+                    "reasoning": "Done.",
+                    "answer": "effusion",
+                    "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
+                    "confidence": 0.8,
+                    "continue": False,
+                }
+            )
+            is True
+        )
 
     def test_not_complete_with_continue_true(self) -> None:
         """Valid response with continue=true → episode NOT complete."""
-        assert self._make_env_and_check({
-            "reasoning": "Need more analysis.",
-            "answer": "possible effusion",
-            "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.5,
-            "continue": True,
-        }) is False
+        assert (
+            self._make_env_and_check(
+                {
+                    "reasoning": "Need more analysis.",
+                    "answer": "possible effusion",
+                    "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
+                    "confidence": 0.5,
+                    "continue": True,
+                }
+            )
+            is False
+        )
 
     def test_invalid_response_not_complete(self) -> None:
         """Invalid response → episode not complete regardless of continue."""
-        assert self._make_env_and_check({
-            "reasoning": "test",
-            # Missing answer, location, confidence
-        }) is False
+        assert (
+            self._make_env_and_check(
+                {
+                    "reasoning": "test",
+                    # Missing answer, location, confidence
+                }
+            )
+            is False
+        )
 
 
 # ── Finding #10: Unified reward path ─────────────────────────────────
@@ -174,12 +222,14 @@ class TestUnifiedRewardPath:
     def test_json_response_scored(self) -> None:
         """Standard JSON response should be scored correctly."""
         reward_fn = GEMeXVerifiersReward()
-        response = json.dumps({
-            "reasoning": "Analysis of right lower lobe.",
-            "answer": "pleural effusion",
-            "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.9,
-        })
+        response = json.dumps(
+            {
+                "reasoning": "Analysis of right lower lobe.",
+                "answer": "pleural effusion",
+                "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
+                "confidence": 0.9,
+            }
+        )
         completion = [{"role": "assistant", "content": response}]
         info = self._make_info()
 
@@ -187,7 +237,11 @@ class TestUnifiedRewardPath:
         assert score > 0.9, f"Perfect JSON answer should score high, got {score:.3f}"
 
     def test_xml_response_scored(self) -> None:
-        """XML-style response should also be scored via fallback."""
+        """XML-style response should be scored via fallback.
+
+        The XML parser now injects default reasoning/confidence/continue
+        so that validation passes and reward is computed.
+        """
         reward_fn = GEMeXVerifiersReward()
         xml_response = (
             "<response>"
@@ -202,10 +256,10 @@ class TestUnifiedRewardPath:
         info = self._make_info()
 
         score = reward_fn("", completion, info)
-        # XML parser doesn't produce confidence/reasoning, so validation
-        # may reject it. The key check: it doesn't crash and returns a score.
         assert isinstance(score, float)
-        assert 0.0 <= score <= 1.0
+        assert score > 0.8, (
+            f"XML response with correct answer+bbox should score high, got {score:.3f}"
+        )
 
     def test_invalid_response_zero(self) -> None:
         """Unparseable response should return 0.0."""
@@ -222,15 +276,17 @@ class TestUnifiedRewardPath:
         md_response = (
             "Based on my analysis:\n"
             "```json\n"
-            + json.dumps({
-                "reasoning": "Right lower lobe opacity.",
-                "answer": "pleural effusion",
-                "location": {
-                    "reference": "right lower lobe",
-                    "bbox": [100, 100, 200, 200],
-                },
-                "confidence": 0.85,
-            })
+            + json.dumps(
+                {
+                    "reasoning": "Right lower lobe opacity.",
+                    "answer": "pleural effusion",
+                    "location": {
+                        "reference": "right lower lobe",
+                        "bbox": [100, 100, 200, 200],
+                    },
+                    "confidence": 0.85,
+                }
+            )
             + "\n```"
         )
         completion = [{"role": "assistant", "content": md_response}]
@@ -246,12 +302,14 @@ class TestUnifiedRewardPath:
         reward_fn = GEMeXVerifiersReward(weights=weights)
 
         # Perfect answer, wrong location + bbox
-        response = json.dumps({
-            "reasoning": "Test.",
-            "answer": "pleural effusion",
-            "location": {"reference": "wrong region", "bbox": [0, 0, 1, 1]},
-            "confidence": 0.9,
-        })
+        response = json.dumps(
+            {
+                "reasoning": "Test.",
+                "answer": "pleural effusion",
+                "location": {"reference": "wrong region", "bbox": [0, 0, 1, 1]},
+                "confidence": 0.9,
+            }
+        )
         completion = [{"role": "assistant", "content": response}]
         info = self._make_info()
 
@@ -267,12 +325,14 @@ class TestUnifiedRewardPath:
         env_fn = _make_gemex_reward(weights)
         direct_fn = GEMeXVerifiersReward(weights=weights)
 
-        response = json.dumps({
-            "reasoning": "Analysis complete.",
-            "answer": "pleural effusion",
-            "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.9,
-        })
+        response = json.dumps(
+            {
+                "reasoning": "Analysis complete.",
+                "answer": "pleural effusion",
+                "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
+                "confidence": 0.9,
+            }
+        )
         completion = [{"role": "assistant", "content": response}]
         info = self._make_info()
 
@@ -293,29 +353,142 @@ class TestUnifiedRewardPath:
         reward_fn = GEMeXVerifiersReward()
 
         # Valid JSON but missing required fields
-        response = json.dumps({
-            "answer": "effusion",
-            # Missing reasoning, location, confidence
-        })
+        response = json.dumps(
+            {
+                "answer": "effusion",
+                # Missing reasoning, location, confidence
+            }
+        )
         completion = [{"role": "assistant", "content": response}]
         info = self._make_info()
 
         score = reward_fn("", completion, info)
-        assert score == 0.0, (
-            f"Response missing required fields should be rejected, got {score:.3f}"
-        )
+        assert score == 0.0, f"Response missing required fields should be rejected, got {score:.3f}"
 
     def test_string_completion_format(self) -> None:
         """GEMeXVerifiersReward should handle plain string completions."""
         reward_fn = GEMeXVerifiersReward()
-        response = json.dumps({
-            "reasoning": "Test.",
-            "answer": "pleural effusion",
-            "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
-            "confidence": 0.9,
-        })
+        response = json.dumps(
+            {
+                "reasoning": "Test.",
+                "answer": "pleural effusion",
+                "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
+                "confidence": 0.9,
+            }
+        )
         # Plain string instead of message list
         info = self._make_info()
 
         score = reward_fn("", response, info)
         assert score > 0.9, f"String completion should work, got {score:.3f}"
+
+
+# ── Parity tests: dataset keys ↔ environment ↔ reward ─────────────────
+
+
+class TestDatasetEnvironmentParity:
+    """Ensure dataset output keys align with environment and reward inputs."""
+
+    def test_prepare_case_accepts_location_reference_key(self) -> None:
+        """_prepare_case should pick up 'location_reference' from dataset output."""
+        from examples.gemex_thinkvg.src.verifiers.environment import _prepare_case
+
+        raw = {
+            "question": "What is the finding?",
+            "answer": "effusion",
+            "location_reference": "right lower lobe",
+            "bbox": [100, 100, 200, 200],
+            "question_type": "open_ended",
+        }
+        prepared = _prepare_case(raw)
+        assert prepared["gold_location"] == "right lower lobe"
+
+    def test_prepare_case_accepts_location_ref_key(self) -> None:
+        """_prepare_case should also handle legacy 'location_ref' key."""
+        from examples.gemex_thinkvg.src.verifiers.environment import _prepare_case
+
+        raw = {
+            "question": "What is the finding?",
+            "answer": "effusion",
+            "location_ref": "right lower lobe",
+            "bbox": [100, 100, 200, 200],
+        }
+        prepared = _prepare_case(raw)
+        assert prepared["gold_location"] == "right lower lobe"
+
+    def test_prepare_case_normalizes_question_type(self) -> None:
+        """Raw HuggingFace question types should be normalized."""
+        from examples.gemex_thinkvg.src.verifiers.environment import _prepare_case
+
+        for raw_qt, expected in [
+            ("closed_ended_questions", "closed_ended"),
+            ("open_ended_questions", "open_ended"),
+            ("single_choice_questions", "single_choice"),
+            ("multi_choice_questions", "multi_choice"),
+            ("open_ended", "open_ended"),  # already normalized
+        ]:
+            prepared = _prepare_case({"question_type": raw_qt})
+            assert prepared["question_type"] == expected, (
+                f"'{raw_qt}' should normalize to '{expected}', got '{prepared['question_type']}'"
+            )
+
+    def test_reward_receives_location_from_environment_info(self) -> None:
+        """Reward should find location in the info dict built by the environment."""
+        from examples.gemex_thinkvg.src.verifiers.environment import _prepare_case
+
+        raw = {
+            "answer": "effusion",
+            "location_reference": "right lower lobe",
+            "bbox": [100, 100, 200, 200],
+            "question_type": "open_ended",
+        }
+        prepared = _prepare_case(raw)
+        info = {
+            "gold_answer": prepared["gold_answer"],
+            "gold_location": prepared["gold_location"],
+            "gold_bbox": prepared["gold_bbox"],
+            "question_type": prepared["question_type"],
+        }
+
+        reward_fn = GEMeXVerifiersReward()
+        response = json.dumps(
+            {
+                "reasoning": "Test.",
+                "answer": "effusion",
+                "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
+                "confidence": 0.9,
+                "continue": False,
+            }
+        )
+        completion = [{"role": "assistant", "content": response}]
+        score = reward_fn("", completion, info)
+
+        assert score > 0.9, (
+            f"Perfect match with environment-prepared info should score high, got {score:.3f}"
+        )
+
+    def test_json_extraction_parity(self) -> None:
+        """Environment and reward JSON extractors should agree on the same input."""
+        from examples.gemex_thinkvg.src.verifiers.environment import (
+            _extract_json_response as env_extract,
+        )
+
+        reward_fn = GEMeXVerifiersReward()
+
+        text = json.dumps(
+            {
+                "reasoning": "Test.",
+                "answer": "effusion",
+                "location": {"reference": "right lung", "bbox": [100, 100, 200, 200]},
+                "confidence": 0.9,
+                "continue": False,
+            }
+        )
+
+        env_result = env_extract(text)
+        reward_result = reward_fn._extract_json_response(text)
+
+        assert env_result is not None
+        assert reward_result is not None
+        assert env_result["answer"] == reward_result["answer"]
+        assert env_result["location"] == reward_result["location"]

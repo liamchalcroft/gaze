@@ -332,7 +332,7 @@ class TestToolCallParity:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         adapter = OpenAIAdapter(model_name="gpt-4o")
 
-        tc = _make_tool_call("call_abc", "zoom", '{}')
+        tc = _make_tool_call("call_abc", "zoom", "{}")
         mock_completion = _make_completion(content="", tool_calls=[tc])
         adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
 

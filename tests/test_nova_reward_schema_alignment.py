@@ -152,12 +152,7 @@ class TestRewardParity:
         Stripping them would equate 'mild hydrocephalus' with 'severe
         hydrocephalus', which is a critical clinical error.
         """
-        completion_mild = json.dumps(
-            {"diagnosis": {"primary_diagnosis": "mild hydrocephalus"}}
-        )
-        completion_severe = json.dumps(
-            {"diagnosis": {"primary_diagnosis": "severe hydrocephalus"}}
-        )
+        completion_mild = json.dumps({"diagnosis": {"primary_diagnosis": "mild hydrocephalus"}})
         info_mild = {"diagnosis": "mild hydrocephalus"}
         info_severe = {"diagnosis": "severe hydrocephalus"}
 
@@ -175,9 +170,11 @@ class TestRewardParity:
     def test_iou_threshold_defaults_to_0_5(self, env_rewards) -> None:
         """Default IoU threshold must be 0.5 to match NOVA eval (ACC50)."""
         # Box pair with IoU ~0.35 — should fail at 0.5 threshold
-        completion = json.dumps({
-            "localization": [{"bounding_box": [0, 0, 10, 10]}],
-        })
+        completion = json.dumps(
+            {
+                "localization": [{"bounding_box": [0, 0, 10, 10]}],
+            }
+        )
         info = {"boxes": [[5, 5, 15, 15]]}
 
         loc_fn = env_rewards.localization_reward_factory()  # default threshold

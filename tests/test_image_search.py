@@ -631,3 +631,162 @@ class TestSanitizeApiField:
         assert len(results) == 1
         assert "\x00" not in results[0].title
         assert results[0].title == "InjectedTitle"
+
+
+class TestSanitizeNewlinesAndTabs:
+    """_sanitize_api_field must strip newlines, carriage returns, and tabs."""
+
+    def test_strips_newlines(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("line1\nline2\rline3")
+        assert "\n" not in result
+        assert "\r" not in result
+        assert result == "line1line2line3"
+
+    def test_strips_tabs(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("col1\tcol2")
+        assert "\t" not in result
+        assert result == "col1col2"
+
+    def test_strips_crlf(self) -> None:
+        from radiant_harness.retrieval.image_search import _sanitize_api_field
+
+        result = _sanitize_api_field("Title\r\n## Injected Header")
+        assert "\r" not in result
+        assert "\n" not in result
+        assert result == "Title## Injected Header"
+
+
+class TestDownloadSessionUserAgent:
+    """Download session must use honest-bot User-Agent."""
+
+    @pytest.mark.asyncio
+    async def test_download_session_has_user_agent(self, tmp_path: Path) -> None:
+        import radiant_harness
+
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        session = await mgr._get_download_session()
+        ua = session._default_headers.get("User-Agent", "")
+        assert "radiant_harness" in ua
+        assert radiant_harness.__version__ in ua
+        await mgr.close()
+
+    @pytest.mark.asyncio
+    async def test_download_session_no_browser_impersonation(self, tmp_path: Path) -> None:
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        session = await mgr._get_download_session()
+        ua = session._default_headers.get("User-Agent", "")
+        for browser_str in ("Mozilla", "Chrome", "Safari"):
+            assert browser_str not in ua
+        await mgr.close()
+
+
+class TestPmcidValidation:
+    """pmcid used in URL construction must be format-validated."""
+
+    def test_valid_pmcid_produces_url(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Valid PMCID article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC1234567",
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert "PMC1234567" in results[0].source_url
+
+    def test_path_traversal_pmcid_rejected(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Traversal PMCID article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "../../admin",
+                    "detailedURL": "https://example.com/fallback",
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert "../../admin" not in results[0].source_url
+
+    def test_empty_pmcid_uses_detailed_url(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "No PMCID article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "",
+                    "detailedURL": "https://example.com/article",
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        assert len(results) == 1
+        assert results[0].source_url == "https://example.com/article"
+
+
+class TestMetadataSanitization:
+    """mesh_terms and image_type in metadata must be sanitized."""
+
+    def test_mesh_terms_control_chars_stripped(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Test article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC123",
+                    "meshMajor": ["Brain\x00Neoplasms", "Normal Term"],
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        mesh = results[0].metadata["mesh_terms"]
+        assert "\x00" not in mesh[0]
+        assert mesh[0] == "BrainNeoplasms"
+        assert mesh[1] == "Normal Term"
+
+    def test_non_string_mesh_terms_filtered(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Test article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC123",
+                    "meshMajor": ["Valid", 42, None, "Also Valid"],
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        mesh = results[0].metadata["mesh_terms"]
+        assert len(mesh) == 2
+        assert mesh[0] == "Valid"
+        assert mesh[1] == "Also Valid"
+
+    def test_image_type_sanitized(self) -> None:
+        engine = OpenISearchEngine()
+        data = {
+            "list": [
+                {
+                    "title": "Test article",
+                    "imgLarge": "https://openi.nlm.nih.gov/img.jpg",
+                    "pmcid": "PMC123",
+                    "imgType": "photo\x00graph",
+                }
+            ]
+        }
+        results = engine._parse_results(data)
+        img_type = results[0].metadata["image_type"]
+        assert "\x00" not in img_type
+        assert img_type == "photograph"

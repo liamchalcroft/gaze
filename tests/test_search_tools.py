@@ -210,3 +210,154 @@ class TestSessionReuse:
         mock_img.close.assert_awaited_once()
         assert registry._web_search_manager is None
         assert registry._image_search_manager is None
+
+    @pytest.mark.asyncio
+    async def test_aclose_skips_injected_shared_managers(self) -> None:
+        """Injected shared managers stay alive until their owner closes them."""
+        mock_web = AsyncMock()
+        mock_web.close = AsyncMock()
+        mock_img = AsyncMock()
+        mock_img.close = AsyncMock()
+
+        registry = ToolRegistry(
+            tools=create_search_tools(),
+            web_search_manager=mock_web,
+            image_search_manager=mock_img,
+        )
+
+        await registry.aclose()
+
+        mock_web.close.assert_not_awaited()
+        mock_img.close.assert_not_awaited()
+        assert registry._web_search_manager is None
+        assert registry._image_search_manager is None
+
+
+class TestValueErrorHandling:
+    """ValueError from manager must be caught, not crash the agentic loop."""
+
+    @pytest.mark.asyncio
+    async def test_search_web_invalid_search_type_returns_error(self) -> None:
+        async def fake_search(query, *, search_type="general"):
+            raise ValueError(f"search_type must be one of ..., got '{search_type}'")
+
+        registry = _make_registry_with_mock_web(fake_search)
+        result = await registry.execute("search_web", query="test", search_type="invalid")
+
+        assert not result.success
+        assert result.error is not None
+        assert "search_type" in result.error
+
+    @pytest.mark.asyncio
+    async def test_search_web_empty_query_returns_error(self) -> None:
+        async def fake_search(query, *, search_type="general"):
+            raise ValueError("query must be a non-empty string")
+
+        registry = _make_registry_with_mock_web(fake_search)
+        result = await registry.execute("search_web", query="")
+
+        assert not result.success
+        assert result.error is not None
+        assert "query" in result.error
+
+    @pytest.mark.asyncio
+    async def test_search_images_value_error_returns_error(self) -> None:
+        async def fake_search(query, *, modality=None, body_part=None):
+            raise ValueError("query must be a non-empty string")
+
+        registry = _make_registry_with_mock_images(fake_search)
+        result = await registry.execute("search_images", query="")
+
+        assert not result.success
+        assert result.error is not None
+        assert "query" in result.error
+
+
+class TestFormattedOutputSizeLimit:
+    """Formatted output must respect max_content_for_llm."""
+
+    @pytest.mark.asyncio
+    async def test_web_search_output_capped(self) -> None:
+        from radiant_harness.config import HarnessConfig
+        from radiant_harness.config import SearchConfig
+        from radiant_harness.config import config_context
+
+        async def fake_search(query, *, search_type="general"):
+            return [
+                SearchResult(
+                    title=f"Article {i} with a sufficiently long title",
+                    url=f"https://pubmed.ncbi.nlm.nih.gov/{i}/",
+                    content="x" * 1000,
+                    snippet="summary",
+                    source="pubmed",
+                    reliability_score=0.9,
+                    publication_date="2024",
+                    content_type="article",
+                    medical_relevance=0.8,
+                )
+                for i in range(10)
+            ]
+
+        with config_context(HarnessConfig(search=SearchConfig(max_content_for_llm=500))):
+            registry = _make_registry_with_mock_web(fake_search)
+            result = await registry.execute("search_web", query="test")
+
+        assert result.success
+        assert result.formatted_results is not None
+        assert "results truncated]" in result.formatted_results
+
+    @pytest.mark.asyncio
+    async def test_image_search_output_capped(self) -> None:
+        from radiant_harness.config import HarnessConfig
+        from radiant_harness.config import SearchConfig
+        from radiant_harness.config import config_context
+
+        async def fake_search(query, *, modality=None, body_part=None):
+            return [
+                ImageSearchResult(
+                    title=f"Image {i}",
+                    image_url=f"https://openi.nlm.nih.gov/img{i}.png",
+                    thumbnail_url=None,
+                    source_url=f"https://openi.nlm.nih.gov/source{i}",
+                    source="openi",
+                    caption="y" * 1000,
+                )
+                for i in range(10)
+            ]
+
+        with config_context(HarnessConfig(search=SearchConfig(max_content_for_llm=500))):
+            registry = _make_registry_with_mock_images(fake_search)
+            result = await registry.execute("search_images", query="test")
+
+        assert result.success
+        assert result.formatted_results is not None
+        assert "results truncated]" in result.formatted_results
+
+    @pytest.mark.asyncio
+    async def test_content_preview_uses_config(self) -> None:
+        from radiant_harness.config import HarnessConfig
+        from radiant_harness.config import SearchConfig
+        from radiant_harness.config import config_context
+
+        async def fake_search(query, *, search_type="general"):
+            return [
+                SearchResult(
+                    title="Short title",
+                    url="https://pubmed.ncbi.nlm.nih.gov/1/",
+                    content="A" * 200,
+                    snippet="summary",
+                    source="pubmed",
+                    reliability_score=0.9,
+                )
+            ]
+
+        with config_context(HarnessConfig(search=SearchConfig(max_content_preview_length=50))):
+            registry = _make_registry_with_mock_web(fake_search)
+            result = await registry.execute("search_web", query="test")
+
+        assert result.success
+        assert result.formatted_results is not None
+        # Content should be truncated to 50 chars + "..."
+        assert "..." in result.formatted_results
+        # The full 200-char content should NOT appear
+        assert "A" * 200 not in result.formatted_results

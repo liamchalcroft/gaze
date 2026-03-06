@@ -13,7 +13,9 @@ class TestSanitizeExceptionMessage:
     """_sanitize_exception_message must redact api_key values."""
 
     def test_redacts_api_key_in_url(self) -> None:
-        raw_url = URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&api_key=SECRET123&id=1234")
+        raw_url = URL(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&api_key=SECRET123&id=1234"
+        )
         exc = aiohttp.ClientResponseError(
             request_info=aiohttp.RequestInfo(
                 url=raw_url,
@@ -48,9 +50,7 @@ class TestSanitizeExceptionMessage:
 
     def test_multiple_api_key_occurrences(self) -> None:
         """All occurrences of api_key should be redacted."""
-        exc = RuntimeError(
-            "Tried api_key=FIRST then api_key=SECOND"
-        )
+        exc = RuntimeError("Tried api_key=FIRST then api_key=SECOND")
         sanitized = _sanitize_exception_message(exc)
         assert "FIRST" not in sanitized
         assert "SECOND" not in sanitized
@@ -58,18 +58,14 @@ class TestSanitizeExceptionMessage:
 
     def test_api_key_at_end_of_url(self) -> None:
         """api_key at end of query string (no trailing &)."""
-        exc = aiohttp.ClientError(
-            "Error at https://example.com?db=pubmed&api_key=endkey"
-        )
+        exc = aiohttp.ClientError("Error at https://example.com?db=pubmed&api_key=endkey")
         sanitized = _sanitize_exception_message(exc)
         assert "endkey" not in sanitized
         assert "api_key=[REDACTED]" in sanitized
 
     def test_api_key_with_special_chars(self) -> None:
         """API keys with alphanumeric and dash/underscore characters."""
-        exc = aiohttp.ClientError(
-            "https://example.com?api_key=abc-123_XYZ.456&other=val"
-        )
+        exc = aiohttp.ClientError("https://example.com?api_key=abc-123_XYZ.456&other=val")
         sanitized = _sanitize_exception_message(exc)
         assert "abc-123_XYZ.456" not in sanitized
         assert "api_key=[REDACTED]" in sanitized

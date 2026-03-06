@@ -10,9 +10,14 @@ Tests cover:
 
 from __future__ import annotations
 
+import base64
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from radiant_harness.exceptions import ModelError
+from radiant_harness.models import huggingface_adapter as hf_module
 from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
 from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
 from radiant_harness.models.huggingface_adapter import _format_tools_for_prompt
@@ -188,6 +193,43 @@ class TestInjectToolDocs:
         ]
         _inject_tool_docs(messages, _SAMPLE_TOOLS)
         assert messages[0]["content"] == "Original."
+
+
+class TestExtractImagesCache:
+    def test_reuses_decoded_data_url_images(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        buffer = BytesIO()
+        Image.new("RGB", (8, 8), color=(10, 20, 30)).save(buffer, format="PNG")
+        data_url = f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+
+        decode_calls = 0
+        real_b64decode = hf_module.base64.b64decode
+
+        def _counting_b64decode(data: str) -> bytes:
+            nonlocal decode_calls
+            decode_calls += 1
+            return real_b64decode(data)
+
+        monkeypatch.setattr(hf_module.base64, "b64decode", _counting_b64decode)
+
+        adapter = HuggingFaceVLMAdapter(model_name="dummy")
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": data_url}}],
+            }
+        ]
+
+        first = adapter._extract_images(messages)
+        second = adapter._extract_images(messages)
+
+        assert decode_calls == 1
+        assert len(first) == 1
+        assert len(second) == 1
+        assert first[0] is not second[0]
+        assert first[0].size == second[0].size == (8, 8)
+
+        first[0].close()
+        second[0].close()
 
 
 # ---------------------------------------------------------------------------
@@ -770,3 +812,126 @@ class TestExtractImagesRejectsLocalPaths:
         ]
         images = adapter._extract_images(messages)
         assert len(images) == 1
+
+
+# ---------------------------------------------------------------------------
+# GenerationLog.reasoning_content parity
+# ---------------------------------------------------------------------------
+
+
+class TestReasoningContentParity:
+    """HF adapters never populate reasoning_content — document the gap."""
+
+    def test_hf_generation_log_has_no_reasoning_content(self) -> None:
+        """HF GenerationLog always has reasoning_content=None."""
+        from radiant_harness.models.adapter_protocol import GenerationLog
+
+        # Simulate what HF adapters produce
+        gen_log = GenerationLog(
+            prompt_tokens=100,
+            completion_tokens=50,
+            finish_reason="stop",
+        )
+        assert gen_log.reasoning_content is None
+
+    def test_hf_generate_chat_source_omits_reasoning_content(self) -> None:
+        """HF adapters must not set reasoning_content (intentional gap)."""
+        import inspect
+
+        base_src = inspect.getsource(HuggingFaceAdapter.generate_chat)
+        vlm_src = inspect.getsource(HuggingFaceVLMAdapter.generate_chat)
+
+        assert "reasoning_content" not in base_src, (
+            "HF base adapter unexpectedly sets reasoning_content"
+        )
+        assert "reasoning_content" not in vlm_src, (
+            "HF VLM adapter unexpectedly sets reasoning_content"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Error type parity: HF raises ModelError, not APIError
+# ---------------------------------------------------------------------------
+
+
+class TestErrorTypeParity:
+    """HF adapters raise ModelError, never APIError — document the divergence."""
+
+    def test_hf_does_not_import_api_error(self) -> None:
+        """HF adapter module must not import APIError (intentional divergence)."""
+        import inspect
+
+        source = inspect.getsource(hf_module)
+        assert "from radiant_harness.exceptions import APIError" not in source
+        assert "APIError" not in source
+
+    @pytest.mark.asyncio
+    async def test_streaming_raises_model_error_not_api_error(self) -> None:
+        """Streaming rejection must raise ModelError specifically."""
+        from radiant_harness.exceptions import APIError
+        from radiant_harness.exceptions import ModelError
+
+        adapter = HuggingFaceAdapter(model_name="dummy")
+        with pytest.raises(ModelError) as exc_info:
+            await adapter.generate_chat(
+                messages=[{"role": "user", "content": "hello"}],
+                max_tokens=1,
+                temperature=0.0,
+                stream=True,
+            )
+        assert not isinstance(exc_info.value, APIError)
+
+
+# ---------------------------------------------------------------------------
+# _inject_json_mode: schema inclusion
+# ---------------------------------------------------------------------------
+
+
+class TestInjectJsonModeSchema:
+    """Verify _inject_json_mode includes schema content when provided."""
+
+    def test_json_object_format_no_schema(self) -> None:
+        """Plain json_object format produces generic instruction only."""
+        messages = [{"role": "system", "content": "You are helpful."}]
+        result = _inject_json_mode(messages, {"type": "json_object"})
+        assert "valid JSON" in result[0]["content"]
+        assert "json_schema" not in result[0]["content"]
+
+    def test_json_schema_format_includes_schema(self) -> None:
+        """json_schema format must include the schema in the prompt."""
+        schema_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string"},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": ["answer", "confidence"],
+                },
+            },
+        }
+        messages = [{"role": "system", "content": "You are helpful."}]
+        result = _inject_json_mode(messages, schema_format)
+        content = result[0]["content"]
+        assert "valid JSON" in content
+        assert '"answer"' in content
+        assert '"confidence"' in content
+        assert '"required"' in content
+
+    def test_none_response_format_produces_generic_instruction(self) -> None:
+        """None response_format (backward compat) produces generic instruction."""
+        messages = [{"role": "system", "content": "Base."}]
+        result = _inject_json_mode(messages)
+        assert "valid JSON" in result[0]["content"]
+
+    def test_does_not_mutate_original(self) -> None:
+        messages = [{"role": "system", "content": "Original."}]
+        schema_format = {
+            "type": "json_schema",
+            "json_schema": {"name": "r", "schema": {"type": "object"}},
+        }
+        _inject_json_mode(messages, schema_format)
+        assert messages[0]["content"] == "Original."

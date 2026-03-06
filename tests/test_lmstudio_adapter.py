@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
 import pytest
 
 from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
@@ -161,3 +165,107 @@ class TestURLSchemeValidation:
 
         with pytest.raises(ModelError, match="http://.*https://"):
             LMStudioAdapter(model_name="test", base_url="file:///etc/passwd")
+
+
+# ---------------------------------------------------------------------------
+# generate_chat: response_format stripping
+# ---------------------------------------------------------------------------
+
+
+def _make_completion(
+    content: str = "hello",
+    tool_calls: list[Any] | None = None,
+    finish_reason: str = "stop",
+    prompt_tokens: int = 10,
+    completion_tokens: int = 5,
+) -> SimpleNamespace:
+    """Build a mock ChatCompletion response."""
+    message = SimpleNamespace(content=content, tool_calls=tool_calls)
+    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+    usage = SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    return SimpleNamespace(choices=[choice], usage=usage)
+
+
+class TestResponseFormatStripping:
+    """Verify LMStudioAdapter strips response_format before calling the API."""
+
+    @pytest.mark.asyncio
+    async def test_response_format_stripped(self) -> None:
+        adapter = LMStudioAdapter(model_name="test-model")
+        mock_completion = _make_completion(content='{"answer": "yes"}')
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=100,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        )
+
+        call_kwargs = adapter._create_completion_with_retry.call_args[1]
+        assert "response_format" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_json_schema_format_stripped(self) -> None:
+        adapter = LMStudioAdapter(model_name="test-model")
+        mock_completion = _make_completion(content='{"answer": "yes"}')
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        schema_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "schema": {"type": "object", "properties": {"answer": {"type": "string"}}},
+            },
+        }
+        await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=100,
+            temperature=0.0,
+            response_format=schema_format,
+        )
+
+        call_kwargs = adapter._create_completion_with_retry.call_args[1]
+        assert "response_format" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_none_response_format_passthrough(self) -> None:
+        adapter = LMStudioAdapter(model_name="test-model")
+        mock_completion = _make_completion()
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=100,
+            temperature=0.0,
+            response_format=None,
+        )
+
+        call_kwargs = adapter._create_completion_with_retry.call_args[1]
+        assert "response_format" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Protocol signature parity
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolSignatureParity:
+    """Verify LMStudioAdapter matches AdapterProtocol signature."""
+
+    def test_generate_chat_signature_matches_protocol(self) -> None:
+        import inspect
+
+        from radiant_harness.models.adapter_protocol import AdapterProtocol
+
+        proto_sig = inspect.signature(AdapterProtocol.generate_chat)
+        lm_sig = inspect.signature(LMStudioAdapter.generate_chat)
+
+        proto_params = set(proto_sig.parameters.keys()) - {"self"}
+        lm_params = set(lm_sig.parameters.keys()) - {"self"}
+
+        assert lm_params == proto_params, f"LMStudio params {lm_params} != protocol {proto_params}"
+
+    def test_supports_multipart_tool_content_is_false(self) -> None:
+        adapter = LMStudioAdapter(model_name="test-model")
+        assert adapter.supports_multipart_tool_content is False

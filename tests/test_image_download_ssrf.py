@@ -277,3 +277,63 @@ class TestDownloadSsrfValidation:
         with patch("aiohttp.ClientSession", return_value=mock_session):
             filepath = await mgr.download_image(result)
             assert filepath.exists()
+
+    @pytest.mark.asyncio
+    async def test_download_validation_runs_via_to_thread(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """URL validation should be offloaded so DNS resolution can't block the loop."""
+        from unittest.mock import MagicMock
+
+        import radiant_harness.retrieval.image_search as image_search_module
+
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        result = ImageSearchResult(
+            title="Valid image",
+            image_url="https://openi.nlm.nih.gov/test.jpg",
+            thumbnail_url=None,
+            source_url="https://openi.nlm.nih.gov/article",
+            source="openi",
+        )
+
+        offloaded_funcs: list[object] = []
+
+        def _fake_validate(url: str) -> None:
+            assert url == result.image_url
+
+        async def _tracking_to_thread(func, *args, **kwargs):
+            offloaded_funcs.append(func)
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(image_search_module, "_validate_download_url", _fake_validate)
+        monkeypatch.setattr(image_search_module.asyncio, "to_thread", _tracking_to_thread)
+
+        image_bytes = b"\xff\xd8\xff" + b"\x00" * 100
+        mock_content = MagicMock()
+
+        async def _iter_chunked(_chunk_size: int):
+            yield image_bytes
+
+        mock_content.iter_chunked = _iter_chunked
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.headers = {"Content-Type": "image/jpeg"}
+        mock_resp.content = mock_content
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.get = lambda *_a, **_kw: mock_resp
+
+        async def _fake_get_download_session():
+            return mock_session
+
+        monkeypatch.setattr(mgr, "_get_download_session", _fake_get_download_session)
+
+        filepath = await mgr.download_image(result)
+
+        assert filepath.exists()
+        assert offloaded_funcs == [_fake_validate]
