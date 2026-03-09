@@ -87,14 +87,32 @@ def validate_gemex_response(response: dict[str, Any]) -> bool:
     bbox = location.get("bbox", [])
     if not isinstance(bbox, list) or len(bbox) != 4:
         return False
-    if not all(isinstance(x, int | float) for x in bbox):
+    coerced_bbox: list[int] = []
+    for value in bbox:
+        if isinstance(value, str):
+            try:
+                coerced_bbox.append(int(float(value)))
+            except ValueError:
+                return False
+            continue
+        if isinstance(value, int | float):
+            coerced_bbox.append(int(value))
+            continue
         return False
+    location["bbox"] = coerced_bbox
+    bbox = coerced_bbox
     # Check coordinate ordering (x2 > x1, y2 > y1)
     if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
         return False
 
     # Validate confidence range
     confidence = response.get("confidence")
+    if isinstance(confidence, str):
+        try:
+            confidence = float(confidence)
+            response["confidence"] = confidence
+        except ValueError:
+            return False
     if not isinstance(confidence, int | float) or not 0 <= confidence <= 1:
         return False
 

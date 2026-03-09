@@ -7,12 +7,11 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from typing import Literal
 
 from beartype import beartype
-
-from collections.abc import Callable
 
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
@@ -212,6 +211,10 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         if images:
             message_parts.append("Here is the radiology image for analysis.")
             message_parts.append("")
+
+        answer_type = metadata.get("answer_type", "")
+        if answer_type:
+            message_parts.append(f"**Question type:** {answer_type}")
 
         message_parts.append(f"**Question:** {question}")
         message_parts.append("")

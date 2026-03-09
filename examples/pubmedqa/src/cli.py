@@ -10,30 +10,79 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 from loguru import logger
 
+
+class _SafeEncoder(json.JSONEncoder):
+    """Handle MappingProxyType from radiant_harness frozen containers."""
+
+    def default(self, o: object) -> Any:
+        if isinstance(o, (MappingProxyType, Mapping)):  # noqa: UP038
+            return dict(o)
+        return super().default(o)
+
+
 from radiant_harness import AgenticResult
-from radiant_harness.exceptions import AgenticProcessingError
+from radiant_harness import require_lmstudio_model
 
 from .dataset import PubmedQADataset
 from .evaluation import evaluate_pubmedqa
 from .processor import PubmedQAProcessor
 
 
+def _resolve_mode(
+    mode: str,
+    max_turns: int | None,
+    use_search: bool,
+) -> tuple[int, bool]:
+    """Normalize CLI mode into concrete processor settings."""
+    if mode == "single_turn":
+        if use_search:
+            raise ValueError("--use-search is only valid with --mode agentic")
+        if max_turns not in (None, 1):
+            raise ValueError("--mode single_turn requires --max-turns 1")
+        return 1, False
+
+    resolved_turns = max_turns if max_turns is not None else 5
+    if resolved_turns < 2:
+        raise ValueError("--mode agentic requires --max-turns >= 2")
+    return resolved_turns, use_search
+
+
+def _failure_record(sample_id: int, pubid: str, exc: Exception) -> dict[str, object]:
+    """Build a stable failure payload for summaries."""
+    return {
+        "sample_id": sample_id,
+        "pubid": pubid,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+    }
+
+
 async def run_evaluation(
     model_name: str,
+    mode: str,
     config: str,
     max_samples: int | None,
     use_search: bool,
-    max_turns: int,
+    max_turns: int | None,
     output_dir: Path,
     reasoning: bool,
     base_url: str | None = None,
 ) -> dict[str, float]:
     """Run PubmedQA evaluation."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_max_turns, resolved_use_search = _resolve_mode(mode, max_turns, use_search)
+
+    loaded_models: list[str] | None = None
+    if base_url is not None:
+        loaded_models = await require_lmstudio_model(model_name=model_name, base_url=base_url)
+        logger.info(f"LM Studio ready at {base_url} with models: {loaded_models}")
 
     # Load dataset
     logger.info(f"Loading PubmedQA dataset (config={config})")
@@ -54,14 +103,14 @@ async def run_evaluation(
     # Create processor
     processor = PubmedQAProcessor(
         model_name=model_name,
-        use_web_search=use_search,
-        max_turns=max_turns,
+        use_web_search=resolved_use_search,
+        max_turns=resolved_max_turns,
         reasoning_enabled=reasoning,
         adapter_factory=adapter_factory,
     )
 
     logger.info(f"Running evaluation with model: {model_name}")
-    logger.info(f"Web search: {use_search}, Max turns: {max_turns}")
+    logger.info(f"Mode: {mode}, Web search: {resolved_use_search}, Max turns: {resolved_max_turns}")
 
     # Process samples
     results: list[AgenticResult] = []
@@ -69,55 +118,58 @@ async def run_evaluation(
     references: list[str] = []
     failures: list[dict[str, object]] = []
 
-    for i, sample in enumerate(dataset):
-        logger.info(f"Processing sample {i + 1}/{len(dataset)}")
+    try:
+        for i, sample in enumerate(dataset):
+            logger.info(f"Processing sample {i + 1}/{len(dataset)}")
 
-        metadata = {
-            "question": sample["question"],
-            "context": sample["context"],
-            "labels": sample["labels"],
-            "meshes": sample["meshes"],
-            "pubid": sample["pubid"],
-        }
+            metadata = {
+                "question": sample["question"],
+                "context": sample["context"],
+                "labels": sample["labels"],
+                "meshes": sample["meshes"],
+                "pubid": sample["pubid"],
+            }
 
-        try:
-            result = await processor.analyze(images=None, metadata=metadata)
-            results.append(result)
+            try:
+                result = await processor.analyze(images=None, metadata=metadata)
+                results.append(result)
 
-            pred_answer = result.final_response.get("answer", "maybe")
-            predictions.append(pred_answer)
-            references.append(sample["answer"])
+                pred_answer = result.final_response.get("answer", "maybe")
+                predictions.append(pred_answer)
+                references.append(sample["answer"])
 
-            # Save individual result
-            result_file = output_dir / f"sample_{i}.json"
-            with result_file.open("w") as f:
-                json.dump(
-                    {
-                        "sample_id": i,
-                        "pubid": sample["pubid"],
-                        "question": sample["question"],
-                        "prediction": pred_answer,
-                        "ground_truth": sample["answer"],
-                        "response": result.final_response,
-                        "num_turns": result.num_turns,
-                        "tools_used": list(result.get_tools_used()),
-                        "confidence": result.confidence,
-                    },
-                    f,
-                    indent=2,
+                # Save individual result
+                result_file = output_dir / f"sample_{i}.json"
+                with result_file.open("w") as f:
+                    json.dump(
+                        {
+                            "sample_id": i,
+                            "pubid": sample["pubid"],
+                            "question": sample["question"],
+                            "prediction": pred_answer,
+                            "ground_truth": sample["answer"],
+                            "response": result.final_response,
+                            "num_turns": result.num_turns,
+                            "tools_used": list(result.get_tools_used()),
+                            "confidence": result.confidence,
+                            "total_tokens": result.total_tokens,
+                        },
+                        f,
+                        indent=2,
+                        cls=_SafeEncoder,
+                    )
+
+                logger.info(
+                    f"Sample {i}: pred={pred_answer}, gt={sample['answer']}, "
+                    f"turns={result.num_turns}, confidence={result.confidence:.2f}"
                 )
 
-            logger.info(
-                f"Sample {i}: pred={pred_answer}, gt={sample['answer']}, "
-                f"turns={result.num_turns}, confidence={result.confidence:.2f}"
-            )
-
-        except AgenticProcessingError as e:
-            logger.error(f"Failed to process sample {i}: {e}")
-            failures.append({"sample_id": i, "pubid": sample["pubid"], "error": str(e)})
-            # Exclude failed samples from metrics entirely — defaulting to
-            # "maybe" would silently inflate maybe-class accuracy.
-            continue
+            except Exception as exc:
+                logger.error(f"Failed to process sample {i}: {exc}")
+                failures.append(_failure_record(i, sample["pubid"], exc))
+                continue
+    finally:
+        await processor.aclose()
 
     # Report failures
     if failures:
@@ -141,9 +193,12 @@ async def run_evaluation(
             {
                 "config": {
                     "model": model_name,
+                    "mode": mode,
+                    "base_url": base_url,
+                    "lmstudio_models": loaded_models,
                     "dataset_config": config,
-                    "use_search": use_search,
-                    "max_turns": max_turns,
+                    "use_search": resolved_use_search,
+                    "max_turns": resolved_max_turns,
                 },
                 "num_samples_total": len(dataset),
                 "num_samples_evaluated": len(predictions),
@@ -153,6 +208,7 @@ async def run_evaluation(
             },
             f,
             indent=2,
+            cls=_SafeEncoder,
         )
 
     logger.info(f"Results saved to {output_dir}")
@@ -176,7 +232,14 @@ def parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
+        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["single_turn", "agentic"],
+        default="agentic",
+        help="Evaluation mode",
     )
     parser.add_argument(
         "--config",
@@ -200,13 +263,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--use-search",
         action="store_true",
-        help="Enable PubMed search for additional context",
+        help="Enable PubMed search for additional context in agentic mode",
     )
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=5,
-        help="Maximum agentic turns",
+        default=None,
+        help="Override max turns (single_turn requires 1; agentic defaults to 5)",
     )
     parser.add_argument(
         "--reasoning",
@@ -239,6 +302,7 @@ def main() -> None:
         metrics = asyncio.run(
             run_evaluation(
                 model_name=args.model,
+                mode=args.mode,
                 config=args.config,
                 max_samples=args.max_samples,
                 use_search=args.use_search,

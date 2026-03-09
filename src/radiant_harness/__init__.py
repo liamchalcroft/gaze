@@ -53,6 +53,8 @@ from radiant_harness.models import AdapterProtocol
 from radiant_harness.models import GenerationLog
 from radiant_harness.models import LMStudioAdapter
 from radiant_harness.models import OpenAIAdapter
+from radiant_harness.models import list_lmstudio_model_ids
+from radiant_harness.models import require_lmstudio_model
 
 if TYPE_CHECKING:
     from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
@@ -112,6 +114,8 @@ __all__ = [
     # Adapters
     "OpenAIAdapter",
     "LMStudioAdapter",
+    "list_lmstudio_model_ids",
+    "require_lmstudio_model",
     "HuggingFaceAdapter",
     "HuggingFaceVLMAdapter",
     "GenerationLog",

@@ -27,17 +27,11 @@ from loguru import logger
 
 from radiant_harness._frozen import deep_thaw
 from radiant_harness import AgenticResult
+from radiant_harness import require_lmstudio_model
 
 from .config import NOVAConfig
 from .config import TaskType
-from .data import NovaDataset
-from .evaluation.caption import evaluate_caption
-from .evaluation.detection import clamp_and_validate_box
-from .evaluation.detection import evaluate_detection
-from .evaluation.detection import rescale_and_clamp_box
 from .evaluation.diagnosis import DEFAULT_SEMANTIC_MATCH_MODEL
-from .evaluation.diagnosis import evaluate_diagnosis_nova_official
-from .processor import NOVAAgenticProcessor
 
 
 class _SafeEncoder(json.JSONEncoder):
@@ -89,23 +83,33 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     Returns:
         Dictionary of evaluation results
     """
-    # Load NOVA dataset (images + ground truth from HuggingFace by default)
-    data_dir_str = str(config.data_dir) if config.data_dir else None
-    logger.info(f"Loading NOVA dataset (data_dir={data_dir_str})")
-    dataset = NovaDataset(
-        data_dir=data_dir_str,
-    )
-
+    loaded_models: list[str] | None = None
     # Build adapter factory for custom base URLs (e.g. LM Studio)
     adapter_factory = None
     if config.base_url is not None:
         from radiant_harness.models import LMStudioAdapter
+
+        loaded_models = await require_lmstudio_model(
+            model_name=config.model_name,
+            base_url=config.base_url,
+        )
+        logger.info(f"LM Studio ready at {config.base_url} with models: {loaded_models}")
 
         _url = config.base_url
         _model = config.model_name
 
         def adapter_factory() -> LMStudioAdapter:
             return LMStudioAdapter(model_name=_model, base_url=_url)
+
+    # Load NOVA dataset (images + ground truth from HuggingFace by default)
+    from .data import NovaDataset
+    from .processor import NOVAAgenticProcessor
+
+    data_dir_str = str(config.data_dir) if config.data_dir else None
+    logger.info(f"Loading NOVA dataset (data_dir={data_dir_str})")
+    dataset = NovaDataset(
+        data_dir=data_dir_str,
+    )
 
     # Create NOVA processor using radiant_harness
     processor = NOVAAgenticProcessor(
@@ -320,6 +324,8 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "use_tools": config.use_tools,
                     "use_web_search": config.use_web_search,
                     "max_turns": config.max_turns,
+                    "base_url": config.base_url,
+                    "lmstudio_models": loaded_models,
                     "diagnosis_judge_model": DEFAULT_SEMANTIC_MATCH_MODEL,
                 },
                 "num_samples": len(results),
@@ -379,6 +385,8 @@ async def compute_metrics(
     pending_metrics: dict[str, asyncio.Task[object]] = {}
 
     if _should_compute("caption"):
+        from .evaluation.caption import evaluate_caption
+
         pred_captions = []
         for i, p in enumerate(predictions):
             caption = p.get("caption")
@@ -400,11 +408,15 @@ async def compute_metrics(
         )
 
     if _should_compute("diagnosis"):
+        from .evaluation.diagnosis import evaluate_diagnosis_nova_official
+
         pred_diagnoses = []
         for i, p in enumerate(predictions):
             diag = p.get("diagnosis")
             if diag is None or not isinstance(diag, _DICT_LIKE):
-                logger.warning(f"Prediction {i} missing or malformed 'diagnosis' — scoring as empty")
+                logger.warning(
+                    f"Prediction {i} missing or malformed 'diagnosis' — scoring as empty"
+                )
                 pred_diagnoses.append([""])
                 continue
             primary = diag.get("primary_diagnosis", "")
@@ -429,17 +441,27 @@ async def compute_metrics(
         )
 
     if _should_compute("localization"):
+        from .evaluation.detection import clamp_and_validate_box
+        from .evaluation.detection import evaluate_detection
+        from .evaluation.detection import rescale_and_clamp_box
+
         pred_boxes = []
         gt_boxes = []
         for i, (p, gt) in enumerate(zip(predictions, ground_truth, strict=True)):
             loc_data = p.get("localization")
             if loc_data is None or not isinstance(loc_data, _DICT_LIKE):
-                logger.warning(f"Prediction {i} missing or malformed 'localization' — scoring as empty")
+                logger.warning(
+                    f"Prediction {i} missing or malformed 'localization' — scoring as empty"
+                )
                 pred_boxes.append({"boxes": [], "scores": [], "labels": []})
                 gt_localizations = gt.get("localizations", [])
                 gt_box_list = [list(loc["bbox"]) for loc in gt_localizations if "bbox" in loc]
                 gt_boxes.append(
-                    {"boxes": gt_box_list, "scores": [1.0] * len(gt_box_list), "labels": [0] * len(gt_box_list)}
+                    {
+                        "boxes": gt_box_list,
+                        "scores": [1.0] * len(gt_box_list),
+                        "labels": [0] * len(gt_box_list),
+                    }
                 )
                 continue
             localizations = loc_data.get("localizations", [])
@@ -453,7 +475,9 @@ async def compute_metrics(
             for j, loc in enumerate(localizations):
                 bbox = loc.get("bounding_box")
                 if bbox is None:
-                    logger.warning(f"Prediction {i} localization {j} missing 'bounding_box' — skipping")
+                    logger.warning(
+                        f"Prediction {i} localization {j} missing 'bounding_box' — skipping"
+                    )
                     continue
                 bbox = list(bbox)
                 if actual_w > 0 and actual_h > 0:
@@ -510,7 +534,7 @@ def parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (e.g. http://host:1234/v1)",
+        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
     )
     parser.add_argument(
         "--task",

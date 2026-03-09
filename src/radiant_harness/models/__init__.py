@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from radiant_harness.models.adapter_protocol import AdapterProtocol
 from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
+from radiant_harness.models.lmstudio_adapter import list_lmstudio_model_ids
+from radiant_harness.models.lmstudio_adapter import require_lmstudio_model
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
 if TYPE_CHECKING:
@@ -29,6 +31,8 @@ __all__ = [
     "HuggingFaceAdapter",
     "HuggingFaceVLMAdapter",
     "LMStudioAdapter",
+    "list_lmstudio_model_ids",
+    "require_lmstudio_model",
 ]
 
 

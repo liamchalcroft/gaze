@@ -70,7 +70,7 @@ dataset = GEMeXDataset(
 ### 3. Load Environment
 
 ```python
-from src import load_environment
+from examples.gemex_thinkvg.src import load_environment
 
 env = load_environment(
     dataset_path="./data/test.jsonl",
@@ -95,9 +95,13 @@ python train.py \
 ### 5. Evaluate
 
 ```bash
-python eval.py \
+uv run python -m examples.gemex_thinkvg.eval \
     --dataset ./data/test.jsonl \
-    --model ./checkpoints/model \
+    --image-dir /path/to/mimic-cxr-jpg \
+    --model qwen3.5-a3b \
+    --base-url http://192.168.1.138:1234/v1 \
+    --mode agentic \
+    --use-tools \
     --output ./results
 ```
 
@@ -106,36 +110,30 @@ python eval.py \
 ### Using the Processor Directly
 
 ```python
-from src import GEMeXProcessor
-from radiant_harness import HarnessConfig
+from examples.gemex_thinkvg.src import GEMeXProcessor
 
-# Configure processor
-config = HarnessConfig(
-    model_name="gpt-4o",
+processor = GEMeXProcessor(
+    model_name="qwen3.5-a3b",
     max_turns=8,
-    tools_enabled=True,
+    use_tools=True,
 )
 
-processor = GEMeXProcessor(config)
-
-# Process a sample
-image_path = "path/to/xray.jpg"
-question = "What abnormality is present in the right lung?"
-
-result = await processor.process(
-    question=question,
-    images=[image_path],
-    question_type="open_ended",
+result = await processor.analyze(
+    images="path/to/xray.jpg",
+    metadata={
+        "question": "What abnormality is present in the right lung?",
+        "question_type": "open_ended",
+    },
 )
 
-print(f"Answer: {result.response['answer']}")
-print(f"Location: {result.response['location']}")
+print(result.final_response["answer"])
+print(result.final_response["location"])
 ```
 
 ### Computing Rewards
 
 ```python
-from src import GEMeXRewardFunction, RewardWeights
+from examples.gemex_thinkvg.src import GEMeXRewardFunction, RewardWeights
 
 # Initialize with custom weights
 reward_fn = GEMeXRewardFunction(
@@ -214,7 +212,7 @@ gemex_thinkvg/
 This example integrates with the **verifiers** package for RL training:
 
 ```python
-from src import load_environment
+from examples.gemex_thinkvg.src import load_environment
 
 # Load multi-turn environment
 env = load_environment(dataset_path="gemex_train.jsonl")

@@ -66,8 +66,13 @@ class VQARadDataset:
 
     def __del__(self) -> None:
         """Cleanup temporary directory if used."""
-        if self._temp_dir is not None:
-            self._temp_dir.cleanup()
+        temp_dir = getattr(self, "_temp_dir", None)
+        if temp_dir is None:
+            return
+        try:
+            temp_dir.cleanup()
+        except Exception:
+            return
 
     def __len__(self) -> int:
         """Return number of samples in dataset."""

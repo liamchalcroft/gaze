@@ -94,14 +94,37 @@ def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
     if not all(field in response for field in required):
         return False
 
-    # Validate answer_type
+    # Validate answer_type (coerce common alternatives from local models)
+    answer_type = response.get("answer_type", "")
+    if isinstance(answer_type, str):
+        answer_type = answer_type.lower().strip()
+    if answer_type in ("yes/no", "binary", "boolean", "closed-ended", "closed"):
+        response["answer_type"] = "closed"
+    elif answer_type in ("free-form", "open-ended", "open"):
+        response["answer_type"] = "open"
     if response.get("answer_type") not in ("closed", "open"):
         return False
 
-    # Validate confidence range
+    # Validate confidence range (coerce strings from local models)
     confidence = response.get("confidence")
+    if isinstance(confidence, str):
+        try:
+            confidence = float(confidence)
+            response["confidence"] = confidence
+        except ValueError:
+            return False
     if not isinstance(confidence, int | float) or not 0 <= confidence <= 1:
         return False
+
+    # Coerce image_observations from string to list if needed
+    obs = response.get("image_observations")
+    if isinstance(obs, str):
+        response["image_observations"] = [obs] if obs else []
+
+    # Coerce region_of_interest from string to dict if needed
+    roi = response.get("region_of_interest")
+    if isinstance(roi, str):
+        response["region_of_interest"] = {"description": roi, "location": "unknown"}
 
     # Validate answer is not empty
     return bool(response.get("answer"))

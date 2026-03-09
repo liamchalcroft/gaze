@@ -422,7 +422,7 @@ class TestSchemaValidation:
     def test_invalid_answer_type_fails(self) -> None:
         response = {
             "answer": "yes",
-            "answer_type": "binary",
+            "answer_type": "multiple_choice",
             "confidence": 0.9,
             "reasoning": "x",
             "image_observations": [],

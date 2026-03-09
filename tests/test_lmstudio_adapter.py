@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
+from radiant_harness.models.lmstudio_adapter import list_lmstudio_model_ids
+from radiant_harness.models.lmstudio_adapter import require_lmstudio_model
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
 
@@ -269,3 +271,64 @@ class TestProtocolSignatureParity:
     def test_supports_multipart_tool_content_is_false(self) -> None:
         adapter = LMStudioAdapter(model_name="test-model")
         assert adapter.supports_multipart_tool_content is False
+
+
+class _MockHTTPResponse:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _MockAsyncClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    async def __aenter__(self) -> _MockAsyncClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+        return None
+
+    async def get(self, url: str, headers: dict[str, str]) -> _MockHTTPResponse:
+        assert url.endswith("/models")
+        assert headers["Authorization"].startswith("Bearer ")
+        return _MockHTTPResponse(self._payload)
+
+
+class TestLMStudioPreflight:
+    @pytest.mark.asyncio
+    async def test_list_lmstudio_model_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            lambda timeout: _MockAsyncClient(  # noqa: ARG005
+                {"data": [{"id": "qwen3.5-a3b"}, {"id": "gemma-3"}]}
+            ),
+        )
+
+        assert await list_lmstudio_model_ids("http://localhost:1234/v1") == [
+            "qwen3.5-a3b",
+            "gemma-3",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_require_lmstudio_model_raises_for_missing_model(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from radiant_harness.exceptions import ModelError
+
+        monkeypatch.setattr(
+            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            lambda timeout: _MockAsyncClient({"data": [{"id": "gemma-3"}]}),  # noqa: ARG005
+        )
+
+        with pytest.raises(ModelError, match="Available models: gemma-3"):
+            await require_lmstudio_model(
+                model_name="qwen3.5-a3b",
+                base_url="http://localhost:1234/v1",
+            )

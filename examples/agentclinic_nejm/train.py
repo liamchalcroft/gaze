@@ -1,10 +1,5 @@
 #!/usr/bin/env python
-"""Training script for AgentClinic NEJM RL fine-tuning.
-
-Uses the verifiers package for multi-turn diagnostic reasoning training.
-This is an integration template -- wire it into your verifiers training
-loop (see https://github.com/primeintellect-ai/verifiers for details).
-"""
+"""Prepare AgentClinic NEJM training configuration for verifiers."""
 
 from __future__ import annotations
 
@@ -13,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 
-from src import load_environment
+from examples.agentclinic_nejm.src import load_environment
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +47,7 @@ def main() -> None:
         json.dump(config, f, indent=2)
 
     logger.info("Config saved to %s/config.json", args.output)
-    logger.info(
-        "To train, pass this environment to a verifiers training loop. "
-        "See https://github.com/primeintellect-ai/verifiers for API details."
-    )
+    logger.info("Environment and config prepared. Pass them to your verifiers training loop.")
 
 
 if __name__ == "__main__":

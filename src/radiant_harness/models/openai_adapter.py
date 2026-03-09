@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -309,3 +310,23 @@ class OpenAIAdapter(AdapterProtocol):
                 model_name=self.model_name,
                 status_code=status_code,
             ) from e
+
+    async def aclose(self) -> None:
+        """Close the underlying async client when a caller owns the adapter."""
+        if self._client is None:
+            return
+
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+            self._client = None
+            return
+
+        aclose = getattr(self._client, "aclose", None)
+        if callable(aclose):
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+        self._client = None

@@ -583,6 +583,7 @@ class AgenticProcessorBase(ABC):
         tool_registry: ToolRegistry | None,
     ) -> AgenticResult:
         """Run the analysis loop."""
+        response_schema = self.get_response_schema()
         system_prompt = self.get_system_prompt(images=images, metadata=metadata)
         if self.max_turns > 1:
             policy_lines = [
@@ -592,6 +593,33 @@ class AgenticProcessorBase(ABC):
                 "Final response must satisfy the provided response schema.",
             ]
             system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
+
+        # Single-turn: inject JSON skeleton so models that ignore response_format
+        # (e.g. local models via LM Studio) still know the expected output shape.
+        if self.max_turns == 1 and response_schema is not None:
+            schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+            props = schema_obj.get("properties", {})
+            skeleton: dict[str, str] = {}
+            for key, prop in props.items():
+                ptype = prop.get("type", "string")
+                if ptype == "boolean":
+                    skeleton[key] = "true/false"
+                elif ptype == "array":
+                    skeleton[key] = "[...]"
+                elif ptype == "object":
+                    skeleton[key] = "{...}"
+                elif ptype in ("number", "integer"):
+                    skeleton[key] = "0"
+                else:
+                    skeleton[key] = "..."
+            skeleton["continue"] = "false"
+            skeleton_str = json.dumps(skeleton, indent=2)
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"OUTPUT FORMAT: You MUST respond with ONLY a valid JSON object. "
+                f"No other text, no markdown, no explanation outside the JSON.\n"
+                f"Required structure:\n{skeleton_str}"
+            )
 
         if tool_registry and self.max_turns > 1:
             tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
@@ -639,7 +667,6 @@ class AgenticProcessorBase(ABC):
             raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
 
         tool_schemas = tool_registry.get_tool_schemas() if tool_registry else None
-        response_schema = self.get_response_schema()
 
         total_tokens: int = 0
         nudge_count: int = 0

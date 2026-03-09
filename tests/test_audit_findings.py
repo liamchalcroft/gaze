@@ -213,7 +213,7 @@ class TestSchemaValidatorStrictness:
 
         resp = {
             "answer": "yes",
-            "answer_type": "boolean",  # must be "closed" or "open"
+            "answer_type": "multiple_choice",  # must be "closed" or "open"
             "confidence": 0.8,
             "reasoning": "visible",
             "image_observations": ["obs"],

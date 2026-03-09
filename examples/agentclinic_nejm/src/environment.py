@@ -18,10 +18,12 @@ from typing import Any
 import verifiers as vf
 from datasets import Dataset
 
+from radiant_harness.tools import encode_image
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import CombinedReward
 from radiant_harness.verifiers import TokenF1Reward
 from radiant_harness.verifiers import extract_completion_text
+from PIL import Image
 
 # ---------- Config ----------
 DEFAULT_DATASET_PATH = str(
@@ -94,6 +96,7 @@ def _brace_content(text: str, answer_options: list[str] | None = None) -> str:
         for match in reversed(matches):
             if _normalize(match) in norm_options:
                 return match.strip()
+        return ""
     return matches[-1].strip()
 
 
@@ -135,6 +138,21 @@ def _log_debug(line: str) -> None:
             fh.write(line + "\n")
     except OSError:
         pass
+
+
+def _message_image_url(image_url: str) -> str:
+    """Convert local image files to data URLs for OpenAI-compatible servers."""
+    if not image_url:
+        return image_url
+    if image_url.startswith(("http://", "https://", "data:")):
+        return image_url
+
+    path = Path(image_url)
+    if not path.exists():
+        return image_url
+
+    with Image.open(path) as image:
+        return encode_image(image).to_data_url()
 
 
 def _build_prompt(case: dict[str, Any]) -> list[dict[str, str]]:
@@ -318,8 +336,7 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
 
         if "history" in text_lower or "symptom" in text_lower:
             reply_content = (
-                "Patient History\n"
-                f"{info.get('patient_info', 'No additional history available.')}"
+                f"Patient History\n{info.get('patient_info', 'No additional history available.')}"
             )
             state["asked"] = True
         elif any(
@@ -346,7 +363,7 @@ class AgentClinicNEJMMultiTurn(vf.MultiTurnEnv):
             if image_url:
                 reply_content = [
                     {"type": "text", "text": "Medical Image:"},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "image_url", "image_url": {"url": _message_image_url(image_url)}},
                 ]
             else:
                 reply_content = "No medical image is available for this case."

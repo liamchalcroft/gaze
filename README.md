@@ -67,6 +67,33 @@ result = await processor.analyze(
 
 The model returns JSON each turn with `"continue": true` to keep reasoning or `"continue": false` when done.
 
+## LM Studio Baseline
+
+The current local baseline endpoint in this workspace is `http://192.168.1.138:1234/v1`.
+Set `LMSTUDIO_BASE_URL` or pass `--base-url` to the example CLIs to override it.
+
+```bash
+uv run python -m examples.pubmedqa.src.cli \
+  --model qwen3.5-a3b \
+  --base-url http://192.168.1.138:1234/v1 \
+  --mode single_turn \
+  --max-samples 1
+
+uv run python -m examples.vqa_rad.src.cli \
+  --model qwen3.5-a3b \
+  --base-url http://192.168.1.138:1234/v1 \
+  --mode agentic \
+  --use-tools \
+  --max-samples 1
+
+uv run python -m examples.nova.src.cli \
+  --model qwen3.5-a3b \
+  --base-url http://192.168.1.138:1234/v1 \
+  --mode single_turn \
+  --max-turns 1 \
+  --max-samples 1
+```
+
 ## Project Structure
 
 ```

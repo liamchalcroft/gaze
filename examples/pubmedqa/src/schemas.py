@@ -77,10 +77,27 @@ def validate_pubmedqa_response(response: dict[str, Any]) -> bool:
     if not all(field in response for field in required):
         return False
 
-    # Validate answer is one of the allowed values
-    if response.get("answer") not in ("yes", "no", "maybe"):
+    # Normalize answer to canonical form (local models may return "Yes" etc.)
+    raw_answer = str(response.get("answer", "")).lower().strip()
+    normalized = normalize_pubmedqa_answer(raw_answer)
+    if normalized not in ("yes", "no", "maybe"):
+        return False
+    response["answer"] = normalized
+
+    # Validate confidence is in valid range (coerce strings from local models)
+    confidence = response.get("confidence")
+    if isinstance(confidence, str):
+        try:
+            confidence = float(confidence)
+            response["confidence"] = confidence
+        except ValueError:
+            return False
+    if not (isinstance(confidence, int | float) and 0 <= confidence <= 1):
         return False
 
-    # Validate confidence is in valid range
-    confidence = response.get("confidence")
-    return isinstance(confidence, int | float) and 0 <= confidence <= 1
+    # Coerce key_evidence from string to list if needed
+    evidence = response.get("key_evidence")
+    if isinstance(evidence, str):
+        response["key_evidence"] = [evidence] if evidence else []
+
+    return True

@@ -7,10 +7,12 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 from beartype import beartype
 from loguru import logger
 from openai import AsyncOpenAI
 
+from radiant_harness.exceptions import ModelError
 from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.models.openai_adapter import OpenAIAdapter
 
@@ -145,3 +147,57 @@ class LMStudioAdapter(OpenAIAdapter):
         """
         response = await self.client.models.list()
         return [{"id": m.id, "object": m.object} for m in response.data]
+
+
+@beartype
+async def list_lmstudio_model_ids(
+    base_url: str | None = None,
+    *,
+    api_key: str | None = None,
+    timeout: float = 10.0,
+) -> list[str]:
+    """Return model IDs from an OpenAI-compatible LM Studio endpoint."""
+    resolved_url = base_url or os.getenv("LMSTUDIO_BASE_URL", _DEFAULT_BASE_URL)
+    LMStudioAdapter._validate_base_url(resolved_url)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(
+            f"{resolved_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key or _DEFAULT_API_KEY}"},
+        )
+        response.raise_for_status()
+
+    payload = response.json()
+    raw_models = payload.get("data")
+    if not isinstance(raw_models, list):
+        raise ModelError(
+            "LM Studio /models response did not contain a 'data' list",
+            model_name=None,
+        )
+
+    model_ids: list[str] = []
+    for item in raw_models:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if isinstance(model_id, str) and model_id:
+            model_ids.append(model_id)
+    return model_ids
+
+
+@beartype
+async def require_lmstudio_model(
+    model_name: str,
+    base_url: str | None = None,
+    *,
+    timeout: float = 10.0,
+) -> list[str]:
+    """Fail fast when the requested model is not available in LM Studio."""
+    model_ids = await list_lmstudio_model_ids(base_url=base_url, timeout=timeout)
+    if model_name not in model_ids:
+        available = ", ".join(model_ids) if model_ids else "<none>"
+        raise ModelError(
+            f"Model {model_name!r} is not loaded in LM Studio. Available models: {available}",
+            model_name=model_name,
+        )
+    return model_ids

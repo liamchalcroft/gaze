@@ -380,11 +380,20 @@ class TestNovaCliAsyncOffload:
             offloaded.append(getattr(func, "__name__", type(func).__name__))
             return func(*args, **kwargs)
 
-        monkeypatch.setattr(cli, "NovaDataset", lambda *args, **kwargs: _FakeDataset())
-        monkeypatch.setattr(cli, "NOVAAgenticProcessor", lambda **kwargs: fake_processor)
-        monkeypatch.setattr(cli, "evaluate_caption", _fake_caption)
-        monkeypatch.setattr(cli, "evaluate_diagnosis_nova_official", _fake_diagnosis)
-        monkeypatch.setattr(cli, "evaluate_detection", _fake_detection)
+        monkeypatch.setattr(
+            "examples.nova.src.data.NovaDataset", lambda *args, **kwargs: _FakeDataset()
+        )
+        monkeypatch.setattr(
+            "examples.nova.src.processor.NOVAAgenticProcessor", lambda **kwargs: fake_processor
+        )
+        monkeypatch.setattr("examples.nova.src.evaluation.caption.evaluate_caption", _fake_caption)
+        monkeypatch.setattr(
+            "examples.nova.src.evaluation.diagnosis.evaluate_diagnosis_nova_official",
+            _fake_diagnosis,
+        )
+        monkeypatch.setattr(
+            "examples.nova.src.evaluation.detection.evaluate_detection", _fake_detection
+        )
         monkeypatch.setattr(cli.asyncio, "to_thread", _tracking_to_thread)
 
         config = NOVAConfig(

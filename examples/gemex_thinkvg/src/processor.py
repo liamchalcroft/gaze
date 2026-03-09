@@ -10,6 +10,7 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from beartype import beartype
@@ -17,6 +18,7 @@ from beartype import beartype
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput
 from radiant_harness import Turn
+from radiant_harness.models import AdapterProtocol
 from radiant_harness.verifiers import BaseRewardFunction
 from radiant_harness.verifiers import VerifiableProcessorMixin
 
@@ -71,6 +73,7 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
         reward_weights: RewardWeights | None = None,
+        adapter_factory: Callable[[], AdapterProtocol] | None = None,
     ) -> None:
         """Initialize GEMeX processor.
 
@@ -82,6 +85,7 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_enabled: Enable model reasoning mode
             reasoning_effort: Reasoning effort level
             reward_weights: Custom weights for answer/location/bbox rewards
+            adapter_factory: Optional adapter factory for local or custom endpoints
         """
         super().__init__(
             model_name=model_name,
@@ -90,6 +94,7 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             max_turns=max_turns,
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
+            adapter_factory=adapter_factory,
         )
         self._reward_weights = reward_weights
 
@@ -134,39 +139,49 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
 
         # Add question-type specific guidance
         if question_type == "closed_ended":
-            prompt_parts.extend([
-                "## Question Type: Closed-ended (Yes/No)",
-                "Answer with 'Yes' or 'No' based on visual evidence.",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "## Question Type: Closed-ended (Yes/No)",
+                    "Answer with 'Yes' or 'No' based on visual evidence.",
+                    "",
+                ]
+            )
         elif question_type == "single_choice":
-            prompt_parts.extend([
-                "## Question Type: Single Choice",
-                "Select the single best answer from the provided options.",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "## Question Type: Single Choice",
+                    "Select the single best answer from the provided options.",
+                    "",
+                ]
+            )
         elif question_type == "multi_choice":
-            prompt_parts.extend([
-                "## Question Type: Multiple Choice",
-                "Select all correct answers from the provided options.",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "## Question Type: Multiple Choice",
+                    "Select all correct answers from the provided options.",
+                    "",
+                ]
+            )
         else:  # open_ended
-            prompt_parts.extend([
-                "## Question Type: Open-ended",
-                "Provide a descriptive answer based on your analysis.",
-                "",
-            ])
+            prompt_parts.extend(
+                [
+                    "## Question Type: Open-ended",
+                    "Provide a descriptive answer based on your analysis.",
+                    "",
+                ]
+            )
 
-        prompt_parts.extend([
-            "## Analysis Guidelines",
-            "1. Start by examining the overall image quality and orientation",
-            "2. Systematically scan: mediastinum, bilateral lungs, costophrenic angles",
-            "3. Identify any abnormalities: consolidation, effusion, nodules, etc.",
-            "4. Provide precise bounding box around the most relevant finding",
-            "5. Base your answer ONLY on visible evidence",
-            "",
-        ])
+        prompt_parts.extend(
+            [
+                "## Analysis Guidelines",
+                "1. Start by examining the overall image quality and orientation",
+                "2. Systematically scan: mediastinum, bilateral lungs, costophrenic angles",
+                "3. Identify any abnormalities: consolidation, effusion, nodules, etc.",
+                "4. Provide precise bounding box around the most relevant finding",
+                "5. Base your answer ONLY on visible evidence",
+                "",
+            ]
+        )
 
         return "\n".join(prompt_parts)
 
@@ -195,9 +210,7 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
                 message_parts.append(f"  {chr(65 + i)}. {opt}")
             message_parts.append("")
 
-        message_parts.append(
-            "Provide your reasoning, answer, and visual grounding location."
-        )
+        message_parts.append("Provide your reasoning, answer, and visual grounding location.")
 
         return "\n".join(message_parts)
 
@@ -229,16 +242,28 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
 
         # Bonus for using visual tools
         visual_tools = {
-            "zoom", "crop", "adjust_contrast", "adjust_brightness",
-            "adjust_sharpness", "threshold", "window_level",
-            "equalize_histogram", "adaptive_equalize", "detect_edges",
-            "get_intensity_stats", "measure", "show_grid",
-            "symmetry_diff", "annotate_region", "intensity_profile",
-            "denoise", "morphological", "invert",
+            "zoom",
+            "crop",
+            "adjust_contrast",
+            "adjust_brightness",
+            "adjust_sharpness",
+            "threshold",
+            "window_level",
+            "equalize_histogram",
+            "adaptive_equalize",
+            "detect_edges",
+            "get_intensity_stats",
+            "measure",
+            "show_grid",
+            "symmetry_diff",
+            "annotate_region",
+            "intensity_profile",
+            "denoise",
+            "morphological",
+            "invert",
         }
         tool_turns = sum(
-            1 for t in turns
-            if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
+            1 for t in turns if t.tool_calls and any(tc.name in visual_tools for tc in t.tool_calls)
         )
         tool_bonus = min(tool_turns * 0.05, 0.15)
 
@@ -253,7 +278,7 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             if bbox[2] > bbox[0] and bbox[3] > bbox[1]:
                 width = bbox[2] - bbox[0]
                 height = bbox[3] - bbox[1]
-                area_ratio = (width * height) / (self.IMAGE_SIZE ** 2)
+                area_ratio = (width * height) / (self.IMAGE_SIZE**2)
                 if 0.01 < area_ratio < 0.8:  # Reasonable size
                     bbox_bonus += 0.05
 

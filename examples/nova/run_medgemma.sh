@@ -6,10 +6,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
 MODEL="medgemma-1.5-4b-it"
 BASE_URL="${1:-http://192.168.1.138:1234/v1}"
 MAX_SAMPLES="${2:-20}"
-RESULTS_DIR="./runs/main_results"
+RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
+
+cd "${REPO_ROOT}"
 
 echo "=== MedGemma evaluation ==="
 echo "Model:    ${MODEL}"
@@ -19,15 +24,15 @@ echo "Metrics:  caption + localization (skipping diagnosis)"
 echo ""
 
 # --- Single-turn (no tools) ---
-SINGLE_DIR="${RESULTS_DIR}/${MODEL}__single_turn__notools__10t__all"
+SINGLE_DIR="${RESULTS_DIR}/${MODEL}__single_turn__notools__1t__all"
 echo "--- Single-turn run -> ${SINGLE_DIR} ---"
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --task all \
   --eval-tasks caption localization \
   --mode single_turn \
-  --max-turns 10 \
+  --max-turns 1 \
   --max-samples "${MAX_SAMPLES}" \
   --batch-size 1 \
   --output-dir "${SINGLE_DIR}" \
@@ -38,7 +43,7 @@ echo ""
 # --- Agentic (with tools) ---
 AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__tools__10t__all"
 echo "--- Agentic run -> ${AGENTIC_DIR} ---"
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --task all \

@@ -39,7 +39,7 @@ python download.py
 ### 3. Load Environment
 
 ```python
-from src import load_environment
+from examples.agentclinic_nejm.src import load_environment
 
 env = load_environment(
     dataset_path="./data/agentclinic_nejm_extended.jsonl",
@@ -49,18 +49,15 @@ env = load_environment(
 print(f"Loaded {len(env.dataset)} clinical cases")
 ```
 
-### 4. Integration
+### 4. Evaluate
 
-The environment is a `verifiers.MultiTurnEnv`. Pass it to a verifiers training
-or evaluation loop:
-
-```python
-import verifiers as vf
-from src import load_environment
-
-env = load_environment(dataset_path="./data/agentclinic_nejm_extended.jsonl")
-# Use env with verifiers training/evaluation API
-# See https://github.com/primeintellect-ai/verifiers
+```bash
+uv run python -m examples.agentclinic_nejm.eval \
+    --dataset ./data/agentclinic_nejm_extended.jsonl \
+    --model qwen3.5-a3b \
+    --base-url http://192.168.1.138:1234/v1 \
+    --num-samples 10 \
+    --output ./results
 ```
 
 ## Interaction Format
@@ -120,7 +117,7 @@ agentclinic_nejm/
     download.py              # Dataset download script
     agentclinic_nejm_extended.jsonl  # Dataset file
   train.py                   # Training integration template
-  eval.py                    # Evaluation integration template
+  eval.py                    # Runnable evaluation loop
   README.md
 ```
 

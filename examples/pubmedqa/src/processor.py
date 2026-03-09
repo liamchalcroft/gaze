@@ -9,11 +9,10 @@ Supports verifiers integration for RL training via VerifiableProcessorMixin.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from beartype import beartype
-
-from collections.abc import Callable
 
 from radiant_harness import AgenticProcessorBase
 from radiant_harness import ImageInput

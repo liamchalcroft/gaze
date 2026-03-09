@@ -346,8 +346,8 @@ class TestHelpers:
             _brace_content("{Diagnosis} is {Pneumonia}", ["Pneumonia", "Bronchitis"]) == "Pneumonia"
         )
 
-    def test_brace_content_with_options_falls_back(self):
-        assert _brace_content("{Unknown}", ["Pneumonia", "Bronchitis"]) == "Unknown"
+    def test_brace_content_with_options_rejects_placeholder(self):
+        assert _brace_content("{Unknown}", ["Pneumonia", "Bronchitis"]) == ""
 
     def test_normalize_lowercase(self):
         assert _normalize("Pneumonia") == "pneumonia"

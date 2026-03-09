@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from beartype import beartype
+from PIL import Image
 
+from radiant_harness.tools import encode_image
 from radiant_harness.verifiers.rewards import BaseRewardFunction
 
 
@@ -44,6 +46,12 @@ def _safe_resolve_image_path(base: Path, relative: str) -> str:
             f"Image path traversal blocked: '{relative}' resolves outside base directory"
         )
     return str(resolved)
+
+
+def _image_file_to_data_url(image_path: str) -> str:
+    """Encode a local image file as a data URL for OpenAI-compatible APIs."""
+    with Image.open(image_path) as image:
+        return encode_image(image).to_data_url()
 
 
 if TYPE_CHECKING:
@@ -177,7 +185,7 @@ class VerifiableProcessorMixin:
                         {"type": "text", "text": text_content},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"file://{image_path}"},
+                            "image_url": {"url": _image_file_to_data_url(image_path)},
                         },
                     ]
 

@@ -1,16 +1,5 @@
 #!/usr/bin/env python
-"""Training script for GEMeX-ThinkVG RL fine-tuning.
-
-Uses the radiant_harness verifiers integration for multi-turn training
-with verifiable rewards. Supports both training and evaluation modes.
-
-Example:
-    # Training
-    python train.py --dataset data/train.jsonl --model gpt-4o --mode train
-
-    # Evaluation
-    python train.py --dataset data/test.jsonl --model gpt-4o --mode eval
-"""
+"""Prepare GEMeX-ThinkVG training config or dispatch to the real evaluator."""
 
 from __future__ import annotations
 
@@ -18,11 +7,13 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-from src.processor import GEMeXProcessor
-from src.rewards import RewardWeights
-from src.verifiers import GEMeXThinkVGToolEnv
+from examples.gemex_thinkvg.eval import run_evaluation as run_gemex_eval
+from examples.gemex_thinkvg.src.processor import GEMeXProcessor
+from examples.gemex_thinkvg.src.rewards import RewardWeights
+from examples.gemex_thinkvg.src.verifiers import GEMeXThinkVGToolEnv
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +53,12 @@ def parse_args() -> argparse.Namespace:
         help="Model name (OpenRouter format)",
     )
     parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI-compatible server when running --mode eval",
+    )
+    parser.add_argument(
         "--max-turns",
         type=int,
         default=8,
@@ -76,6 +73,22 @@ def parse_args() -> argparse.Namespace:
         "--use-web-search",
         action="store_true",
         help="Enable web search tools",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=-1,
+        help="Number of samples to evaluate in --mode eval (-1 for all)",
+    )
+    parser.add_argument(
+        "--reasoning",
+        action="store_true",
+        help="Enable reasoning mode when using OpenAI/OpenRouter for --mode eval",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logs for --mode eval",
     )
 
     # Reward
@@ -144,79 +157,13 @@ def load_cases(dataset_path: str) -> list[dict[str, Any]]:
     return cases
 
 
-async def run_evaluation(
-    processor: GEMeXProcessor,
-    env: GEMeXThinkVGToolEnv,
-    output_dir: Path,
-) -> dict[str, float]:
-    """Run evaluation using verifiers environment.
-
-    Args:
-        processor: Configured GEMeX processor
-        env: Configured GEMeX environment
-        output_dir: Directory for saving results
-
-    Returns:
-        Dictionary of evaluation metrics
-    """
-    print(f"Loaded {len(env.dataset)} evaluation cases")
-
-    # Run evaluation episodes
-    results = []
-    total_reward = 0.0
-
-    for i, (prompt, info) in enumerate(zip(env.dataset["prompt"], env.dataset["info"], strict=True)):
-        print(f"Evaluating case {i + 1}/{len(env.dataset)}...")
-
-        # Initialize episode
-        state = env.build_initial_state(prompt, info)
-        messages = list(prompt)  # Copy initial messages
-
-        # Run episode (simplified - real impl would use model generation)
-        while not await env.is_completed(messages, state, info):
-            # In real training, this would call the model
-            # For demo, we just show the structure
-            break
-
-        # Compute reward for final response (placeholder)
-        # In real eval, completion would come from model
-        reward = 0.0  # reward_fn(prompt, completion, info)
-        total_reward += reward
-
-        results.append({
-            "case_id": i,
-            "reward": reward,
-            "turns": state.get("turn", 0),
-        })
-
-    # Aggregate metrics
-    n = len(results)
-    metrics = {
-        "num_samples": n,
-        "mean_reward": total_reward / n if n > 0 else 0.0,
-        "mean_turns": sum(r["turns"] for r in results) / n if n > 0 else 0.0,
-    }
-
-    # Save results
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_dir / "eval_results.json", "w", encoding="utf-8") as f:
-        json.dump({"metrics": metrics, "results": results}, f, indent=2)
-
-    print(f"\nEvaluation Results:")
-    print(f"  Mean Reward: {metrics['mean_reward']:.4f}")
-    print(f"  Mean Turns: {metrics['mean_turns']:.2f}")
-    print(f"  Results saved to: {output_dir / 'eval_results.json'}")
-
-    return metrics
-
-
 def run_training(
     processor: GEMeXProcessor,
     env: GEMeXThinkVGToolEnv,
     config: dict[str, Any],
     output_dir: Path,
 ) -> None:
-    """Run training using verifiers.
+    """Prepare training config and environment details for verifiers.
 
     Args:
         processor: Configured GEMeX processor
@@ -237,35 +184,13 @@ def run_training(
     print(f"  Batch Size: {config['batch_size']}")
     print(f"  Epochs: {config['epochs']}")
     print(f"  Max Rollouts: {config['max_rollouts']}")
-    print(f"  Reward Weights: answer={config['answer_weight']}, "
-          f"location={config['location_weight']}, bbox={config['bbox_weight']}")
-
-    print("\n" + "=" * 60)
-    print("Training Setup Complete")
-    print("=" * 60)
-    print("""
-To run actual training, integrate with your training framework:
-
-    import verifiers as vf
-
-    # Create trainer (example with hypothetical API)
-    trainer = vf.Trainer(
-        model=config['model'],
-        environment=env,
-        rubric=rubric,
-        learning_rate=config['learning_rate'],
-        batch_size=config['batch_size'],
+    print(
+        f"  Reward Weights: answer={config['answer_weight']}, "
+        f"location={config['location_weight']}, bbox={config['bbox_weight']}"
     )
 
-    # Run training
-    trainer.train(epochs=config['epochs'])
-
-    # Save model
-    trainer.save(output_dir / 'model')
-
-For GRPO/PPO training, see verifiers documentation:
-https://github.com/willccbb/verifiers
-""")
+    print("\nTraining config written.")
+    print("Use the saved config and the prepared environment with your verifiers trainer.")
 
 
 def main() -> None:
@@ -307,7 +232,27 @@ def main() -> None:
     output_dir = Path(args.output)
 
     if args.mode == "eval":
-        asyncio.run(run_evaluation(processor, env, output_dir))
+        asyncio.run(
+            run_gemex_eval(
+                SimpleNamespace(
+                    dataset=args.dataset,
+                    image_dir=Path(args.image_dir) if args.image_dir else None,
+                    model=args.model,
+                    base_url=args.base_url,
+                    mode="single_turn" if args.max_turns == 1 else "agentic",
+                    max_turns=args.max_turns,
+                    use_tools=args.use_tools,
+                    use_web_search=args.use_web_search,
+                    num_samples=args.num_samples,
+                    output=output_dir,
+                    reward_weights=(
+                        f"{args.answer_weight},{args.location_weight},{args.bbox_weight}"
+                    ),
+                    reasoning=args.reasoning,
+                    verbose=args.verbose,
+                )
+            )
+        )
     else:
         config = {
             "model": args.model,
