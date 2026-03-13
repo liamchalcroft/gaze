@@ -28,6 +28,7 @@ from PIL import ImageOps
 from radiant_harness.config import ImageProcessingConfig
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import ToolExecutionError
+from radiant_harness.tools.image_manager import ImageManager
 from radiant_harness.tools.registry import EncodedImage
 from radiant_harness.tools.registry import encode_image
 from radiant_harness.tools.tool import Tool
@@ -633,14 +634,27 @@ def invert_image(image: Image.Image) -> Image.Image:
     return ImageOps.invert(image.convert("L"))
 
 
-# Standard clinical window presets: (center, width)
+# Clinical window presets: (center, width)
+#
+# CT presets (Hounsfield units) — designed for CT data.  When applied to
+# 8-bit MRI pixel values these will compress or clip the dynamic range.
+# The effective_levels check in apply_window_level() catches the worst
+# cases, but prefer MRI-specific presets for MRI data.
+#
+# MRI presets — designed for 8-bit MRI pixel values (0-255) as produced
+# by standard DICOM-to-PNG/JPEG conversion pipelines.
 WINDOW_PRESETS: dict[str, tuple[int, int]] = {
+    # CT presets
     "brain": (40, 80),
     "subdural": (75, 215),
     "bone": (400, 1800),
     "soft_tissue": (40, 400),
     "stroke": (32, 40),
     "posterior_fossa": (36, 120),
+    # MRI presets (8-bit pixel values)
+    "mri_brain": (128, 230),
+    "mri_flair": (110, 200),
+    "mri_t2": (140, 220),
 }
 
 
@@ -962,7 +976,7 @@ def morphological_op(
     def _dilate(img: Image.Image) -> Image.Image:
         return img.filter(ImageFilter.MaxFilter(3))
 
-    ops: dict[str, list[object]] = {
+    ops: dict[str, list[Callable[[Image.Image], Image.Image]]] = {
         "erode": [_erode],
         "dilate": [_dilate],
         "open": [_erode, _dilate],  # erosion then dilation
@@ -971,7 +985,7 @@ def morphological_op(
 
     for _ in range(iterations):
         for op_fn in ops[operation]:
-            result = op_fn(result)  # type: ignore[operator]
+            result = op_fn(result)
 
     return result
 
@@ -1089,8 +1103,6 @@ async def _transform_and_encode(
     Both the PIL transform and the JPEG encoding are offloaded to a worker
     thread so the async event loop is never blocked by CPU-intensive work.
     """
-    from radiant_harness.tools.image_manager import ImageManager
-
     image_manager = registry.get_image_manager()
 
     def _work(mgr: ImageManager) -> tuple[Image.Image, EncodedImage]:
@@ -1252,10 +1264,15 @@ async def _execute_flip_horizontal(registry: ToolRegistry) -> ToolResult:
 
     return ToolResult(
         tool_name="flip_horizontal",
-        description="Flipped image horizontally",
+        description=(
+            "Flipped image horizontally. "
+            "WARNING — LATERALITY REVERSED: left and right are now swapped. "
+            "All spatial references (e.g. 'left temporal') are mirrored. "
+            "Call reset() before final answer to restore original orientation."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"size": current.size},
+        metadata={"size": current.size, "laterality_reversed": True},
     )
 
 
@@ -1267,10 +1284,15 @@ async def _execute_flip_vertical(registry: ToolRegistry) -> ToolResult:
 
     return ToolResult(
         tool_name="flip_vertical",
-        description="Flipped image vertically",
+        description=(
+            "Flipped image vertically. "
+            "WARNING — ORIENTATION REVERSED: superior and inferior are now swapped. "
+            "All spatial references (e.g. 'superior frontal') are mirrored. "
+            "Call reset() before final answer to restore original orientation."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"size": current.size},
+        metadata={"size": current.size, "orientation_reversed": True},
     )
 
 
@@ -1758,37 +1780,49 @@ async def _execute_morphological(
 
 
 # Static prompt documentation for tools with fixed parameters
-CROP_PROMPT_DOC = """**crop** - Extract region [x1, y1, x2, y2] normalized (0-1); pixel coords auto-converted""".strip()
-
-THRESHOLD_PROMPT_DOC = """**threshold** - Apply intensity windowing, converts to grayscale (lower: 0-254, upper: 1-255)""".strip()
-
-FLIP_HORIZONTAL_PROMPT_DOC = """**flip_horizontal** - Mirror image left-right""".strip()
-
-FLIP_VERTICAL_PROMPT_DOC = """**flip_vertical** - Mirror image top-bottom""".strip()
-
-ROTATE_PROMPT_DOC = (
-    """**rotate** - Rotate image by 90 degrees (clockwise: boolean, default true)""".strip()
+CROP_PROMPT_DOC = (
+    "**crop** - Extract region [x1, y1, x2, y2] normalized (0-1); pixel coords auto-converted"
 )
 
-RESET_PROMPT_DOC = """**reset** - Return to original image""".strip()
-
-EQUALIZE_PROMPT_DOC = (
-    """**equalize_histogram** - Equalize intensity distribution (grayscale)""".strip()
+THRESHOLD_PROMPT_DOC = (
+    "**threshold** - Apply intensity windowing, converts to grayscale (lower: 0-254, upper: 1-255)"
 )
 
-INTENSITY_STATS_PROMPT_DOC = """**get_intensity_stats** - Get intensity statistics (optional box [x1,y1,x2,y2] 0-1; pixel coords auto-converted)""".strip()
+FLIP_HORIZONTAL_PROMPT_DOC = "**flip_horizontal** - Mirror image left-right"
 
-MEASURE_PROMPT_DOC = """**measure** - Measure distance between two points (point1, point2: [x,y] 0-1; pixel coords auto-converted)""".strip()
+FLIP_VERTICAL_PROMPT_DOC = "**flip_vertical** - Mirror image top-bottom"
 
-SYMMETRY_DIFF_PROMPT_DOC = """**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale)""".strip()
+ROTATE_PROMPT_DOC = "**rotate** - Rotate image by 90 degrees (clockwise: boolean, default true)"
 
-INVERT_PROMPT_DOC = (
-    """**invert** - Invert image intensities, converts to grayscale (negative)""".strip()
+RESET_PROMPT_DOC = "**reset** - Return to original image"
+
+EQUALIZE_PROMPT_DOC = "**equalize_histogram** - Equalize intensity distribution (grayscale)"
+
+INTENSITY_STATS_PROMPT_DOC = (
+    "**get_intensity_stats** - Get intensity statistics "
+    "(optional box [x1,y1,x2,y2] 0-1; pixel coords auto-converted)"
 )
 
-INTENSITY_PROFILE_PROMPT_DOC = """**intensity_profile** - Sample intensities along a line (point1, point2: [x,y] 0-1; pixel coords auto-converted)""".strip()
+MEASURE_PROMPT_DOC = (
+    "**measure** - Measure distance between two points "
+    "(point1, point2: [x,y] 0-1; pixel coords auto-converted)"
+)
 
-ANNOTATE_REGION_PROMPT_DOC = """**annotate_region** - Draw bounding box overlay, visual only (box [x1,y1,x2,y2] 0-1, color, label)""".strip()
+SYMMETRY_DIFF_PROMPT_DOC = (
+    "**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale)"
+)
+
+INVERT_PROMPT_DOC = "**invert** - Invert image intensities, converts to grayscale (negative)"
+
+INTENSITY_PROFILE_PROMPT_DOC = (
+    "**intensity_profile** - Sample intensities along a line "
+    "(point1, point2: [x,y] 0-1; pixel coords auto-converted)"
+)
+
+ANNOTATE_REGION_PROMPT_DOC = (
+    "**annotate_region** - Draw bounding box overlay, "
+    "visual only (box [x1,y1,x2,y2] 0-1, color, label)"
+)
 
 
 @beartype
@@ -1870,7 +1904,9 @@ def create_visual_tools(
                 parameters={
                     "factor": {
                         "type": "number",
-                        "description": "Contrast factor: 1.0=no change, >1.0=increase, <1.0=decrease.",
+                        "description": (
+                            "Contrast factor: 1.0=no change, >1.0=increase, <1.0=decrease."
+                        ),
                         "minimum": cfg.min_contrast_factor,
                         "maximum": cfg.max_contrast_factor,
                     }
@@ -1897,7 +1933,9 @@ def create_visual_tools(
                 parameters={
                     "factor": {
                         "type": "number",
-                        "description": "Brightness factor: 1.0=no change, >1.0=brighter, <1.0=darker.",
+                        "description": (
+                            "Brightness factor: 1.0=no change, >1.0=brighter, <1.0=darker."
+                        ),
                         "minimum": cfg.min_brightness_factor,
                         "maximum": cfg.max_brightness_factor,
                     }
@@ -1975,7 +2013,8 @@ def create_visual_tools(
                 name="window_level",
                 description=(
                     "Apply clinical window/level settings. "
-                    "Use preset names (brain, subdural, bone, soft_tissue, stroke, posterior_fossa) "
+                    "Use preset names (brain, subdural, bone, "
+                    "soft_tissue, stroke, posterior_fossa) "
                     "or specify center and width."
                 ),
                 parameters={
@@ -2007,7 +2046,9 @@ def create_visual_tools(
         tools.append(
             Tool(
                 name="equalize_histogram",
-                description="Equalize intensity histogram for improved contrast distribution (grayscale).",
+                description=(
+                    "Equalize intensity histogram for improved contrast distribution (grayscale)."
+                ),
                 parameters={},
                 execute=_execute_equalize,
                 requires_image=True,
@@ -2055,7 +2096,9 @@ def create_visual_tools(
         tools.append(
             Tool(
                 name="detect_edges",
-                description="Detect edges using Sobel or Laplacian operators for boundary delineation.",
+                description=(
+                    "Detect edges using Sobel or Laplacian operators for boundary delineation."
+                ),
                 parameters={
                     "method": {
                         "type": "string",
@@ -2066,7 +2109,10 @@ def create_visual_tools(
                 },
                 execute=_execute_detect_edges,
                 requires_image=True,
-                prompt_documentation="**detect_edges** - Edge detection, converts to grayscale (method: sobel/laplacian)",
+                prompt_documentation=(
+                    "**detect_edges** - Edge detection, converts "
+                    "to grayscale (method: sobel/laplacian)"
+                ),
                 category="visual",
             )
         )
@@ -2098,7 +2144,8 @@ def create_visual_tools(
     if "morphological" not in disabled:
         morph_prompt_doc = (
             f"**morphological** - Morphological ops, converts to grayscale "
-            f"(operation: erode/dilate/open/close, iterations: 1-{cfg.max_morphological_iterations})"
+            f"(operation: erode/dilate/open/close, "
+            f"iterations: 1-{cfg.max_morphological_iterations})"
         )
         tools.append(
             Tool(
@@ -2303,7 +2350,10 @@ def create_visual_tools(
         )
 
     if "show_grid" not in disabled:
-        grid_prompt_doc = f"**show_grid** - Overlay labeled grid, visual only (divisions: 2-{cfg.max_grid_divisions})"
+        grid_prompt_doc = (
+            "**show_grid** - Overlay labeled grid, visual only "
+            f"(divisions: 2-{cfg.max_grid_divisions})"
+        )
         tools.append(
             Tool(
                 name="show_grid",

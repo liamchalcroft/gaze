@@ -19,6 +19,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from radiant_harness.utils import clamp_confidence
+
 # NOVA Unified Response Schema for all three tasks
 # Fully compliant with OpenAI strict structured outputs:
 # - All objects have additionalProperties: false
@@ -198,18 +200,15 @@ def get_required_fields() -> list[str]:
 
 def _is_valid_confidence(value: object) -> bool:
     """Check that a confidence value is a finite number in [0.0, 1.0]."""
-    if isinstance(value, bool):
-        return False
-    if not isinstance(value, int | float):
-        return False
-    f = float(value)
-    if math.isnan(f) or math.isinf(f):
-        return False
-    return 0.0 <= f <= 1.0
+    return clamp_confidence(value) is not None
 
 
 def _is_valid_bbox(value: object) -> bool:
-    """Check that a bounding box is a list of exactly 4 finite numbers."""
+    """Check that a bounding box is a list of exactly 4 finite numbers with x2 > x1, y2 > y1.
+
+    Rejects degenerate boxes (zero area or reversed coordinates) that would
+    silently produce 0 IoU at evaluation while appearing valid to the model.
+    """
     if not isinstance(value, list) or len(value) != 4:
         return False
     for coord in value:
@@ -220,6 +219,9 @@ def _is_valid_bbox(value: object) -> bool:
         f = float(coord)
         if math.isnan(f) or math.isinf(f):
             return False
+    x1, y1, x2, y2 = (float(c) for c in value)
+    if x2 <= x1 or y2 <= y1:
+        return False
     return True
 
 
@@ -247,9 +249,10 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
         return False
     if not isinstance(caption.get("description"), str):
         return False
-    # Schema requires confidence; reject None and invalid values
+    # Schema requires confidence; reject None and invalid values, clamp to [0,1]
     if not _is_valid_confidence(caption.get("confidence")):
         return False
+    caption["confidence"] = clamp_confidence(caption["confidence"])
 
     # --- diagnosis ---
     diagnosis = response.get("diagnosis")
@@ -257,9 +260,10 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
         return False
     if not isinstance(diagnosis.get("primary_diagnosis"), str):
         return False
-    # Schema requires confidence; reject None and invalid values
+    # Schema requires confidence; reject None and invalid values, clamp to [0,1]
     if not _is_valid_confidence(diagnosis.get("confidence")):
         return False
+    diagnosis["confidence"] = clamp_confidence(diagnosis["confidence"])
     # evidence must be a list of strings when present
     evidence = diagnosis.get("evidence")
     if evidence is not None:
@@ -279,6 +283,7 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
                 return False
             if not _is_valid_confidence(diff.get("confidence")):
                 return False
+            diff["confidence"] = clamp_confidence(diff["confidence"])
 
     # --- localization ---
     localization = response.get("localization")
@@ -299,6 +304,7 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
             return False
         if not _is_valid_confidence(loc.get("confidence")):
             return False
+        loc["confidence"] = clamp_confidence(loc["confidence"])
 
     # --- localization sub-fields ---
     image_dims = localization.get("image_dimensions")

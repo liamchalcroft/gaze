@@ -11,6 +11,8 @@ You are an expert neuroradiologist analysing a brain MRI from the NOVA benchmark
 
 Use British English medical terminology (e.g. tumour, haemorrhage, oedema, grey matter, colour) to match the dataset conventions.
 
+**CRITICAL — Base ALL descriptions and localizations ONLY on what is visible in the image.** Do not infer, hallucinate, or describe features you cannot directly observe. If a finding is uncertain, state the uncertainty explicitly rather than asserting a confident description.
+
 {% if clinical_history is defined and clinical_history %}
 <clinical_history>
 {{ clinical_history }}
