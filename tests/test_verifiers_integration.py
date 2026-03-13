@@ -191,7 +191,8 @@ def test_verifiers_optional() -> None:
     # This should not raise an error even if verifiers is not installed
     from radiant_harness.verifiers import BaseRewardFunction
 
-    assert BaseRewardFunction is not None
+    assert callable(BaseRewardFunction)
+    assert hasattr(BaseRewardFunction, "__call__")
 
 
 class TestToolEnvIntegrations:

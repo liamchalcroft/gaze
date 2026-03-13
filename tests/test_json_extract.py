@@ -81,9 +81,12 @@ That's my analysis."""
 
     def test_json_with_escaped_quotes_and_braces(self) -> None:
         # Complex case with escaped quotes and nested braces in strings
-        text = 'Some prefix: {"description": "Use {name} in template", "example": "{\\"key\\": \\"value\\"}"}'
+        text = (
+            'Some prefix: {"description": "Use {name} in template",'
+            ' "example": "{\\"key\\": \\"value\\"}"}'
+        )
         result = extract_json_from_text(text)
-        assert result is not None
+        assert result is not None, "Expected JSON extraction from escaped text, got None"
         assert result["description"] == "Use {name} in template"
 
     def test_json_embedded_after_prose(self) -> None:

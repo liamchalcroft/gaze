@@ -488,7 +488,7 @@ class TestDatasetEnvironmentParity:
         env_result = env_extract(text)
         reward_result = reward_fn._extract_json_response(text)
 
-        assert env_result is not None
-        assert reward_result is not None
+        assert env_result is not None, "env extraction returned None for valid text"
+        assert reward_result is not None, "reward extraction returned None for valid text"
         assert env_result["answer"] == reward_result["answer"]
         assert env_result["location"] == reward_result["location"]

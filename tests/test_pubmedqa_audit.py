@@ -10,7 +10,12 @@ Covers the findings from the PubMedQA audit:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from examples.pubmedqa.src.dataset import PubmedQADataset
 
 from examples.pubmedqa.src.evaluation import evaluate_pubmedqa
 from examples.pubmedqa.src.processor import PubmedQAVerifiersReward
@@ -34,25 +39,25 @@ class TestRegexFallbackOrdering:
             "the overall evidence says no."
         )
         result = self.reward._extract_json_response(text)
-        assert result is not None
+        assert result is not None, "Expected extraction to find an answer, got None"
         assert result["answer"] == "no"
 
     def test_last_match_wins_no_then_yes(self) -> None:
         text = "Initial reports said no, but subsequent trials confirmed yes."
         result = self.reward._extract_json_response(text)
-        assert result is not None
+        assert result is not None, "Expected extraction to find an answer, got None"
         assert result["answer"] == "yes"
 
     def test_last_match_wins_maybe_after_yes(self) -> None:
         text = "Some say yes, others no, so the answer is maybe."
         result = self.reward._extract_json_response(text)
-        assert result is not None
+        assert result is not None, "Expected extraction to find an answer, got None"
         assert result["answer"] == "maybe"
 
     def test_json_preferred_over_regex(self) -> None:
         text = '{"answer": "no", "continue": false}'
         result = self.reward._extract_json_response(text)
-        assert result is not None
+        assert result is not None, "Expected extraction to find JSON, got None"
         assert result["answer"] == "no"
 
     def test_no_match_returns_none(self) -> None:
@@ -72,7 +77,11 @@ class TestGoldAnswerKeyFallback:
         self.reward = PubmedQAVerifiersReward()
 
     def _make_completion(self, answer: str) -> str:
-        return f'{{"answer": "{answer}", "confidence": 0.9, "reasoning": "test", "key_evidence": [], "continue": false}}'
+        return (
+            f'{{"answer": "{answer}", "confidence": 0.9, '
+            f'"reasoning": "test", "key_evidence": [], '
+            f'"continue": false}}'
+        )
 
     def test_answer_key(self) -> None:
         score = self.reward(
@@ -161,7 +170,11 @@ class TestNormalizationParity:
     @pytest.mark.parametrize("raw,expected", ALL_SYNONYMS)
     def test_reward_normalization_matches(self, raw: str, expected: str) -> None:
         """Reward extracts and normalizes identically to evaluation."""
-        completion = f'{{"answer": "{raw}", "confidence": 0.9, "reasoning": "t", "key_evidence": [], "continue": false}}'
+        completion = (
+            f'{{"answer": "{raw}", "confidence": 0.9, '
+            f'"reasoning": "t", "key_evidence": [], '
+            f'"continue": false}}'
+        )
         score = self.reward(prompt="", completion=completion, info={"answer": expected})
         assert score == 1.0
 
@@ -253,7 +266,11 @@ class TestRewardMessageListFormat:
         completion = [
             {
                 "role": "assistant",
-                "content": '{"answer": "yes", "confidence": 0.9, "reasoning": "test", "key_evidence": [], "continue": false}',
+                "content": (
+                    '{"answer": "yes", "confidence": 0.9, '
+                    '"reasoning": "test", "key_evidence": [], '
+                    '"continue": false}'
+                ),
             }
         ]
         score = self.reward(prompt="", completion=completion, info={"answer": "yes"})
@@ -267,7 +284,12 @@ class TestRewardMessageListFormat:
                     {"type": "text", "text": "Thinking..."},
                     {
                         "type": "text",
-                        "text": '{"answer": "no", "confidence": 0.8, "reasoning": "test", "key_evidence": [], "continue": false}',
+                        "text": (
+                            '{"answer": "no", "confidence": 0.8, '
+                            '"reasoning": "test", '
+                            '"key_evidence": [], '
+                            '"continue": false}'
+                        ),
                     },
                 ],
             }

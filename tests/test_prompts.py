@@ -148,7 +148,7 @@ def test_base_templates_render_with_empty_context(mode: str, template: str) -> N
     """All base templates use 'is defined' guards, so empty context should work."""
     result = load_template(BASE_PROMPTS / mode / template, {})
     assert isinstance(result, str)
-    assert len(result) > 0
+    assert len(result) > 20, f"Template {template} rendered too short: {result!r}"
 
 
 @pytest.mark.parametrize("mode", ["agentic", "single_turn"])

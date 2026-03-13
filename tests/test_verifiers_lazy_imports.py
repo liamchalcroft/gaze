@@ -29,7 +29,7 @@ class TestRewardImportsAreLightweight:
             TokenF1Reward,
             extract_completion_text,
         ):
-            assert sym is not None
+            assert callable(sym), f"{sym.__name__} should be callable"
 
     def test_rewards_available_in_all(self) -> None:
         import radiant_harness.verifiers as pkg
