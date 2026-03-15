@@ -103,7 +103,8 @@ class TestExtractKeywordTokens:
             assert term in result, f"Expected '{term}' in tokens"
 
     def test_modality_term_matching(self) -> None:
-        """Verify modality terms from NOVA evaluation are matched, including via hyphen splitting."""
+        """Verify modality terms from NOVA evaluation are matched,
+        including via hyphen splitting."""
         text = "Axial T2-weighted FLAIR showing coronal DWI"
         result = _extract_keyword_tokens(text)
         expected = {"flair", "t2", "axial", "coronal", "dwi", "weighted"}

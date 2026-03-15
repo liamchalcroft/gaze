@@ -198,7 +198,25 @@ def _parse_args() -> argparse.Namespace:
         default="0.4,0.3,0.3",
         help="Comma-separated weights for answer,location,bbox rewards",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max completion tokens per turn (default: harness default)",
+    )
+    parser.add_argument(
+        "--max-image-dim",
+        type=int,
+        default=None,
+        help="Downscale images so neither side exceeds this many pixels before encoding",
+    )
     parser.add_argument("--reasoning", action="store_true", help="Enable model reasoning mode")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logs")
     return parser.parse_args()
 
@@ -265,6 +283,9 @@ async def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         reasoning_enabled=args.reasoning,
         reward_weights=reward_weights,
         adapter_factory=adapter_factory,
+        max_encode_dimension=args.max_image_dim,
+        seed=args.seed,
+        max_tokens=args.max_tokens,
     )
 
     sample_results: list[dict[str, Any]] = []

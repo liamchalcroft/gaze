@@ -7,9 +7,7 @@ import pytest
 from radiant_harness.exceptions import HarnessError
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError
-from radiant_harness.retrieval.image_search import ImageSearchEngine
 from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.web_search import SearchEngine
 from radiant_harness.retrieval.web_search import SearchError
 
 
@@ -54,16 +52,6 @@ class TestABCEnforcement:
     def test_cannot_instantiate_base_search_engine(self) -> None:
         with pytest.raises(TypeError, match="abstract method"):
             BaseSearchEngine(name="test")  # type: ignore[abstract]
-
-    def test_cannot_instantiate_search_engine(self) -> None:
-        """SearchEngine leaves _search_impl abstract."""
-        with pytest.raises(TypeError, match="abstract method"):
-            SearchEngine(name="test")  # type: ignore[abstract]
-
-    def test_cannot_instantiate_image_search_engine(self) -> None:
-        """ImageSearchEngine leaves _search_impl abstract."""
-        with pytest.raises(TypeError, match="abstract method"):
-            ImageSearchEngine(name="test")  # type: ignore[abstract]
 
 
 # ---------------------------------------------------------------------------

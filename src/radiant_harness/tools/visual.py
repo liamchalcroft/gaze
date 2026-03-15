@@ -2013,9 +2013,9 @@ def create_visual_tools(
                 name="window_level",
                 description=(
                     "Apply clinical window/level settings. "
-                    "Use preset names (brain, subdural, bone, "
-                    "soft_tissue, stroke, posterior_fossa) "
-                    "or specify center and width."
+                    "Use preset names ("
+                    + ", ".join(sorted(WINDOW_PRESETS.keys()))
+                    + ") or specify center and width."
                 ),
                 parameters={
                     "center": {

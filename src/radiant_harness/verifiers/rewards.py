@@ -320,13 +320,15 @@ class IoUReward(BaseRewardFunction):
     def _extract_bbox(self, completion: Any) -> list[float]:
         """Extract bounding box from completion.
 
-        Searches all top-level JSON objects in the text, not just the first.
-        Models may emit reasoning JSON before the final response that contains
-        the bbox, so we need to check every candidate.
+        Searches all top-level JSON objects in the text and returns the bbox
+        from the LAST matching object.  Models often emit reasoning JSON before
+        the final structured response, so the last bbox is most likely correct.
+        This matches the regex fallback which also takes the last match.
         """
         text = extract_completion_text(completion)
 
-        # Search all JSON objects in the text for one containing a bbox
+        # Search all JSON objects and keep the LAST bbox found
+        last_bbox: list[float] | None = None
         pos = 0
         while pos < len(text):
             start = text.find("{", pos)
@@ -343,11 +345,10 @@ class IoUReward(BaseRewardFunction):
                         try:
                             data = json.loads(json_candidate)
                             if "bbox" in data:
-                                return data["bbox"]
-                            if "location" in data and "bbox" in data["location"]:
-                                return data["location"]["bbox"]
-                            # Also check nested localization structures
-                            if "localization" in data:
+                                last_bbox = data["bbox"]
+                            elif "location" in data and "bbox" in data["location"]:
+                                last_bbox = data["location"]["bbox"]
+                            elif "localization" in data:
                                 loc = data["localization"]
                                 if isinstance(loc, dict):
                                     locs = loc.get("localizations", [])
@@ -356,7 +357,7 @@ class IoUReward(BaseRewardFunction):
                                         if isinstance(first, dict):
                                             bbox = first.get("bounding_box", first.get("bbox"))
                                             if isinstance(bbox, list) and len(bbox) >= 4:
-                                                return [float(x) for x in bbox[:4]]
+                                                last_bbox = [float(x) for x in bbox[:4]]
                         except json.JSONDecodeError as e:
                             logger.debug(
                                 f"IoUReward: JSON parse failed for bbox extraction: {e}. "
@@ -368,6 +369,9 @@ class IoUReward(BaseRewardFunction):
             else:
                 # Unclosed brace — no more valid JSON possible
                 break
+
+        if last_bbox is not None:
+            return last_bbox
 
         # Fallback: regex for [x1, y1, x2, y2] pattern.
         # Use findall and take the LAST match — models often emit reasoning

@@ -53,7 +53,16 @@ pip install -e .
 pip install datasets huggingface-hub
 ```
 
-### 2. Prepare Dataset
+### 2. Obtain MIMIC-CXR Images
+
+The GEMeX dataset references chest X-rays from MIMIC-CXR-JPG, which requires credentialed access:
+
+1. Complete CITI training at [physionet.org/settings/credentialing](https://physionet.org/settings/credentialing/)
+2. Sign the data use agreement at [physionet.org/content/mimic-cxr-jpg/2.1.0](https://physionet.org/content/mimic-cxr-jpg/2.1.0/)
+3. Download via `wget -r -N -c -np --user YOUR_USER --ask-password https://physionet.org/files/mimic-cxr-jpg/2.1.0/`
+4. Pass the root directory as `--image-dir` to the CLI
+
+### 3. Prepare Dataset
 
 The dataset loader automatically handles MIMIC-CXR path resolution:
 
@@ -67,7 +76,7 @@ dataset = GEMeXDataset(
 )
 ```
 
-### 3. Load Environment
+### 4. Load Environment
 
 ```python
 from examples.gemex_thinkvg.src import load_environment
@@ -78,7 +87,7 @@ env = load_environment(
 )
 ```
 
-### 4. Train Model
+### 5. Train Model
 
 ```bash
 python train.py \
@@ -92,7 +101,7 @@ python train.py \
     --bbox-weight 0.3
 ```
 
-### 5. Evaluate
+### 6. Evaluate
 
 ```bash
 uv run python -m examples.gemex_thinkvg.eval \

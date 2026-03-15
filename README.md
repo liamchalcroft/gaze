@@ -16,8 +16,8 @@ A modular framework for building multi-turn agentic vision-language model system
 ## Installation
 
 ```bash
-git clone https://github.com/liamchalcroft/radiant_harness.git
-cd radiant_harness
+git clone https://github.com/liamchalcroft/medical_reasoning_vlm.git
+cd medical_reasoning_vlm
 uv sync
 ```
 
@@ -103,7 +103,7 @@ src/radiant_harness/
     config.py               # Configuration dataclasses
     exceptions.py           # Exception hierarchy
     cache.py                # TTLCache
-    models/                 # AdapterProtocol, OpenAIAdapter, HuggingFaceAdapter
+    models/                 # AdapterProtocol, OpenAIAdapter, LMStudioAdapter, HuggingFaceAdapter
     tools/                  # Tool, ToolRegistry, visual tools, search tools
     retrieval/              # PubMed search, Open-i image search
     prompts/                # Jinja2 template loading
@@ -153,4 +153,4 @@ make check                       # all of the above + lock check + tests
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT License.

@@ -769,20 +769,16 @@ class TestMedicalRelevanceDerived:
         """Article with 5+ entities and abstract should score ~1.0."""
         engine = PubMedSearchEngine()
 
-        xml = """
-        <PubmedArticleSet>
-          <PubmedArticle>
-            <MedlineCitation>
-              <PMID>90001</PMID>
-              <Article>
-                <Abstract>
-                  <AbstractText>Brain MRI shows tumor with edema and enhancement near the cortex and ventricle.</AbstractText>
-                </Abstract>
-              </Article>
-            </MedlineCitation>
-          </PubmedArticle>
-        </PubmedArticleSet>
-        """
+        xml = (
+            "<PubmedArticleSet>"
+            "<PubmedArticle><MedlineCitation>"
+            "<PMID>90001</PMID><Article><Abstract>"
+            "<AbstractText>Brain MRI shows tumor with edema "
+            "and enhancement near the cortex and ventricle."
+            "</AbstractText></Abstract></Article>"
+            "</MedlineCitation></PubmedArticle>"
+            "</PubmedArticleSet>"
+        )
         abstracts = engine._parse_abstracts_xml(xml)
         entities = engine._extract_medical_entities(
             "Brain MRI tumor edema enhancement cortex ventricle"

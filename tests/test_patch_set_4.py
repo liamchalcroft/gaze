@@ -1,4 +1,5 @@
-"""Tests for Patch Set 4: LLM diagnosis judgment logging, evidence-tier reliability, path traversal."""
+"""Tests for Patch Set 4: LLM diagnosis judgment logging,
+evidence-tier reliability, path traversal."""
 
 from __future__ import annotations
 

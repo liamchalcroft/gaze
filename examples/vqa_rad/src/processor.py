@@ -152,6 +152,9 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         reasoning_enabled: bool = False,
         reasoning_effort: str = "high",
         adapter_factory: Callable[[], AdapterProtocol] | None = None,
+        max_encode_dimension: int | None = None,
+        seed: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -161,6 +164,9 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
             adapter_factory=adapter_factory,
+            max_encode_dimension=max_encode_dimension,
+            seed=seed,
+            max_tokens=max_tokens,
         )
 
     def get_reward_function(self) -> BaseRewardFunction:

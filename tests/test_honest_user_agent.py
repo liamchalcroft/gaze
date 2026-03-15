@@ -10,10 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 import radiant_harness
-from radiant_harness.retrieval.image_search import ImageSearchEngine
+from radiant_harness.retrieval.base import BaseSearchEngine
+from radiant_harness.retrieval.base import SearchEngineError
+from radiant_harness.retrieval.image_search import ImageSearchResult
 from radiant_harness.retrieval.image_search import OpenISearchEngine
 from radiant_harness.retrieval.web_search import PubMedSearchEngine
-from radiant_harness.retrieval.web_search import SearchEngine
+from radiant_harness.retrieval.web_search import SearchError
+from radiant_harness.retrieval.web_search import SearchResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,17 +40,25 @@ def _assert_no_browser_headers(headers: dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Concrete stub for ImageSearchEngine (which is abstract)
+# Concrete stub for BaseSearchEngine (image variant)
 # ---------------------------------------------------------------------------
-class _StubImageEngine(ImageSearchEngine):
+class _StubImageEngine(BaseSearchEngine[ImageSearchResult, SearchEngineError]):
     async def _search_impl(self, *_args: Any, **_kwargs: Any) -> list:  # type: ignore[override]
         return []
 
+    def _make_error(
+        self, message: str, original_error: Exception | None = None
+    ) -> SearchEngineError:
+        return SearchEngineError("StubImage", message, original_error)
 
-# Concrete stub for SearchEngine (also abstract)
-class _StubSearchEngine(SearchEngine):
+
+# Concrete stub for BaseSearchEngine (web variant)
+class _StubSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
     async def _search_impl(self, *_args: Any, **_kwargs: Any) -> list:  # type: ignore[override]
         return []
+
+    def _make_error(self, message: str, original_error: Exception | None = None) -> SearchError:
+        return SearchError("StubSearch", message, original_error)
 
 
 # ---------------------------------------------------------------------------

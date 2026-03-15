@@ -117,12 +117,13 @@ class TestSchemaValidatorStrictness:
         }
         assert validate_nova_response(resp) is False
 
-    def test_nova_rejects_non_bool_continue(self) -> None:
+    def test_nova_coerces_string_continue_to_bool(self) -> None:
         from examples.nova.src.schemas import validate_nova_response
 
         resp = _nova_valid_response()
-        resp["continue"] = "false"  # string, not bool
-        assert validate_nova_response(resp) is False
+        resp["continue"] = "false"  # string coerced to bool by coerce_json_types
+        assert validate_nova_response(resp) is True
+        assert resp["continue"] is False
 
     def test_nova_rejects_nan_confidence(self) -> None:
         from examples.nova.src.schemas import validate_nova_response

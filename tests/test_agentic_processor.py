@@ -30,6 +30,7 @@ class FakeAdapter(AdapterProtocol):
         temperature=None,
         tools=None,
         response_format=None,
+        **kwargs,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format  # Unused
         self.calls += 1
@@ -56,6 +57,7 @@ class FailingAdapter(AdapterProtocol):
         temperature=None,
         tools=None,
         response_format=None,
+        **kwargs,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
@@ -171,6 +173,7 @@ class InvalidFinalResponseAdapter(AdapterProtocol):
         temperature=None,
         tools=None,
         response_format=None,
+        **kwargs,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
@@ -275,6 +278,7 @@ class AlwaysToolAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
@@ -296,6 +300,7 @@ class MarkdownJsonAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
@@ -423,6 +428,7 @@ class LastTurnToolAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, response_format
         self.calls += 1
@@ -504,6 +510,7 @@ class PenultimateWarningAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = max_tokens, temperature, tools, response_format
         self.messages_history.append(list(messages or []))
@@ -586,6 +593,7 @@ class MaxTurns1ToolAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = max_tokens, temperature, response_format
         self.messages_history.append(list(messages or []))
@@ -665,6 +673,7 @@ class RecoveringAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = max_tokens, temperature, tools, response_format
         self.messages_history.append(list(messages or []))
@@ -746,7 +755,11 @@ async def test_graceful_tool_failure_lets_model_recover() -> None:
 
 @pytest.mark.asyncio
 async def test_multi_image_tool_limitation_in_prompt() -> None:
-    """When >1 images are provided, system prompt notes tools only affect first."""
+    """When >1 images are provided, system prompt notes tools only affect first.
+
+    Uses max_turns=2 because single-turn mode skips tool registry creation
+    (tools are never offered on the single/last turn), making the warning moot.
+    """
     from PIL import Image as PILImage
 
     adapter = MaxTurns1ToolAdapter()
@@ -757,7 +770,7 @@ async def test_multi_image_tool_limitation_in_prompt() -> None:
                 model_name="test-model",
                 use_tools=True,
                 use_web_search=False,
-                max_turns=1,
+                max_turns=2,
                 adapter_factory=lambda: adapter,
             )
 
@@ -810,6 +823,7 @@ class TimingAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -938,6 +952,7 @@ class StringContinueAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1008,6 +1023,7 @@ class IdleToolAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1086,6 +1102,7 @@ class LastTurnSalvageAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1159,6 +1176,7 @@ class LastTurnNoSalvageAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         # Tool calls + empty text — nothing to salvage
@@ -1238,6 +1256,7 @@ class UnknownToolAdapter(AdapterProtocol):
         temperature=None,
         tools=None,
         response_format=None,
+        **kwargs,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = max_tokens, temperature, tools, response_format
         self.messages_history.append(list(messages or []))
@@ -1399,6 +1418,7 @@ class NonDictJsonAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1465,6 +1485,7 @@ class NonDictJsonLastTurnAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         return (
@@ -1533,6 +1554,7 @@ class TimeoutToolAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1689,6 +1711,7 @@ class MalformedArgsAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
         _ = messages, max_tokens, temperature, tools, response_format
         self.calls += 1
@@ -1778,6 +1801,7 @@ async def test_non_dict_tool_args_returns_error_not_crash() -> None:
             temperature: float | None = None,
             tools: list[dict[str, Any]] | None = None,
             response_format: dict[str, Any] | None = None,
+            **kwargs: Any,
         ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
             _ = messages, max_tokens, temperature, tools, response_format
             self.calls += 1
@@ -1866,6 +1890,7 @@ async def test_failed_coord_tool_does_not_set_coord_space_modified() -> None:
             temperature: float | None = None,
             tools: list[dict[str, Any]] | None = None,
             response_format: dict[str, Any] | None = None,
+            **kwargs: Any,
         ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
             _ = max_tokens, temperature, tools, response_format
             self.last_messages = list(messages or [])
@@ -1984,6 +2009,7 @@ async def test_coord_warning_emitted_without_response_schema() -> None:
             temperature: float | None = None,
             tools: list[dict[str, Any]] | None = None,
             response_format: dict[str, Any] | None = None,
+            **kwargs: Any,
         ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
             _ = max_tokens, temperature, tools, response_format
             self.last_messages = list(messages or [])
@@ -2065,3 +2091,377 @@ async def test_coord_warning_emitted_without_response_schema() -> None:
     final_text = str(final_user_msgs[0]["content"])
     assert "FINAL turn" in final_text
     assert "Do NOT attempt tool calls" in final_text
+
+
+# ── Regression tests for agentic loop audit fixes ────────────────────────
+
+
+class EmptyResponseAdapter(AdapterProtocol):
+    """Returns empty text with no tool calls, then valid JSON."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.messages_history: list[list[dict[str, Any]]] = []
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = max_tokens, temperature, tools, response_format
+        self.messages_history.append(list(messages or []))
+        self.calls += 1
+        if self.calls == 1:
+            # Empty response — triggers nudge
+            return (
+                "",
+                None,
+                GenerationLog(
+                    prompt_tokens=1,
+                    completion_tokens=0,
+                    finish_reason="stop",
+                ),
+            )
+        # Valid response after nudge
+        return (
+            '{"continue": false, "result": "recovered"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_response_assistant_message_has_content_field() -> None:
+    """Fix #1: Assistant messages always include 'content' even when text is empty."""
+    adapter = EmptyResponseAdapter()
+
+    class SimpleProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test",
+                use_tools=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return "result" in response
+
+    processor = SimpleProcessor()
+    result = await processor.analyze()
+    assert result.final_response["result"] == "recovered"
+
+    # Check that the assistant message from the empty turn has 'content'
+    call2_messages = adapter.messages_history[1]
+    assistant_msgs = [m for m in call2_messages if m.get("role") == "assistant"]
+    assert len(assistant_msgs) >= 1
+    # Every assistant message must have 'content' key per OpenAI spec
+    for msg in assistant_msgs:
+        assert "content" in msg, f"Assistant message missing 'content': {msg}"
+
+
+class RepeatedGarbageAdapter(AdapterProtocol):
+    """Returns non-JSON on every turn to test force-finalize escalation."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        return (
+            "I cannot produce JSON",
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=5, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_force_finalize_escalation_raises() -> None:
+    """Fix #3: After _MAX_RECOVERY_NUDGES consecutive failures, raises instead
+    of burning more turns with the same force-finalize message."""
+    adapter = RepeatedGarbageAdapter()
+
+    class GarbageProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test",
+                use_tools=False,
+                max_turns=10,  # Plenty of turns
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return "result" in response
+
+    processor = GarbageProcessor()
+    with pytest.raises(AgenticProcessingError, match="consecutive recovery attempts"):
+        await processor.analyze()
+
+    # Should give up well before using all 10 turns
+    assert adapter.calls < 10
+
+
+@pytest.mark.asyncio
+async def test_single_turn_skips_tool_registry() -> None:
+    """Fix #4: Single-turn mode does not create tool registry."""
+    adapter = MaxTurns1ToolAdapter()
+    registry_created = False
+
+    class TrackingProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test",
+                use_tools=True,
+                max_turns=1,
+                adapter_factory=lambda: adapter,
+            )
+
+        def _create_tool_registry(self, images):
+            nonlocal registry_created
+            registry_created = True
+            return super()._create_tool_registry(images)
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return "result" in response
+
+    processor = TrackingProcessor()
+    result = await processor.analyze()
+    assert result.final_response["result"] == "immediate"
+    assert not registry_created, "Single-turn mode should not create tool registry"
+
+
+class CoerceAdapter(AdapterProtocol):
+    """Returns response with string-typed numbers to test central coercion."""
+
+    supports_multipart_tool_content: bool = True
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        # Return score as string — coerce_json_types should fix this
+        return (
+            '{"continue": false, "result": "ok", "score": "42"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_central_coerce_json_types_before_validation() -> None:
+    """Fix #5: base.py calls coerce_json_types centrally before validation."""
+
+    class CoerceProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test",
+                use_tools=False,
+                max_turns=1,
+                adapter_factory=CoerceAdapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "continue": {"type": "boolean"},
+                            "result": {"type": "string"},
+                            "score": {"type": "integer"},
+                        },
+                        "required": ["continue", "result", "score"],
+                    },
+                },
+            }
+
+        def validate_response(self, response):
+            return (
+                "result" in response and "score" in response and isinstance(response["score"], int)
+            )
+
+    processor = CoerceProcessor()
+    result = await processor.analyze()
+    # Score should have been coerced from "42" to 42 centrally
+    assert result.final_response["score"] == 42
+    assert isinstance(result.final_response["score"], int)
+
+
+@pytest.mark.asyncio
+async def test_confidence_penalizes_nudge_turns() -> None:
+    """Fix #6: Confidence decreases when non-tool assistant turns exceed 1."""
+    from radiant_harness.types import Turn
+
+    class PenaltyProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(model_name="test", use_tools=False, max_turns=1)
+
+        def get_system_prompt(self, images, metadata):
+            return ""
+
+        def get_user_message(self, images, metadata):
+            return ""
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return True
+
+    processor = PenaltyProcessor()
+
+    # 1 non-tool assistant turn (normal) → no penalty
+    turns_1 = [Turn(role="assistant", content="answer")]
+    conf_1 = processor.calculate_confidence({}, turns_1)
+
+    # 3 non-tool assistant turns (2 nudges) → penalty
+    turns_3 = [
+        Turn(role="assistant", content="garbage"),
+        Turn(role="assistant", content="garbage"),
+        Turn(role="assistant", content="answer"),
+    ]
+    conf_3 = processor.calculate_confidence({}, turns_3)
+
+    assert conf_1 == 0.5  # base, no tool bonus, no penalty
+    assert conf_3 < conf_1  # penalty applied
+    assert conf_3 == pytest.approx(0.5 - 0.05 * 2)  # 2 extra non-tool turns
+
+
+# =====================================================================
+# n_ctx detection in truncation error
+# =====================================================================
+
+
+class TruncatedAdapter(AdapterProtocol):
+    """Adapter that simulates a context-limited server (n_ctx < max_tokens)."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self, prompt_tokens: int, completion_tokens: int) -> None:
+        self._prompt_tokens = prompt_tokens
+        self._completion_tokens = completion_tokens
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        return (
+            "",
+            None,
+            GenerationLog(
+                prompt_tokens=self._prompt_tokens,
+                completion_tokens=self._completion_tokens,
+                finish_reason="length",
+            ),
+        )
+
+    async def aclose(self) -> None:
+        pass
+
+
+class TruncatedProcessor(AgenticProcessorBase):
+    """Single-turn processor that always gets a truncated empty response."""
+
+    def __init__(self, prompt_tok: int, comp_tok: int) -> None:
+        super().__init__(
+            model_name="test-model",
+            use_tools=False,
+            use_web_search=False,
+            max_turns=1,
+            adapter_factory=lambda: TruncatedAdapter(prompt_tok, comp_tok),
+            max_tokens=8192,
+        )
+
+    def get_system_prompt(self, images, metadata):
+        return "test"
+
+    def get_user_message(self, images, metadata):
+        return "test"
+
+    def get_response_schema(self):
+        return None
+
+    def validate_response(self, response):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_truncation_error_detects_nctx_limit() -> None:
+    """When completion_tokens << max_tokens, error message should mention n_ctx."""
+    processor = TruncatedProcessor(prompt_tok=2685, comp_tok=1411)
+    with pytest.raises(AgenticProcessingError, match="Server context window"):
+        await processor.analyze(images=None, metadata={})
+    await processor.aclose()
+
+
+@pytest.mark.asyncio
+async def test_truncation_error_max_tokens_hint() -> None:
+    """When completion_tokens ~ max_tokens, error should suggest increasing max_tokens."""
+    processor = TruncatedProcessor(prompt_tok=100, comp_tok=8000)
+    with pytest.raises(AgenticProcessingError, match="Increase max_tokens"):
+        await processor.analyze(images=None, metadata={})
+    await processor.aclose()

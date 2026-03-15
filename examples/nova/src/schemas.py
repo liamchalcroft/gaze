@@ -20,6 +20,7 @@ import math
 from typing import Any
 
 from radiant_harness.utils import clamp_confidence
+from radiant_harness.utils import coerce_json_types
 
 # NOVA Unified Response Schema for all three tasks
 # Fully compliant with OpenAI strict structured outputs:
@@ -242,6 +243,8 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
     required = get_required_fields()
     if not all(field in response for field in required):
         return False
+
+    coerce_json_types(response, NOVA_SCHEMA)
 
     # --- caption ---
     caption = response.get("caption")

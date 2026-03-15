@@ -238,8 +238,9 @@ class ResetTrackingAdapter(AdapterProtocol):
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
-        _ = messages, max_tokens, temperature, tools, response_format
+        _ = messages, max_tokens, temperature, tools, response_format, kwargs
         self.calls += 1
         if self.calls == 1:
             # Call crop (coord-modifying tool)

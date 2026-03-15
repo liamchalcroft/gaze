@@ -74,19 +74,10 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         reasoning_effort: str = "high",
         reward_weights: RewardWeights | None = None,
         adapter_factory: Callable[[], AdapterProtocol] | None = None,
+        max_encode_dimension: int | None = None,
+        seed: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
-        """Initialize GEMeX processor.
-
-        Args:
-            model_name: Model to use for analysis
-            use_tools: Enable visual manipulation tools
-            use_web_search: Enable medical literature search
-            max_turns: Maximum conversation turns
-            reasoning_enabled: Enable model reasoning mode
-            reasoning_effort: Reasoning effort level
-            reward_weights: Custom weights for answer/location/bbox rewards
-            adapter_factory: Optional adapter factory for local or custom endpoints
-        """
         super().__init__(
             model_name=model_name,
             use_tools=use_tools,
@@ -95,6 +86,9 @@ class GEMeXProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
             adapter_factory=adapter_factory,
+            max_encode_dimension=max_encode_dimension,
+            seed=seed,
+            max_tokens=max_tokens,
         )
         self._reward_weights = reward_weights
 

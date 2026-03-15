@@ -29,8 +29,9 @@ class RecordingAdapter(AdapterProtocol):
         temperature=None,
         tools=None,
         response_format=None,
+        **kwargs,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
-        _ = max_tokens, temperature, tools, response_format
+        _ = max_tokens, temperature, tools, response_format, kwargs
         self.messages_history.append(messages or [])
         self.calls += 1
         if self.calls == 1:

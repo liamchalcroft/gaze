@@ -192,7 +192,7 @@ def test_verifiers_optional() -> None:
     from radiant_harness.verifiers import BaseRewardFunction
 
     assert callable(BaseRewardFunction)
-    assert hasattr(BaseRewardFunction, "__call__")
+    assert callable(BaseRewardFunction)
 
 
 class TestToolEnvIntegrations:

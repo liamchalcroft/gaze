@@ -121,6 +121,9 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         reasoning_effort=config.reasoning_effort,
         mode=config.mode,
         adapter_factory=adapter_factory,
+        max_encode_dimension=config.max_image_dim,
+        seed=config.seed,
+        max_tokens=config.max_tokens,
     )
 
     try:
@@ -324,6 +327,10 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "use_tools": config.use_tools,
                     "use_web_search": config.use_web_search,
                     "max_turns": config.max_turns,
+                    "max_tokens": config.max_tokens,
+                    "max_image_dim": config.max_image_dim,
+                    "temperature": 0.0,
+                    "seed": config.seed,
                     "base_url": config.base_url,
                     "lmstudio_models": loaded_models,
                     "diagnosis_judge_model": DEFAULT_SEMANTIC_MATCH_MODEL,
@@ -528,7 +535,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="openai/gpt-4o",
-        help="Model name (OpenRouter format, or local model ID for --base-url)",
+        help="Model name (must support image input; OpenRouter format, or local model ID for --base-url)",
     )
     parser.add_argument(
         "--base-url",
@@ -577,6 +584,24 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help="Maximum agentic turns",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max completion tokens per turn (default: harness default 16384)",
+    )
+    parser.add_argument(
+        "--max-image-dim",
+        type=int,
+        default=None,
+        help="Downscale images so neither side exceeds this many pixels before encoding (reduces context usage for local models)",
+    )
+    parser.add_argument(
+        "--judge-model",
+        type=str,
+        default=None,
+        help="Model for diagnosis semantic matching (default: NOVA_SEMANTIC_MATCH_MODEL env or openai/gpt-5-nano)",
     )
     parser.add_argument(
         "--reasoning",
@@ -638,6 +663,19 @@ def main() -> None:
     else:
         logger.disable("src")
 
+    # Set judge model and base URL before diagnosis module is imported.
+    # When --base-url is provided (local model), auto-configure diagnosis
+    # semantic matching to use the same endpoint unless already set.
+    import os
+
+    if args.judge_model:
+        os.environ["NOVA_SEMANTIC_MATCH_MODEL"] = args.judge_model
+    elif args.base_url and not os.environ.get("NOVA_SEMANTIC_MATCH_MODEL"):
+        os.environ["NOVA_SEMANTIC_MATCH_MODEL"] = args.model
+
+    if args.base_url and not os.environ.get("NOVA_SEMANTIC_MATCH_BASE_URL"):
+        os.environ["NOVA_SEMANTIC_MATCH_BASE_URL"] = args.base_url
+
     # Create configuration
     config = NOVAConfig(
         model_name=args.model,
@@ -654,6 +692,9 @@ def main() -> None:
         batch_size=args.batch_size,
         max_samples=args.max_samples,
         skip_existing=not args.no_skip_existing,
+        max_tokens=args.max_tokens,
+        max_image_dim=args.max_image_dim,
+        seed=args.seed,
     )
 
     # Run evaluation

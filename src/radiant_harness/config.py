@@ -12,6 +12,7 @@ import threading
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextvars import ContextVar
+from contextvars import Token
 from dataclasses import dataclass
 from dataclasses import field
 from types import MappingProxyType
@@ -332,45 +333,6 @@ class RankingWeights:
 
 
 @dataclass(frozen=True)
-class AgenticConfig:
-    """Configuration for agentic processing.
-
-    Attributes:
-        max_turns_limit: Absolute maximum turns allowed (hard limit)
-        default_max_turns: Default max turns if not specified
-        default_max_tokens: Default max tokens per generation
-        default_temperature: Default temperature for generation
-    """
-
-    max_turns_limit: int = 30
-    default_max_turns: int = 10
-    default_max_tokens: int = 16384
-    default_temperature: float = 0.0
-    max_consecutive_nudges: int = 2
-
-    def __post_init__(self) -> None:
-        if self.max_turns_limit < 1:
-            raise ValueError(f"max_turns_limit must be >= 1, got {self.max_turns_limit}")
-        if self.default_max_turns < 1:
-            raise ValueError(f"default_max_turns must be >= 1, got {self.default_max_turns}")
-        if self.default_max_turns > self.max_turns_limit:
-            raise ValueError(
-                f"default_max_turns ({self.default_max_turns}) "
-                f"must be <= max_turns_limit ({self.max_turns_limit})"
-            )
-        if self.default_max_tokens < 1:
-            raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
-        if not 0.0 <= self.default_temperature <= 2.0:
-            raise ValueError(
-                f"default_temperature must be between 0.0 and 2.0, got {self.default_temperature}"
-            )
-        if self.max_consecutive_nudges < 1:
-            raise ValueError(
-                f"max_consecutive_nudges must be >= 1, got {self.max_consecutive_nudges}"
-            )
-
-
-@dataclass(frozen=True)
 class HarnessConfig:
     """Root configuration for the radiant harness.
 
@@ -396,7 +358,6 @@ class HarnessConfig:
     cache: CacheConfig = field(default_factory=CacheConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     ranking: RankingWeights = field(default_factory=RankingWeights)
-    agentic: AgenticConfig = field(default_factory=AgenticConfig)
 
 
 class _ConfigHolder:
@@ -427,12 +388,12 @@ class _ConfigHolder:
             cls._config = config
 
     @classmethod
-    def set_context(cls, config: HarnessConfig):
+    def set_context(cls, config: HarnessConfig) -> Token[HarnessConfig | None]:
         """Set a context-local configuration override."""
         return cls._context_config.set(config)
 
     @classmethod
-    def reset_context(cls, token) -> None:
+    def reset_context(cls, token: Token[HarnessConfig | None]) -> None:
         """Reset the current context-local override."""
         cls._context_config.reset(token)
 

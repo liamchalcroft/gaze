@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
 from typing import Generic
 from typing import Protocol
 from typing import TypeVar
@@ -24,7 +23,7 @@ T = TypeVar("T")
 
 @runtime_checkable
 class _SupportsClose(Protocol):
-    def close(self) -> Any: ...
+    def close(self) -> object: ...
 
 
 class TTLCache(Generic[T]):

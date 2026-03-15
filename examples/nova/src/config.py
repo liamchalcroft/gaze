@@ -42,6 +42,10 @@ class NOVAConfig:
     reasoning_effort: str = "high"
     mode: Literal["agentic", "single_turn"] = "agentic"
 
+    max_tokens: int | None = None  # Override harness default_max_tokens
+    max_image_dim: int | None = None  # Downscale images before encoding
+    seed: int | None = None  # Random seed for reproducibility
+
     # NOVA-specific settings
     task: TaskType = TaskType.ALL
     data_dir: Path | None = None  # Local CSV dir; None = load from HuggingFace

@@ -73,21 +73,10 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         confidence_config: ConfidenceConfig = DEFAULT_CONFIDENCE_CONFIG,
         mode: Literal["agentic", "single_turn"] = "agentic",
         adapter_factory: Callable[[], AdapterProtocol] | None = None,
+        max_encode_dimension: int | None = None,
+        seed: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
-        """Initialize NOVA processor.
-
-        Args:
-            model_name: Model to use for analysis
-            use_tools: Enable visual manipulation tools
-            use_web_search: Enable medical literature search
-            max_turns: Maximum conversation turns
-            reasoning_enabled: Enable model reasoning mode
-            reasoning_effort: Reasoning effort level
-            task: NOVA task type for reward computation
-            confidence_config: Configuration for confidence calculations
-            mode: Prompt mode — "agentic" for multi-turn or "single_turn"
-            adapter_factory: Optional factory for custom model adapter (e.g. LMStudioAdapter)
-        """
         super().__init__(
             model_name=model_name,
             use_tools=use_tools,
@@ -96,6 +85,9 @@ class NOVAAgenticProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             reasoning_enabled=reasoning_enabled,
             reasoning_effort=reasoning_effort,
             adapter_factory=adapter_factory,
+            max_encode_dimension=max_encode_dimension,
+            seed=seed,
+            max_tokens=max_tokens,
         )
         self._task = task
         self._confidence_config = confidence_config

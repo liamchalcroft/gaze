@@ -105,8 +105,29 @@ class LMStudioAdapter(OpenAIAdapter):
         Overrides the parent's 5-retry strategy.  For LM Studio, timeouts
         typically mean the model is too large or OOM — retrying just wastes
         minutes.
+
+        Detects context window overflow (common with local models that have
+        small context windows) and raises a clear error.
         """
-        return await self.client.chat.completions.create(**kwargs)
+        from openai import BadRequestError
+
+        try:
+            return await self.client.chat.completions.create(**kwargs)
+        except BadRequestError as exc:
+            msg = str(exc).lower()
+            if (
+                "context size" in msg
+                or "context length" in msg
+                or "maximum context" in msg
+                or "n_ctx" in msg
+                or "n_keep" in msg
+            ):
+                raise ModelError(
+                    f"Context window exceeded for model {self.model_name!r}. "
+                    f"Reduce input length or use a model with a larger context window.",
+                    model_name=self.model_name,
+                ) from exc
+            raise
 
     @beartype
     async def generate_chat(
@@ -117,6 +138,7 @@ class LMStudioAdapter(OpenAIAdapter):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        seed: int | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
         """Generate chat completion, stripping ``response_format``.
 
@@ -134,6 +156,7 @@ class LMStudioAdapter(OpenAIAdapter):
             tools=tools,
             response_format=None,
             stream=stream,
+            seed=seed,
         )
 
     async def list_models(self) -> list[dict[str, Any]]:
@@ -191,8 +214,15 @@ async def require_lmstudio_model(
     base_url: str | None = None,
     *,
     timeout: float = 10.0,
+    health_check: bool = True,
 ) -> list[str]:
-    """Fail fast when the requested model is not available in LM Studio."""
+    """Fail fast when the requested model is not available in LM Studio.
+
+    When *health_check* is True (default), a 1-token completion is attempted
+    after verifying the model ID is listed.  LM Studio lists all available
+    models but only loads them on demand — this catches OOM failures that
+    ``/v1/models`` alone cannot detect.
+    """
     model_ids = await list_lmstudio_model_ids(base_url=base_url, timeout=timeout)
     if model_name not in model_ids:
         available = ", ".join(model_ids) if model_ids else "<none>"
@@ -200,4 +230,38 @@ async def require_lmstudio_model(
             f"Model {model_name!r} is not loaded in LM Studio. Available models: {available}",
             model_name=model_name,
         )
+
+    if health_check:
+        resolved_url = base_url or os.getenv("LMSTUDIO_BASE_URL", _DEFAULT_BASE_URL)
+        try:
+            async with httpx.AsyncClient(timeout=max(timeout, 60.0)) as client:
+                resp = await client.post(
+                    f"{resolved_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {_DEFAULT_API_KEY}"},
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                )
+                if resp.status_code == 400:
+                    body = resp.json()
+                    err_msg = body.get("error", {}).get("message", resp.text)
+                    if "insufficient" in err_msg.lower() or "failed to load" in err_msg.lower():
+                        raise ModelError(
+                            f"Model {model_name!r} is listed but cannot be loaded "
+                            f"(likely insufficient memory): {err_msg}",
+                            model_name=model_name,
+                        )
+                resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ModelError(
+                f"Health check failed for {model_name!r}: HTTP {exc.response.status_code}",
+                model_name=model_name,
+            ) from exc
+        except httpx.TimeoutException:
+            logger.warning(
+                f"Health check timed out for {model_name!r} (may be loading for the first time)"
+            )
+
     return model_ids

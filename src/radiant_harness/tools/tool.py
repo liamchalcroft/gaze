@@ -38,12 +38,25 @@ class Tool:
         self.category = category
         self._prompt_documentation = prompt_documentation
 
-    def get_prompt_documentation(self) -> str:
+    def get_prompt_documentation(self, *, compact: bool = False) -> str:
         """Generate documentation for prompt inclusion.
 
-        Returns custom prompt_documentation if provided, otherwise generates
-        documentation from the tool's description and parameters.
+        Args:
+            compact: If True, emit a single-line summary per tool to reduce
+                token overhead for small-context models.
+
+        Returns custom prompt_documentation if provided (unless compact),
+        otherwise generates documentation from the tool's description and
+        parameters.
         """
+        if compact:
+            params = ", ".join(
+                f"{p}:{info.get('type', '?')}"
+                for p, info in self.parameters.items()
+                if "default" not in info
+            )
+            return f"- {self.name}({params}): {self.description}"
+
         if self._prompt_documentation:
             return self._prompt_documentation
 

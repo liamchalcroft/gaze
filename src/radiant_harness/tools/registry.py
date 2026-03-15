@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from radiant_harness.retrieval.web_search import WebSearchManager
 
 # Valid JSON Schema types for tool parameters
-VALID_PARAM_TYPES = {"string", "number", "integer", "boolean", "array", "object", "null"}
+_VALID_PARAM_TYPES = {"string", "number", "integer", "boolean", "array", "object", "null"}
 
 
 @dataclass(frozen=True)
@@ -184,10 +184,12 @@ class ToolDocumenter:
                     raise ValueError(
                         f"Tool '{tool.name}' parameter '{param_name}' is missing required 'type'"
                     )
-                if param_type not in VALID_PARAM_TYPES:
+                if param_type not in _VALID_PARAM_TYPES:
                     raise ValueError(
-                        f"Tool '{tool.name}' parameter '{param_name}' has invalid type '{param_type}'. "
-                        f"Must be one of: {', '.join(sorted(VALID_PARAM_TYPES))}"
+                        f"Tool '{tool.name}' parameter "
+                        f"'{param_name}' has invalid type "
+                        f"'{param_type}'. Must be one of: "
+                        f"{', '.join(sorted(_VALID_PARAM_TYPES))}"
                     )
 
                 prop: dict[str, Any] = {"type": param_type}
@@ -261,6 +263,7 @@ class ToolDocumenter:
         group_by_category: bool = True,
         include_categories: set[str] | None = None,
         exclude_categories: set[str] | None = None,
+        compact: bool = False,
     ) -> str:
         """Generate prompt documentation for all registered tools.
 
@@ -271,6 +274,8 @@ class ToolDocumenter:
             group_by_category: If True, group tools by category with headers
             include_categories: If set, only include tools from these categories
             exclude_categories: If set, exclude tools from these categories
+            compact: If True, emit one-line-per-tool summaries to reduce token
+                overhead for small-context models (<=8K).
 
         Returns:
             Formatted documentation string for system prompts
@@ -297,12 +302,15 @@ class ToolDocumenter:
 
                 # Category header
                 category_title = category.replace("_", " ").title()
-                sections.append(f"**{category_title} Tools:**\n")
+                sections.append(
+                    f"**{category_title} Tools:**\n" if not compact else f"[{category_title}]"
+                )
 
                 # Tool documentation
                 for tool in sorted(tools, key=lambda t: t.name):
-                    sections.append(tool.get_prompt_documentation())
-                    sections.append("")  # Blank line between tools
+                    sections.append(tool.get_prompt_documentation(compact=compact))
+                    if not compact:
+                        sections.append("")  # Blank line between tools
         else:
             # Flat list without categories
             tools = list(self._tools.values())
@@ -314,8 +322,9 @@ class ToolDocumenter:
                 tools = [t for t in tools if (t.category or "other") not in exclude_categories]
 
             for tool in sorted(tools, key=lambda t: t.name):
-                sections.append(tool.get_prompt_documentation())
-                sections.append("")
+                sections.append(tool.get_prompt_documentation(compact=compact))
+                if not compact:
+                    sections.append("")
 
         return "\n".join(sections).strip()
 
@@ -464,12 +473,19 @@ class ToolRegistry:
                 if isinstance(val, float) and not isinstance(val, bool) and val == int(val):
                     kwargs[param_name] = int(val)
 
-            # Coerce elements inside "array" params whose items are "number"
+            # Coerce elements inside "array" params whose items are "number" or "integer"
             elif param_type == "array" and isinstance(val, list):
                 items_type = param_info.get("items", {}).get("type")
                 if items_type == "number":
                     kwargs[param_name] = [
                         float(v) if isinstance(v, int) and not isinstance(v, bool) else v
+                        for v in val
+                    ]
+                elif items_type == "integer":
+                    kwargs[param_name] = [
+                        int(v)
+                        if isinstance(v, float) and not isinstance(v, bool) and v == int(v)
+                        else v
                         for v in val
                     ]
 

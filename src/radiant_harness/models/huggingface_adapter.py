@@ -129,7 +129,10 @@ def _inject_json_mode(
     if response_format is not None:
         schema_obj = response_format.get("json_schema", {}).get("schema")
         if schema_obj is not None:
-            instruction += f"\n\nYou must conform to this JSON schema:\n```json\n{json.dumps(schema_obj, indent=2)}\n```"
+            instruction += (
+                "\n\nYou must conform to this JSON schema:\n```json\n"
+                f"{json.dumps(schema_obj, indent=2)}\n```"
+            )
 
     messages = [dict(m) for m in messages]
 
@@ -339,6 +342,7 @@ class HuggingFaceAdapter(AdapterProtocol):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        seed: int | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
         """Generate a chat completion using the HuggingFace model.
 
@@ -349,6 +353,7 @@ class HuggingFaceAdapter(AdapterProtocol):
             tools: Tool definitions (handled via prompt engineering)
             response_format: Structured response format (not supported)
             stream: Not supported; raises ModelError if True
+            seed: Random seed for reproducibility (sets torch manual seed)
 
         Returns:
             Tuple of (content, tool_calls, generation_log).
@@ -403,7 +408,11 @@ class HuggingFaceAdapter(AdapterProtocol):
             "use_cache": True,
         }
 
+        _seed = seed
+
         def _run_generate():
+            if _seed is not None:
+                torch.manual_seed(_seed)
             with torch.inference_mode():
                 if torch.cuda.is_available():
                     with torch.amp.autocast("cuda"):
@@ -518,6 +527,23 @@ class HuggingFaceAdapter(AdapterProtocol):
         clean_content = _TOOL_CALL_BLOCK_RE.sub("", content).strip()
 
         return tool_calls if tool_calls else None, clean_content
+
+    async def aclose(self) -> None:
+        """Release model and tokenizer to free GPU/CPU memory."""
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._torch = None
+        try:
+            import torch  # pyright: ignore[reportMissingImports]
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
 
 class HuggingFaceVLMAdapter(HuggingFaceAdapter):
@@ -651,6 +677,7 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        seed: int | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
         """Generate a chat completion with image support.
 
@@ -719,7 +746,11 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
             "use_cache": True,
         }
 
+        _seed = seed
+
         def _run_vlm_generate():
+            if _seed is not None:
+                torch.manual_seed(_seed)
             with torch.inference_mode():
                 if torch.cuda.is_available():
                     with torch.amp.autocast("cuda"):
@@ -814,3 +845,12 @@ class HuggingFaceVLMAdapter(HuggingFaceAdapter):
                     continue
 
         return images
+
+    async def aclose(self) -> None:
+        """Release model, processor, and image cache to free GPU/CPU memory."""
+        # Close cached images before clearing
+        for img in self._decoded_image_cache.values():
+            img.close()
+        self._decoded_image_cache.clear()
+        self._processor = None
+        await super().aclose()

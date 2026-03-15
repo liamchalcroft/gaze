@@ -4,8 +4,8 @@
 
 1. Fork and clone:
    ```bash
-   git clone https://github.com/your-username/radiant_harness.git
-   cd radiant_harness
+   git clone https://github.com/your-username/medical_reasoning_vlm.git
+   cd medical_reasoning_vlm
    ```
 
 2. Install:

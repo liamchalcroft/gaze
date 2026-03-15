@@ -12,10 +12,8 @@ import pytest
 from PIL import Image
 
 try:
-    from radiant_harness.verifiers.mixin import (
-        _image_file_to_data_url,
-        _safe_resolve_image_path,
-    )
+    from radiant_harness.verifiers.mixin import _image_file_to_data_url
+    from radiant_harness.verifiers.mixin import _safe_resolve_image_path
 
     _HAS_VERIFIERS = True
 except ImportError:

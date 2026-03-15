@@ -11,6 +11,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from radiant_harness.utils import clamp_confidence
+from radiant_harness.utils import coerce_json_types
+
 GEMEX_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
@@ -64,17 +67,12 @@ GEMEX_SCHEMA: dict[str, Any] = {
 
 
 def validate_gemex_response(response: dict[str, Any]) -> bool:
-    """Validate that a response has required GEMeX fields.
-
-    Args:
-        response: Parsed JSON response
-
-    Returns:
-        True if all required fields present and valid
-    """
+    """Validate that a response has required GEMeX fields."""
     required = ["reasoning", "answer", "location", "confidence"]
     if not all(field in response for field in required):
         return False
+
+    coerce_json_types(response, GEMEX_SCHEMA)
 
     # Validate location structure
     location = response.get("location", {})
@@ -83,38 +81,23 @@ def validate_gemex_response(response: dict[str, Any]) -> bool:
     if "reference" not in location or "bbox" not in location:
         return False
 
-    # Validate bbox format
+    # Validate bbox format and coordinate ordering
     bbox = location.get("bbox", [])
     if not isinstance(bbox, list) or len(bbox) != 4:
         return False
-    coerced_bbox: list[int] = []
-    for value in bbox:
-        if isinstance(value, str):
-            try:
-                coerced_bbox.append(int(float(value)))
-            except ValueError:
-                return False
-            continue
-        if isinstance(value, int | float):
-            coerced_bbox.append(int(value))
-            continue
+    for i, v in enumerate(bbox):
+        if not isinstance(v, (int, float)):
+            return False
+        bbox[i] = int(v)
+    if not all(isinstance(v, int) for v in bbox):
         return False
-    location["bbox"] = coerced_bbox
-    bbox = coerced_bbox
-    # Check coordinate ordering (x2 > x1, y2 > y1)
     if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
         return False
 
-    # Validate confidence range
-    confidence = response.get("confidence")
-    if isinstance(confidence, str):
-        try:
-            confidence = float(confidence)
-            response["confidence"] = confidence
-        except ValueError:
-            return False
-    if not isinstance(confidence, int | float) or not 0 <= confidence <= 1:
+    clamped = clamp_confidence(response.get("confidence"))
+    if clamped is None:
         return False
+    response["confidence"] = clamped
 
     return bool(response.get("answer"))
 
@@ -130,25 +113,16 @@ def parse_thinkvg_response(response_text: str) -> dict[str, Any] | None:
             <box>[x1, y1, x2, y2]</box>
         </location>
     </response>
-
-    Args:
-        response_text: Raw response text possibly containing XML
-
-    Returns:
-        Parsed response dict or None if parsing fails
     """
-    # Try to extract XML response block
     response_match = re.search(r"<response>(.*?)</response>", response_text, re.DOTALL)
     if not response_match:
         return None
 
     content = response_match.group(1)
 
-    # Extract answer
     answer_match = re.search(r"<answer>(.*?)</answer>", content, re.DOTALL)
     answer = answer_match.group(1).strip() if answer_match else ""
 
-    # Extract location
     location_match = re.search(r"<location>(.*?)</location>", content, re.DOTALL)
     location = {}
     if location_match:

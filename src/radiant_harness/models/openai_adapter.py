@@ -136,7 +136,8 @@ class OpenAIAdapter(AdapterProtocol):
             api_key = openai_key or openrouter_key
             if not api_key:
                 raise ModelError(
-                    "No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY environment variable",
+                    "No API key found. Set OPENAI_API_KEY or "
+                    "OPENROUTER_API_KEY environment variable",
                     model_name=self.model_name,
                 )
 
@@ -185,6 +186,7 @@ class OpenAIAdapter(AdapterProtocol):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        seed: int | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]:
         """Call OpenAI chat completions with optional tool calling."""
         # Build request kwargs - only include optional params if they have values
@@ -194,6 +196,9 @@ class OpenAIAdapter(AdapterProtocol):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+
+        if seed is not None:
+            kwargs["seed"] = seed
 
         if tools is not None:
             kwargs["tools"] = tools
@@ -269,7 +274,8 @@ class OpenAIAdapter(AdapterProtocol):
         )
 
         logger.debug(
-            f"OpenAI completion finished with reason={choice.finish_reason}, tokens={gen_log.tokens}"
+            f"OpenAI completion finished with "
+            f"reason={choice.finish_reason}, tokens={gen_log.tokens}"
         )
 
         return content, tool_calls, gen_log

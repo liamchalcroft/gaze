@@ -79,6 +79,9 @@ def normalize_medical_text(text: str) -> str:
 def compute_token_overlap(pred: str, ref: str) -> float:
     """Compute token-level overlap between prediction and reference.
 
+    Uses Counter-based (multiset) intersection so that repeating tokens
+    dilutes precision, matching the NOVA and core TokenF1Reward implementations.
+
     Args:
         pred: Predicted answer (normalized)
         ref: Reference answer (normalized)
@@ -86,19 +89,26 @@ def compute_token_overlap(pred: str, ref: str) -> float:
     Returns:
         F1-style overlap score (0.0-1.0)
     """
-    pred_tokens = set(pred.split())
-    ref_tokens = set(ref.split())
+    from collections import Counter
 
-    if not pred_tokens or not ref_tokens:
-        return 1.0 if pred_tokens == ref_tokens else 0.0
+    pred_counts = Counter(pred.split())
+    ref_counts = Counter(ref.split())
 
-    common = pred_tokens & ref_tokens
+    pred_total = sum(pred_counts.values())
+    ref_total = sum(ref_counts.values())
 
-    if not common:
+    if not pred_total and not ref_total:
+        return 1.0
+    if not pred_total or not ref_total:
         return 0.0
 
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(ref_tokens)
+    intersection = sum((pred_counts & ref_counts).values())
+
+    if intersection == 0:
+        return 0.0
+
+    precision = intersection / pred_total
+    recall = intersection / ref_total
 
     return 2 * precision * recall / (precision + recall)
 

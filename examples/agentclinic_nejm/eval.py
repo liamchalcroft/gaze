@@ -12,14 +12,15 @@ from typing import Any
 
 from loguru import logger
 
-from examples.agentclinic_nejm.src.environment import _brace_content
-from examples.agentclinic_nejm.src.environment import accuracy_reward
-from examples.agentclinic_nejm.src.environment import combined_reward
-from examples.agentclinic_nejm.src.environment import load_environment
 from radiant_harness import LMStudioAdapter
 from radiant_harness import OpenAIAdapter
 from radiant_harness import require_lmstudio_model
 from radiant_harness.verifiers import TokenF1Reward
+
+from .src.environment import _brace_content
+from .src.environment import accuracy_reward
+from .src.environment import combined_reward
+from .src.environment import load_environment
 
 
 def _parse_args() -> argparse.Namespace:
@@ -50,7 +51,7 @@ def _parse_args() -> argparse.Namespace:
         default=Path("./results"),
         help="Directory for summary output",
     )
-    parser.add_argument("--max-tokens", type=int, default=512, help="Maximum completion tokens")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum completion tokens")
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument(
         "--reasoning", action="store_true", help="Enable reasoning mode for OpenAI/OpenRouter"
@@ -80,6 +81,33 @@ def _requested_information(text: str) -> bool:
                 "image",
                 "photo",
                 "picture",
+                "diagnos",
+                "finding",
+                "scan",
+                "blood",
+                "urin",
+                "biopsy",
+                "patholog",
+                "radiol",
+                "ultrasound",
+                "ecg",
+                "ekg",
+                "echocardiog",
+                "endoscop",
+                "vital",
+                "temperature",
+                "pressure",
+                "pulse",
+                "present",
+                "complain",
+                "onset",
+                "pain",
+                "medication",
+                "allerg",
+                "family",
+                "surgical",
+                "previous",
+                "chronic",
             ]
         )
     )
@@ -146,6 +174,13 @@ async def _run_case(
             response_format=None,
         )
         total_tokens += generation.tokens
+
+        if generation.finish_reason == "length" and not response_text.strip():
+            logger.warning(
+                f"Turn {turn_idx + 1}: finish_reason=length with empty content "
+                f"(max_tokens={max_tokens} may be too low for thinking model)"
+            )
+
         final_text = response_text
         messages.append({"role": "assistant", "content": response_text})
 

@@ -431,7 +431,8 @@ class TestSchemaValidation:
         }
         assert validate_vqa_rad_response(response) is False
 
-    def test_confidence_out_of_range_fails(self) -> None:
+    def test_confidence_out_of_range_clamped(self) -> None:
+        """Out-of-range confidence is clamped to 1.0 (not rejected)."""
         response = {
             "answer": "yes",
             "answer_type": "closed",
@@ -441,7 +442,8 @@ class TestSchemaValidation:
             "region_of_interest": {"description": "x", "location": "y"},
             "continue": False,
         }
-        assert validate_vqa_rad_response(response) is False
+        assert validate_vqa_rad_response(response) is True
+        assert response["confidence"] == 1.0
 
 
 # ---------------------------------------------------------------------------

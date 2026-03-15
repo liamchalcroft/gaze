@@ -247,10 +247,11 @@ class TestSchemaValidationSafety:
         resp["localization"] = {"image_dimensions": {"width": 256, "height": 256}}
         assert validate_nova_response(resp) is False
 
-    def test_continue_not_bool(self) -> None:
+    def test_continue_string_coerced_to_bool(self) -> None:
         resp = _make_valid_response()
-        resp["continue"] = "false"
-        assert validate_nova_response(resp) is False
+        resp["continue"] = "false"  # coerce_json_types converts to bool
+        assert validate_nova_response(resp) is True
+        assert resp["continue"] is False
 
     def test_continue_true_is_valid(self) -> None:
         resp = _make_valid_response()
@@ -479,21 +480,26 @@ class TestSchemaValidationBoundingBox:
 class TestSchemaValidationConfidence:
     """Verify confidence must be a finite number in [0.0, 1.0]."""
 
-    def test_confidence_above_one_rejected(self) -> None:
+    def test_confidence_above_one_clamped(self) -> None:
+        """Out-of-range confidence is clamped to 1.0 (not rejected)."""
         resp = _make_valid_response()
         resp["localization"]["localizations"][0]["confidence"] = 1.5
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["localization"]["localizations"][0]["confidence"] == 1.0
 
-    def test_confidence_negative_rejected(self) -> None:
+    def test_confidence_negative_clamped(self) -> None:
+        """Negative confidence is clamped to 0.0 (not rejected)."""
         resp = _make_valid_response()
         resp["localization"]["localizations"][0]["confidence"] = -0.1
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["localization"]["localizations"][0]["confidence"] == 0.0
 
-    def test_confidence_ninety_nine_rejected(self) -> None:
-        """Model outputting confidence: 99.0 (percentage) must be caught."""
+    def test_confidence_ninety_nine_clamped(self) -> None:
+        """Model outputting confidence: 99.0 (percentage) is clamped to 1.0."""
         resp = _make_valid_response()
         resp["localization"]["localizations"][0]["confidence"] = 99.0
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["localization"]["localizations"][0]["confidence"] == 1.0
 
     def test_confidence_nan_rejected(self) -> None:
         resp = _make_valid_response()
@@ -521,15 +527,19 @@ class TestSchemaValidationConfidence:
         resp["localization"]["localizations"][0]["confidence"] = 1.0
         assert validate_nova_response(resp) is True
 
-    def test_caption_confidence_above_one_rejected(self) -> None:
+    def test_caption_confidence_above_one_clamped(self) -> None:
+        """Caption confidence > 1.0 is clamped to 1.0."""
         resp = _make_valid_response()
         resp["caption"]["confidence"] = 5.0
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["caption"]["confidence"] == 1.0
 
-    def test_diagnosis_confidence_above_one_rejected(self) -> None:
+    def test_diagnosis_confidence_above_one_clamped(self) -> None:
+        """Diagnosis confidence > 1.0 is clamped to 1.0."""
         resp = _make_valid_response()
         resp["diagnosis"]["confidence"] = 2.0
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["diagnosis"]["confidence"] == 1.0
 
     def test_caption_confidence_required(self) -> None:
         """confidence is required in caption — missing should fail."""
@@ -551,12 +561,14 @@ class TestSchemaValidationDifferentialDiagnoses:
         resp["diagnosis"]["differential_diagnoses"] = [{"diagnosis": "meningioma"}]
         assert validate_nova_response(resp) is False
 
-    def test_diff_confidence_above_one_rejected(self) -> None:
+    def test_diff_confidence_above_one_clamped(self) -> None:
+        """Differential diagnosis confidence > 1.0 is clamped to 1.0."""
         resp = _make_valid_response()
         resp["diagnosis"]["differential_diagnoses"] = [
             {"diagnosis": "meningioma", "confidence": 1.5}
         ]
-        assert validate_nova_response(resp) is False
+        assert validate_nova_response(resp) is True
+        assert resp["diagnosis"]["differential_diagnoses"][0]["confidence"] == 1.0
 
     def test_diff_not_a_dict_rejected(self) -> None:
         resp = _make_valid_response()
@@ -587,10 +599,11 @@ class TestSchemaValidationEvidence:
         resp["diagnosis"]["evidence"] = ["ring enhancement", 42]
         assert validate_nova_response(resp) is False
 
-    def test_evidence_not_a_list_rejected(self) -> None:
+    def test_evidence_string_coerced_to_list(self) -> None:
         resp = _make_valid_response()
-        resp["diagnosis"]["evidence"] = "ring enhancement"
-        assert validate_nova_response(resp) is False
+        resp["diagnosis"]["evidence"] = "ring enhancement"  # coerce_json_types wraps to list
+        assert validate_nova_response(resp) is True
+        assert resp["diagnosis"]["evidence"] == ["ring enhancement"]
 
     def test_evidence_empty_list_passes(self) -> None:
         resp = _make_valid_response()

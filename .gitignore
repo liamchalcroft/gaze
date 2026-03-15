@@ -306,3 +306,6 @@ data/nova/**/nova-*.arrow
 scratch/
 sandbox/
 debug_*
+
+# Agent session data
+.claude/

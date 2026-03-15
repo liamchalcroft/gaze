@@ -44,8 +44,7 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
     try:
         result = json.loads(text)
         if isinstance(result, dict):
-            typed_direct: dict[str, Any] = result
-            return typed_direct
+            return result
         return None
     except json.JSONDecodeError:
         pass
@@ -59,8 +58,7 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
         try:
             result, _ = decoder.raw_decode(text, i)
             if isinstance(result, dict):
-                typed_decoded: dict[str, Any] = result
-                return typed_decoded
+                return result
         except json.JSONDecodeError:
             continue
 

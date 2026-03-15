@@ -165,8 +165,9 @@ class CoordTrackingAdapter(AdapterProtocol):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        **kwargs: Any,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
-        _ = max_tokens, temperature, tools, response_format, stream
+        _ = max_tokens, temperature, tools, response_format, stream, kwargs
         self.messages_history.append(list(messages or []))
         self.calls += 1
 

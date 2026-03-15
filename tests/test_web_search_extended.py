@@ -13,13 +13,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.retrieval.web_search import (
-    PubMedSearchEngine,
-    SearchError,
-    SearchResult,
-    WebSearchManager,
-)
-
+from radiant_harness.retrieval.web_search import PubMedSearchEngine
+from radiant_harness.retrieval.web_search import SearchError
+from radiant_harness.retrieval.web_search import SearchResult
+from radiant_harness.retrieval.web_search import WebSearchManager
 
 # ---------------------------------------------------------------------------
 # Reliability scoring — .edu, .gov, publisher domains (lines 112-123)
@@ -78,15 +75,15 @@ def _make_result(
     medical_relevance: float = 0.9,
     **kwargs: Any,
 ) -> SearchResult:
-    defaults = dict(
-        content="content",
-        snippet="snippet",
-        source="pubmed",
-        reliability_score=0.9,
-        content_type="article",
-        extracted_entities=(),
-    )
-    defaults.update(kwargs)
+    defaults = {
+        "content": "content",
+        "snippet": "snippet",
+        "source": "pubmed",
+        "reliability_score": 0.9,
+        "content_type": "article",
+        "extracted_entities": (),
+        **kwargs,
+    }
     return SearchResult(title=title, url=url, medical_relevance=medical_relevance, **defaults)
 
 

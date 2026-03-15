@@ -53,7 +53,8 @@ class TestSchemaStrictCompliance:
         assert not missing, f"Properties not in required (strict mode violation): {missing}"
 
     def test_reasoning_removed_from_schema(self) -> None:
-        """'reasoning' should not be in properties or required (removed to fix strict mode issues)."""
+        """'reasoning' should not be in properties or required
+        (removed to fix strict mode issues)."""
         schema = self._get_inner_schema()
         assert "reasoning" not in schema.get("properties", {})
         assert "reasoning" not in schema.get("required", [])

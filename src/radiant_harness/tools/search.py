@@ -70,7 +70,8 @@ async def _execute_search_web(
         lines = [
             f"{i}. **{result.title}**",
             f"   **Source:** {result.source} (Reliability: {result.reliability_score:.2f})",
-            f"   **Type:** {result.content_type} | **Open Access:** {'Yes' if result.open_access else 'No'}",
+            f"   **Type:** {result.content_type}"
+            f" | **Open Access:** {'Yes' if result.open_access else 'No'}",
         ]
         if result.publication_date:
             lines.append(f"   **Date:** {result.publication_date}")
@@ -116,8 +117,8 @@ async def _execute_search_web(
 async def _execute_search_images(
     registry: ToolRegistry,
     query: str,
-    modality: str | None = None,
-    body_part: str | None = None,
+    modality: str = "any",
+    body_part: str = "any",
 ) -> ToolResult:
     """Search NIH Open-i for reference medical images."""
     modality_filter = None if modality == "any" else modality
@@ -171,7 +172,8 @@ async def _execute_search_images(
         lines = [
             f"{i}. **{result.title}**",
             f"   **Source:** {result.source} (Reliability: {result.reliability_score:.2f})",
-            f"   **Modality:** {result.modality or 'Unknown'} | **Body Part:** {result.body_part or 'Unknown'}",
+            f"   **Modality:** {result.modality or 'Unknown'}"
+            f" | **Body Part:** {result.body_part or 'Unknown'}",
         ]
         if result.caption:
             caption_preview = result.caption[:max_preview] + (
@@ -211,23 +213,35 @@ async def _execute_search_images(
 
 
 # Prompt documentation for search tools
-SEARCH_WEB_PROMPT_DOC = """
-**search_web** - Search PubMed for medical literature and evidence
-  - Parameter `query` (string): Medical search terms (e.g., "glioblastoma MRI imaging characteristics")
-  - Parameter `search_type` (string): One of "diagnosis", "guidelines", "research", "anatomy", "treatment", "differential", "general"
-  - Use for: Verifying findings, accessing diagnostic criteria, researching conditions
-  - Returns: Article titles, abstracts, publication info, and reliability scores
-  - Tip: Include condition name, imaging modality, and specific findings in query
-""".strip()
+SEARCH_WEB_PROMPT_DOC = (
+    "**search_web** - Search PubMed for medical literature and evidence\n"
+    "  - Parameter `query` (string): Medical search terms "
+    '(e.g., "glioblastoma MRI imaging characteristics")\n'
+    "  - Parameter `search_type` (string): One of "
+    '"diagnosis", "guidelines", "research", "anatomy", '
+    '"treatment", "differential", "general"\n'
+    "  - Use for: Verifying findings, accessing diagnostic "
+    "criteria, researching conditions\n"
+    "  - Returns: Article titles, abstracts, publication info, "
+    "and reliability scores\n"
+    "  - Tip: Include condition name, imaging modality, "
+    "and specific findings in query"
+)
 
-SEARCH_IMAGES_PROMPT_DOC = """
-**search_images** - Search NIH Open-i for reference medical images
-  - Parameter `query` (string): Image search terms (e.g., "glioblastoma MRI T1 contrast")
-  - Parameter `modality` (optional): Filter by "MRI", "CT", "X-ray", "Ultrasound", "PET", "Mammography"
-  - Parameter `body_part` (optional): Filter by "brain", "head", "chest", "abdomen", "spine", "pelvis", "cardiac"
-  - Use for: Finding similar cases, comparison images, visual references
-  - Returns: Image URLs with captions, source articles, and reliability scores
-""".strip()
+SEARCH_IMAGES_PROMPT_DOC = (
+    "**search_images** - Search NIH Open-i for reference "
+    "medical images\n"
+    "  - Parameter `query` (string): Image search terms "
+    '(e.g., "glioblastoma MRI T1 contrast")\n'
+    '  - Parameter `modality` (optional): Filter by "MRI", '
+    '"CT", "X-ray", "Ultrasound", "PET", "Mammography"\n'
+    '  - Parameter `body_part` (optional): Filter by "brain", '
+    '"head", "chest", "abdomen", "spine", "pelvis", "cardiac"\n'
+    "  - Use for: Finding similar cases, comparison images, "
+    "visual references\n"
+    "  - Returns: Image URLs with captions, source articles, "
+    "and reliability scores"
+)
 
 
 @beartype

@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING
 
 from radiant_harness.base import AgenticProcessorBase
 from radiant_harness.base import ImageInput
-from radiant_harness.config import AgenticConfig
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
@@ -80,6 +79,7 @@ from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
 from radiant_harness.types import TurnRole
+from radiant_harness.utils.json_coerce import coerce_json_types
 
 __version__ = "0.1.0"
 
@@ -89,7 +89,6 @@ __all__ = [
     "ImageInput",
     # Configuration
     "HarnessConfig",
-    "AgenticConfig",
     "CacheConfig",
     "SearchConfig",
     "ImageProcessingConfig",
@@ -128,6 +127,8 @@ __all__ = [
     "load_task_prompt",
     "create_prompt",
     "combine_prompts",
+    # Utilities
+    "coerce_json_types",
     # Exceptions
     "HarnessError",
     "AgenticProcessingError",

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import AsyncIterator
@@ -24,7 +25,6 @@ from loguru import logger
 from PIL import Image
 
 from radiant_harness._frozen import deep_thaw
-from radiant_harness.config import AgenticConfig
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import AgenticProcessingError
 from radiant_harness.exceptions import SchemaValidationError
@@ -41,14 +41,27 @@ from radiant_harness.types import AgenticResult
 from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
+from radiant_harness.utils.json_coerce import coerce_json_types
 from radiant_harness.utils.json_extract import extract_json_from_text
 
 # Maximum characters allowed in a single tool result message.
 # Limits prompt-injection surface from external data (PubMed abstracts, etc.).
 _MAX_TOOL_CONTENT_CHARS = 8_000
 
+# Agentic processing defaults (previously AgenticConfig dataclass).
+_MAX_TURNS_LIMIT = 30
+_DEFAULT_MAX_TURNS = 10
+_DEFAULT_MAX_TOKENS = 16384
+_DEFAULT_TEMPERATURE = 0.0
+_MAX_CONSECUTIVE_NUDGES = 2
+_MAX_RECOVERY_NUDGES = _MAX_CONSECUTIVE_NUDGES + 2  # Total nudges before giving up
+
 # Regex for ASCII/Unicode control characters (except newline/tab).
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+# Pre-compiled regexes for tool name sanitization (used per tool call).
+_SPECIAL_TOKEN_RE = re.compile(r"<\|[^|]*\|>")
+_TRAILING_PARENS_RE = re.compile(r"\(.*\)\s*$")
 
 # Turns with zero tool calls before force-finalizing in agentic mode.
 # Prevents wasting tokens when the model ignores available tools.
@@ -85,8 +98,6 @@ _INTENSITY_MODIFYING_TOOLS = frozenset(
 
 def _make_boundary() -> str:
     """Generate a random boundary token unlikely to appear in tool output."""
-    import secrets
-
     return secrets.token_hex(8)
 
 
@@ -204,6 +215,123 @@ class ImageInput:
         return await asyncio.to_thread(self.load)
 
 
+def _try_wrap_inner_schema(
+    salvaged: dict[str, Any],
+    response_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Attempt to wrap a salvaged inner-object into the top-level schema.
+
+    When a model is truncated mid-generation, the salvaged JSON may contain
+    the fields of a sub-schema (e.g. caption's inner keys) instead of the
+    expected top-level structure.  This function checks each top-level
+    object property in the schema — if the salvaged keys are a subset of
+    that property's own keys, it wraps the salvaged dict under that key
+    and fills the remaining top-level keys with empty defaults.
+    """
+    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+    props = schema_obj.get("properties", {})
+    salvaged_keys = set(salvaged.keys()) - {"continue"}
+
+    for prop_name, prop_def in props.items():
+        if prop_def.get("type") != "object":
+            continue
+        inner_keys = set(prop_def.get("properties", {}).keys())
+        if not inner_keys:
+            continue
+        # If salvaged keys overlap significantly with this sub-schema
+        if salvaged_keys & inner_keys and salvaged_keys <= inner_keys:
+            wrapped: dict[str, Any] = {
+                prop_name: {k: v for k, v in salvaged.items() if k != "continue"}
+            }
+            # Fill remaining top-level keys with empty defaults
+            for other_name, other_def in props.items():
+                if other_name in wrapped or other_name == "continue":
+                    continue
+                otype = other_def.get("type", "string")
+                if otype == "object":
+                    wrapped[other_name] = {}
+                elif otype == "array":
+                    wrapped[other_name] = []
+                elif otype in ("number", "integer"):
+                    wrapped[other_name] = 0
+                elif otype == "boolean":
+                    wrapped[other_name] = False
+                else:
+                    wrapped[other_name] = ""
+            wrapped["continue"] = False
+            logger.info(
+                f"Wrapped salvaged inner-schema keys {sorted(salvaged_keys)} under '{prop_name}'"
+            )
+            return wrapped
+    return salvaged
+
+
+def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
+    """Return a new ImageInput downscaled so neither side exceeds *max_dim*.
+
+    If the image already fits, returns the original unchanged.
+    Uses Lanczos resampling for quality.
+    """
+    if img.pil_image is None or (img.width <= max_dim and img.height <= max_dim):
+        return img
+    pil = img.pil_image.copy()
+    pil.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+    logger.info(
+        f"Downscaled {img.path.name} from {img.width}x{img.height} "
+        f"to {pil.width}x{pil.height} (max_encode_dimension={max_dim})"
+    )
+    return ImageInput(
+        path=img.path,
+        label=img.label,
+        width=pil.width,
+        height=pil.height,
+        encoded=encode_image(pil),
+        pil_image=pil,
+    )
+
+
+def _build_schema_skeleton(
+    response_schema: dict[str, Any] | None,
+) -> tuple[dict[str, str], list[str]]:
+    """Build a JSON skeleton and field hints from a response schema.
+
+    Built once per analysis and reused for single-turn prompt injection
+    and force-finalize nudges, avoiding redundant schema traversal.
+
+    Returns:
+        (skeleton_dict, field_hints) where skeleton_dict maps field names
+        to placeholder strings and field_hints is a list of
+        ``"- key: description"`` lines.
+    """
+    if response_schema is None:
+        return {"continue": "false"}, []
+
+    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+    props = schema_obj.get("properties", {})
+    skeleton: dict[str, str] = {}
+    field_hints: list[str] = []
+
+    for key, prop in props.items():
+        ptype = prop.get("type", "string")
+        desc = prop.get("description", "")
+        if ptype == "boolean":
+            skeleton[key] = "true/false"
+        elif ptype == "array":
+            skeleton[key] = "[...]"
+        elif ptype == "object":
+            skeleton[key] = "{...}"
+        elif ptype in ("number", "integer"):
+            skeleton[key] = "0"
+        else:
+            enum_vals = prop.get("enum")
+            skeleton[key] = "|".join(enum_vals) if enum_vals else "..."
+        if desc:
+            field_hints.append(f"- {key}: {desc}")
+
+    skeleton["continue"] = "false"
+    return skeleton, field_hints
+
+
 class AgenticProcessorBase(ABC):
     """Abstract base class for multi-turn agentic analysis.
 
@@ -222,7 +350,9 @@ class AgenticProcessorBase(ABC):
         enable_caching: bool = True,
         disabled_tools: list[str] | None = None,
         adapter_factory: Callable[[], AdapterProtocol] | None = None,
-        config: AgenticConfig | None = None,
+        max_encode_dimension: int | None = None,
+        seed: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Initialize agentic processor.
 
@@ -230,39 +360,45 @@ class AgenticProcessorBase(ABC):
             model_name: Model name for analysis
             use_tools: Enable visual tools
             use_web_search: Enable web/image search tools
-            max_turns: Maximum turns before forced completion (uses config default if None)
+            max_turns: Maximum turns before forced completion (default 10)
             reasoning_enabled: Enable model's internal reasoning
             reasoning_effort: Reasoning effort level ("high", "medium", "low")
             enable_caching: Enable prompt caching
             disabled_tools: Specific tool names to disable
             adapter_factory: Optional factory for custom model adapter
-            config: Agentic configuration. If None, uses global default.
+            max_encode_dimension: If set, downscale images so neither side
+                exceeds this many pixels before base64 encoding.
+            seed: Random seed for model API calls (reproducibility).
+            max_tokens: Max completion tokens per turn. If None, uses
+                the module default (16384).
 
         Raises:
             ValueError: If max_turns < 1
         """
-        self._config = config or get_config().agentic
-
         if max_turns is None:
-            max_turns = self._config.default_max_turns
+            max_turns = _DEFAULT_MAX_TURNS
         if max_turns < 1:
             raise ValueError(f"max_turns must be >= 1, got {max_turns}")
 
         allowed_reasoning_efforts = {"low", "medium", "high"}
         if reasoning_effort not in allowed_reasoning_efforts:
             raise ValueError(
-                f"reasoning_effort must be one of {sorted(allowed_reasoning_efforts)}, got {reasoning_effort}"
+                f"reasoning_effort must be one of "
+                f"{sorted(allowed_reasoning_efforts)}, got {reasoning_effort}"
             )
 
         self.model_name = model_name
         self.use_tools = use_tools
         self.use_web_search = use_web_search
+        self.max_encode_dimension = max_encode_dimension
+        self.seed = seed
+        self.max_tokens = max_tokens
 
-        if max_turns > self._config.max_turns_limit:
+        if max_turns > _MAX_TURNS_LIMIT:
             logger.warning(
-                f"max_turns={max_turns} exceeds max_turns_limit={self._config.max_turns_limit}, clamping"
+                f"max_turns={max_turns} exceeds max_turns_limit={_MAX_TURNS_LIMIT}, clamping"
             )
-        self.max_turns = min(max_turns, self._config.max_turns_limit)
+        self.max_turns = min(max_turns, _MAX_TURNS_LIMIT)
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
         self.enable_caching = enable_caching
@@ -482,7 +618,13 @@ class AgenticProcessorBase(ABC):
         tool_bonus = min(tool_turns * 0.1, 0.2)
         confidence += tool_bonus
 
-        return min(1.0, confidence)
+        # Penalize for non-tool assistant turns beyond the final answer.
+        # Extra such turns indicate recovery nudges were needed.
+        non_tool_assistant = sum(1 for t in turns if t.role == "assistant" and not t.tool_calls)
+        if non_tool_assistant > 1:
+            confidence -= 0.05 * (non_tool_assistant - 1)
+
+        return max(0.0, min(1.0, confidence))
 
     @beartype
     async def analyze(
@@ -511,7 +653,15 @@ class AgenticProcessorBase(ABC):
 
         image_inputs = list(await asyncio.gather(*(img.aload() for img in image_inputs)))
 
-        tool_registry = self._create_tool_registry(image_inputs)
+        # Downscale images for local models with small context windows.
+        if self.max_encode_dimension is not None:
+            image_inputs = [
+                _downscale_image(img, self.max_encode_dimension) for img in image_inputs
+            ]
+
+        # Single-turn mode never offers tools (last turn withholds them),
+        # so skip registry creation to avoid wasted I/O and memory.
+        tool_registry = self._create_tool_registry(image_inputs) if self.max_turns > 1 else None
 
         try:
             return await self._run_analysis(
@@ -594,32 +744,23 @@ class AgenticProcessorBase(ABC):
             ]
             system_prompt = f"{system_prompt}\n\nPOLICY:\n- " + "\n- ".join(policy_lines)
 
+        # Build schema skeleton once; reused for single-turn prompt injection
+        # and force-finalize nudges (avoids redundant schema traversal).
+        skeleton, field_hints = _build_schema_skeleton(response_schema)
+        skeleton_str = json.dumps(skeleton, indent=2)
+
         # Single-turn: inject JSON skeleton so models that ignore response_format
         # (e.g. local models via LM Studio) still know the expected output shape.
         if self.max_turns == 1 and response_schema is not None:
-            schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-            props = schema_obj.get("properties", {})
-            skeleton: dict[str, str] = {}
-            for key, prop in props.items():
-                ptype = prop.get("type", "string")
-                if ptype == "boolean":
-                    skeleton[key] = "true/false"
-                elif ptype == "array":
-                    skeleton[key] = "[...]"
-                elif ptype == "object":
-                    skeleton[key] = "{...}"
-                elif ptype in ("number", "integer"):
-                    skeleton[key] = "0"
-                else:
-                    skeleton[key] = "..."
-            skeleton["continue"] = "false"
-            skeleton_str = json.dumps(skeleton, indent=2)
+            hints_block = "\n".join(field_hints)
             system_prompt = (
                 f"{system_prompt}\n\n"
                 f"OUTPUT FORMAT: You MUST respond with ONLY a valid JSON object. "
                 f"No other text, no markdown, no explanation outside the JSON.\n"
                 f"Required structure:\n{skeleton_str}"
             )
+            if hints_block:
+                system_prompt += f"\n\nField descriptions:\n{hints_block}"
 
         if tool_registry and self.max_turns > 1:
             tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
@@ -674,28 +815,10 @@ class AgenticProcessorBase(ABC):
         coord_space_modified: bool = False
         intensity_modified: bool = False
         idle_tool_nudged: bool = False
+        strip_watermark: int = 0
 
         def _force_finalize_message() -> str:
-            """Build a force-finalize message with the response JSON skeleton."""
-            schema_obj = {}
-            if response_schema is not None:
-                schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-            props = schema_obj.get("properties", {})
-            skeleton: dict[str, str] = {}
-            for key, prop in props.items():
-                ptype = prop.get("type", "string")
-                if ptype == "boolean":
-                    skeleton[key] = "true/false"
-                elif ptype == "array":
-                    skeleton[key] = "[...]"
-                elif ptype == "object":
-                    skeleton[key] = "{...}"
-                elif ptype in ("number", "integer"):
-                    skeleton[key] = "0"
-                else:
-                    skeleton[key] = "..."
-            skeleton["continue"] = "false"
-            skeleton_str = json.dumps(skeleton, indent=2)
+            """Build a force-finalize message using the pre-built skeleton."""
             return (
                 "[System: You have failed to produce valid JSON for multiple consecutive turns. "
                 "You MUST respond with ONLY a JSON object NOW. Fill in this template with your "
@@ -779,17 +902,27 @@ class AgenticProcessorBase(ABC):
 
                 messages.append({"role": "user", "content": final_parts})
 
+            # Circuit-breaker: if nudges have been exhausted without recovery,
+            # stop burning turns with the same force-finalize message.
+            if nudge_count > _MAX_RECOVERY_NUDGES:
+                raise AgenticProcessingError(
+                    f"Model failed to produce valid output after {nudge_count} "
+                    f"consecutive recovery attempts",
+                    turns_completed=len(turns),
+                )
+
             # Strip stale base64 images from earlier rounds (including the
             # initial user message) to reduce payload on subsequent API calls.
             if turn_idx > 0 and images:
-                self._strip_stale_images(messages)
+                strip_watermark = self._strip_stale_images(messages, strip_watermark)
 
             chat_result = await model_adapter.generate_chat(
                 messages=messages,
-                max_tokens=self._config.default_max_tokens,
-                temperature=self._config.default_temperature,
+                max_tokens=self.max_tokens or _DEFAULT_MAX_TOKENS,
+                temperature=_DEFAULT_TEMPERATURE,
                 tools=current_tools,
                 response_format=current_format,
+                seed=self.seed,
             )
             if isinstance(chat_result, AsyncIterator):
                 raise AgenticProcessingError(
@@ -819,13 +952,14 @@ class AgenticProcessorBase(ABC):
                             turn_idx + 1,
                         )
                         continue
-                    clean_name = re.sub(r"<\|[^|]*\|>", "", raw_name).strip()
+                    clean_name = _SPECIAL_TOKEN_RE.sub("", raw_name).strip()
                     # Strip trailing parentheses — some models (GLM-4.6V) include
                     # "()" or "(args)" in the tool name field.
-                    clean_name = re.sub(r"\(.*\)\s*$", "", clean_name).strip()
+                    clean_name = _TRAILING_PARENS_RE.sub("", clean_name).strip()
                     if not clean_name:
                         logger.warning(
-                            "Tool call {} on turn {} has empty name after sanitization (raw={!r}), skipping",
+                            "Tool call {} on turn {} has empty name "
+                            "after sanitization (raw={!r}), skipping",
                             i,
                             turn_idx + 1,
                             raw_name,
@@ -850,6 +984,8 @@ class AgenticProcessorBase(ABC):
                 # text is a valid, complete response we can salvage it.
                 if response_text.strip():
                     salvaged = extract_json_from_text(response_text)
+                    if salvaged is not None and response_schema is not None:
+                        coerce_json_types(salvaged, response_schema)
                     if (
                         salvaged is not None
                         and isinstance(salvaged.get("continue"), bool)
@@ -887,9 +1023,10 @@ class AgenticProcessorBase(ABC):
             )
             turns.append(turn)
 
-            assistant_message: dict[str, Any] = {"role": "assistant"}
-            if response_text:
-                assistant_message["content"] = response_text
+            assistant_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": response_text,
+            }
             if typed_tool_calls:
                 assistant_message["tool_calls"] = [
                     {
@@ -989,9 +1126,9 @@ class AgenticProcessorBase(ABC):
                     logger.warning(
                         f"Turn {turn_idx + 1} truncated (completion_tokens="
                         f"{gen_log.completion_tokens}). Nudge {nudge_count}/"
-                        f"{self._config.max_consecutive_nudges}."
+                        f"{_MAX_CONSECUTIVE_NUDGES}."
                     )
-                    if nudge_count >= self._config.max_consecutive_nudges:
+                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
@@ -1005,11 +1142,47 @@ class AgenticProcessorBase(ABC):
                             }
                         )
                     continue
+                # Last turn truncated — try to salvage partial JSON before failing.
+                # Thinking models often consume most of the token budget on
+                # reasoning, leaving the visible output truncated mid-JSON.
+                if response_text.strip():
+                    salvaged = extract_json_from_text(response_text)
+                    if salvaged is not None and isinstance(salvaged, dict):
+                        salvaged["continue"] = False
+                        if response_schema is not None:
+                            coerce_json_types(salvaged, response_schema)
+                        # If salvaged keys don't match top-level schema but DO
+                        # match a sub-schema property, wrap them.  This handles
+                        # truncated output where the model started generating an
+                        # inner object (e.g. caption fields) before being cut off.
+                        if response_schema is not None and not self.validate_response(salvaged):
+                            salvaged = _try_wrap_inner_schema(salvaged, response_schema)
+                        logger.warning(
+                            f"Turn {turn_idx + 1} truncated but salvaged partial JSON "
+                            f"(keys: {list(salvaged.keys())[:10]})"
+                        )
+                        final_response = salvaged
+                        break
+                effective_max = self.max_tokens or _DEFAULT_MAX_TOKENS
+                total = gen_log.prompt_tokens + gen_log.completion_tokens
+                # When completion_tokens < max_tokens but the model still hit
+                # finish_reason=length, the server's context window (n_ctx) is
+                # the binding constraint, not our max_tokens parameter.
+                if gen_log.completion_tokens < effective_max * 0.9:
+                    hint = (
+                        f"Server context window appears to be ~{total} tokens "
+                        f"(prompt={gen_log.prompt_tokens} + "
+                        f"completion={gen_log.completion_tokens}). "
+                        f"Increase n_ctx in LM Studio or use a model with a "
+                        f"larger context window."
+                    )
+                else:
+                    hint = "Increase max_tokens or simplify the response schema."
                 raise AgenticProcessingError(
                     f"Response truncated on turn {turn_idx + 1} "
-                    f"(finish_reason='length', completion_tokens={gen_log.completion_tokens}, "
-                    f"max_tokens={self._config.default_max_tokens}). "
-                    f"Increase default_max_tokens or simplify the response schema.",
+                    f"(finish_reason='length', completion_tokens="
+                    f"{gen_log.completion_tokens}, "
+                    f"max_tokens={effective_max}). {hint}",
                     turns_completed=turn_idx + 1,
                 )
 
@@ -1019,9 +1192,9 @@ class AgenticProcessorBase(ABC):
                 nudge_count += 1
                 logger.warning(
                     f"Turn {turn_idx + 1} returned empty response with no tool calls. "
-                    f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
+                    f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
                 )
-                if nudge_count >= self._config.max_consecutive_nudges:
+                if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
                     messages.append({"role": "user", "content": _force_finalize_message()})
                 else:
                     messages.append(
@@ -1049,9 +1222,9 @@ class AgenticProcessorBase(ABC):
                         # On intermediate turns, nudge instead of crashing
                         logger.warning(
                             f"Turn {turn_idx + 1} returned non-JSON text. "
-                            f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
+                            f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
                         )
-                        if nudge_count >= self._config.max_consecutive_nudges:
+                        if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
                             messages.append({"role": "user", "content": _force_finalize_message()})
                         else:
                             messages.append(
@@ -1078,9 +1251,9 @@ class AgenticProcessorBase(ABC):
                     logger.warning(
                         f"Turn {turn_idx + 1} returned non-object JSON "
                         f"(got {type(parsed_obj).__name__}). "
-                        f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
+                        f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
                     )
-                    if nudge_count >= self._config.max_consecutive_nudges:
+                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
@@ -1104,7 +1277,19 @@ class AgenticProcessorBase(ABC):
             parsed: dict[str, Any] = parsed_obj
             nudge_count = 0  # Valid JSON resets nudge counter
 
+            # Coerce types centrally so processors don't need to call it
+            # individually.  Runs before validate_response() to prevent
+            # unnecessary nudges from string-vs-number mismatches.
+            if response_schema is not None:
+                coerce_json_types(parsed, response_schema)
+
             wants_continue = parsed.get("continue", False)
+            # Inject missing "continue" — local models often omit it when
+            # the answer is "false" (they treat absence as false).  Without
+            # this, validate_response() rejects the response because the
+            # key is literally absent from the dict.
+            if "continue" not in parsed:
+                parsed["continue"] = False
             if not isinstance(wants_continue, bool):
                 # Some models return "true"/"false" strings instead of booleans.
                 # Coerce on intermediate turns; only crash on the final turn where
@@ -1130,21 +1315,39 @@ class AgenticProcessorBase(ABC):
                 # of accepting a garbage final response.
                 if not is_last_turn and not self.validate_response(parsed):
                     nudge_count += 1
+                    # Identify missing required fields from schema to guide the model
+                    missing_hint = ""
+                    if response_schema is not None:
+                        schema_props = (
+                            response_schema.get("json_schema", {})
+                            .get("schema", {})
+                            .get("required", [])
+                        )
+                        missing = [k for k in schema_props if k not in parsed]
+                        if missing:
+                            missing_hint = f" Missing top-level fields: {missing}."
+                        else:
+                            # All top-level keys present — check for type/value issues
+                            missing_hint = (
+                                " All top-level keys are present but some have"
+                                " invalid types or values (check numbers, booleans,"
+                                " nested objects)."
+                            )
                     logger.warning(
                         f"Turn {turn_idx + 1} returned incomplete response "
-                        f"(keys: {list(parsed.keys())[:10]}). "
-                        f"Nudge {nudge_count}/{self._config.max_consecutive_nudges}."
+                        f"(keys: {list(parsed.keys())[:10]}).{missing_hint} "
+                        f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
                     )
-                    if nudge_count >= self._config.max_consecutive_nudges:
+                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
                             {
                                 "role": "user",
                                 "content": (
-                                    "[System: Your response is incomplete — it's missing "
-                                    "required fields. Please continue your analysis and "
-                                    "provide a complete response with all required sections. "
+                                    "[System: Your response is incomplete — it failed "
+                                    f"validation.{missing_hint} Please provide a complete "
+                                    "response with all required fields and correct types. "
                                     "Set 'continue': true if you need more turns.]"
                                 ),
                             }
@@ -1196,27 +1399,49 @@ class AgenticProcessorBase(ABC):
                 )
                 messages.append({"role": "user", "content": turn_warning})
         else:
+            # Defensive: on the last turn, every code path breaks or raises.
+            # If a future change makes this reachable, fail loudly.
             raise AgenticProcessingError(
-                f"Analysis loop exhausted all {self.max_turns} turns without "
-                f"producing a final response "
-                f"(model may have returned tool calls on every turn)",
+                f"Internal error: agentic loop completed {self.max_turns} turns "
+                f"without producing a final response (this should be unreachable)",
                 turns_completed=len(turns),
             )
 
+        # Coerce types on the final response (catches salvaged paths that
+        # bypassed the per-turn coerce above).
+        if response_schema is not None:
+            coerce_json_types(final_response, response_schema)
+
         if not self.validate_response(final_response):
-            top_keys = list(final_response.keys())[:10]
-            missing_fields: list[str] = []
+            # Small/local models sometimes return a sub-object (e.g. the
+            # inner keys of ``region_of_interest``) instead of the full
+            # top-level schema.  The same wrapping logic used for truncated
+            # responses can recover these cases.
             if response_schema is not None:
-                schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-                required = schema_obj.get("required", [])
-                if isinstance(required, list):
-                    missing_fields = [field for field in required if field not in final_response]
-            raise SchemaValidationError(
-                f"Final response failed schema validation. Top-level keys: {top_keys}",
-                turns_completed=len(turns),
-                missing_fields=missing_fields,
-                response=final_response,
-            )
+                wrapped = _try_wrap_inner_schema(final_response, response_schema)
+                if wrapped is not final_response and self.validate_response(wrapped):
+                    logger.warning(
+                        f"Recovered response via inner-schema wrapping "
+                        f"(original keys: {list(final_response.keys())[:10]})"
+                    )
+                    final_response = wrapped
+
+            if not self.validate_response(final_response):
+                top_keys = list(final_response.keys())[:10]
+                missing_fields: list[str] = []
+                if response_schema is not None:
+                    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+                    required = schema_obj.get("required", [])
+                    if isinstance(required, list):
+                        missing_fields = [
+                            field for field in required if field not in final_response
+                        ]
+                raise SchemaValidationError(
+                    f"Final response failed schema validation. Top-level keys: {top_keys}",
+                    turns_completed=len(turns),
+                    missing_fields=missing_fields,
+                    response=final_response,
+                )
 
         confidence = self.calculate_confidence(final_response, turns)
 
@@ -1334,18 +1559,19 @@ class AgenticProcessorBase(ABC):
         run concurrently *alongside* the sequential image tools so that
         e.g. a PubMed search overlaps with zoom/crop operations.
         """
-        import asyncio
-
         if len(tool_calls) <= 1:
             return [await self._run_single_tool(tc, tool_registry, turn_idx) for tc in tool_calls]
 
-        def _is_image_tool(tc: ToolCall) -> bool:
-            tool = tool_registry.get_documenter().get_tool(tc.name)
-            return tool is not None and tool.requires_image
-
-        # Partition into image-mutating (must be sequential) and independent tools
-        image_indices = [i for i, tc in enumerate(tool_calls) if _is_image_tool(tc)]
-        other_indices = [i for i, tc in enumerate(tool_calls) if not _is_image_tool(tc)]
+        # Single-pass partition avoids double documenter lookup per tool.
+        documenter = tool_registry.get_documenter()
+        image_indices: list[int] = []
+        other_indices: list[int] = []
+        for i, tc in enumerate(tool_calls):
+            tool = documenter.get_tool(tc.name)
+            if tool is not None and tool.requires_image:
+                image_indices.append(i)
+            else:
+                other_indices.append(i)
 
         results: list[ToolResult | None] = [None] * len(tool_calls)
 
@@ -1403,7 +1629,7 @@ class AgenticProcessorBase(ABC):
 
     @staticmethod
     @beartype
-    def _strip_stale_images(messages: list[dict[str, Any]]) -> None:
+    def _strip_stale_images(messages: list[dict[str, Any]], start_index: int = 0) -> int:
         """Replace base64 image data URLs in older messages with text placeholders.
 
         Strips images from two sources:
@@ -1415,6 +1641,16 @@ class AgenticProcessorBase(ABC):
            that follow the *last* assistant message (the most recent round).
 
         This dramatically reduces the payload sent on subsequent API calls.
+
+        Args:
+            messages: The conversation message list (mutated in place).
+            start_index: Skip messages before this index — they have already
+                been stripped by a prior call.
+
+        Returns:
+            The ``last_assistant_idx`` up to which stripping was performed.
+            Pass this value as ``start_index`` on the next call to avoid
+            re-scanning already-processed messages.
         """
         last_assistant_idx = -1
         for i in range(len(messages) - 1, -1, -1):
@@ -1422,13 +1658,16 @@ class AgenticProcessorBase(ABC):
                 last_assistant_idx = i
                 break
 
-        for i in range(last_assistant_idx):
+        for i in range(start_index, last_assistant_idx):
             msg = messages[i]
             role = msg.get("role")
             if role not in ("tool", "user"):
                 continue
             content = msg.get("content")
             if not isinstance(content, list):
+                continue
+            # Fast path: skip messages already stripped (no image_url parts left).
+            if not any(part.get("type") == "image_url" for part in content):
                 continue
             placeholder = (
                 "[original image omitted]" if role == "user" else "[previous tool image omitted]"
@@ -1440,3 +1679,4 @@ class AgenticProcessorBase(ABC):
                 else:
                     new_content.append(part)
             msg["content"] = new_content
+        return last_assistant_idx

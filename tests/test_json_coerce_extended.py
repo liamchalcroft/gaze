@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from radiant_harness.utils.json_coerce import _coerce_value, coerce_json_types
-
+from radiant_harness.utils.json_coerce import _coerce_value
+from radiant_harness.utils.json_coerce import coerce_json_types
 
 # ---------------------------------------------------------------------------
 # _coerce_value: integer from string (lines 31-34)

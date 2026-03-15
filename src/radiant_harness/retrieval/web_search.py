@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from types import TracebackType
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
@@ -26,6 +27,7 @@ from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError
+from radiant_harness.retrieval.base import _sanitize_api_field
 from radiant_harness.retrieval.base import _sanitize_exception_message
 
 # Note: SSL verification is enabled by default for security.
@@ -65,13 +67,32 @@ class SearchError(SearchEngineError):
     """Raised when a web search operation fails."""
 
 
-class SearchEngine(BaseSearchEngine[SearchResult, SearchError]):
-    """Base class for web search engines.
+@functools.lru_cache(maxsize=1)
+def _get_ncbi_email() -> str | None:
+    """Get NCBI_EMAIL from environment, logging once if missing.
 
-    Inherits session management and retry logic from :class:`BaseSearchEngine`.
-    Inherits honest bot User-Agent from :class:`BaseSearchEngine`.
-    Adds reliability scoring.
+    Uses lru_cache for thread-safe one-time initialization.
     """
+    email = os.getenv("NCBI_EMAIL")
+    if not email:
+        logger.debug("NCBI_EMAIL not set; PubMed requests will proceed without it")
+    return email
+
+
+# Evidence-tier adjustments applied on top of domain-based reliability.
+# Systematic reviews and guidelines represent higher evidence quality than
+# individual case reports.  These offsets reflect the evidence hierarchy
+# used in evidence-based medicine (EBM) pyramid.
+EVIDENCE_TIER_ADJUSTMENTS: dict[str, float] = {
+    "guidelines": 0.04,  # Highest: clinical practice guidelines
+    "review": 0.02,  # Systematic reviews / meta-analyses
+    "article": 0.0,  # Standard journal articles (baseline)
+    "case_report": -0.05,  # Lower evidence: individual case reports
+}
+
+
+class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
+    """Enhanced PubMed search with better error handling and metadata extraction."""
 
     def _make_error(
         self,
@@ -124,34 +145,6 @@ class SearchEngine(BaseSearchEngine[SearchResult, SearchError]):
 
         # General web sources
         return 0.60
-
-
-@functools.lru_cache(maxsize=1)
-def _get_ncbi_email() -> str | None:
-    """Get NCBI_EMAIL from environment, logging once if missing.
-
-    Uses lru_cache for thread-safe one-time initialization.
-    """
-    email = os.getenv("NCBI_EMAIL")
-    if not email:
-        logger.debug("NCBI_EMAIL not set; PubMed requests will proceed without it")
-    return email
-
-
-# Evidence-tier adjustments applied on top of domain-based reliability.
-# Systematic reviews and guidelines represent higher evidence quality than
-# individual case reports.  These offsets reflect the evidence hierarchy
-# used in evidence-based medicine (EBM) pyramid.
-EVIDENCE_TIER_ADJUSTMENTS: dict[str, float] = {
-    "guidelines": 0.04,  # Highest: clinical practice guidelines
-    "review": 0.02,  # Systematic reviews / meta-analyses
-    "article": 0.0,  # Standard journal articles (baseline)
-    "case_report": -0.05,  # Lower evidence: individual case reports
-}
-
-
-class PubMedSearchEngine(SearchEngine):
-    """Enhanced PubMed search with better error handling and metadata extraction."""
 
     @beartype
     def _get_headers(self) -> dict[str, str]:
@@ -264,12 +257,13 @@ class PubMedSearchEngine(SearchEngine):
 
             article = summary_data["result"][pmid]
 
-            # Extract metadata
-            title = article.get("title", "").strip()
+            # Extract and sanitize metadata (defense-in-depth against
+            # prompt injection via crafted PubMed records).
+            title = _sanitize_api_field(article.get("title", "").strip(), max_length=300)
             authors = article.get("authors", [])
-            journal = article.get("fulljournalname", "")
-            pub_date = article.get("pubdate", "")
-            doi = article.get("doi", "")
+            journal = _sanitize_api_field(article.get("fulljournalname", ""), max_length=200)
+            pub_date = _sanitize_api_field(article.get("pubdate", ""), max_length=30)
+            doi = _sanitize_api_field(article.get("doi", ""), max_length=100)
             article_ids = article.get("articleids", [])
 
             # Check for open access (PMC ID present → open access)
@@ -282,7 +276,7 @@ class PubMedSearchEngine(SearchEngine):
             content_type = self._classify_content_type(publication_types)
 
             # Use abstract from efetch if available, else title
-            abstract = abstracts.get(pmid, "")
+            abstract = _sanitize_api_field(abstracts.get(pmid, ""), max_length=5000)
             content = abstract if abstract else title
 
             # Extract medical entities
@@ -310,7 +304,10 @@ class PubMedSearchEngine(SearchEngine):
                 source="pubmed",
                 reliability_score=reliability,
                 publication_date=pub_date,
-                author=", ".join([a.get("name", "") for a in authors[:3]]),
+                author=_sanitize_api_field(
+                    ", ".join([a.get("name", "") for a in authors[:3]]),
+                    max_length=200,
+                ),
                 journal=journal,
                 doi=doi,
                 content_type=content_type,
@@ -323,7 +320,7 @@ class PubMedSearchEngine(SearchEngine):
 
         return results
 
-    async def _fetch_summary(self, pmid_list: list[str]) -> dict:
+    async def _fetch_summary(self, pmid_list: list[str]) -> dict[str, Any]:
         """Fetch article metadata via esummary JSON.
 
         Returns:
@@ -591,7 +588,7 @@ class WebSearchManager:
         self._cache: TTLCache[list[SearchResult]] = TTLCache(self._cache_config)
 
         # Initialize search engines
-        self.engines: list[SearchEngine] = []
+        self.engines: list[PubMedSearchEngine] = []
         engines = engines or ["pubmed"]  # Default to PubMed
 
         for engine in engines:
@@ -651,58 +648,102 @@ class WebSearchManager:
             raise ValueError("query must be a non-empty string")
         if search_type not in self.ALLOWED_SEARCH_TYPES:
             raise ValueError(
-                f"search_type must be one of {sorted(self.ALLOWED_SEARCH_TYPES)}, got '{search_type}'"
+                f"search_type must be one of "
+                f"{sorted(self.ALLOWED_SEARCH_TYPES)}, got '{search_type}'"
             )
 
-        # Enhance query if requested (do this before cache key construction)
-        search_query = self._enhance_query(query, search_type) if enhance_query else query
+        # Build query variants: enhanced first, then original, then
+        # progressively shorter forms.  PubMed AND-joins all terms, so
+        # long queries (8+ words) frequently return zero results.
+        query_variants: list[str] = []
+        if enhance_query:
+            query_variants.append(self._enhance_query(query, search_type))
+        query_variants.append(query)
 
-        # Cache key must capture all knobs that change result sets
+        # For long queries, add progressively shorter variants by
+        # dropping trailing words.  Keeps at least 3 terms.
+        words = query.split()
+        if len(words) > 5:
+            query_variants.append(" ".join(words[:5]))
+        if len(words) > 3:
+            query_variants.append(" ".join(words[:3]))
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_variants: list[str] = []
+        for v in query_variants:
+            if v not in seen:
+                seen.add(v)
+                unique_variants.append(v)
+
         engine_names = ",".join(engine.name for engine in self.engines)
-        query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:16]
-        cache_key = f"{query_hash}:{search_type}:{medical_focus}:{self.max_results_per_engine}:{self.max_total_results}:{engine_names}"
 
-        # Check cache using TTLCache (handles expiration automatically)
-        cached_results = self._cache.get(cache_key)
-        if cached_results is not None:
-            logger.debug(f"Using cached results for: {search_query}")
-            return cached_results
-
-        logger.info(f"Searching for: '{search_query}' (enhanced from: '{query}')")
-
-        # Search across all engines
-        all_results: list[SearchResult] = []
-        errors: list[SearchError] = []
-        for i, engine in enumerate(self.engines):
-            try:
-                results = await engine.search(search_query, self.max_results_per_engine)
-                all_results.extend(results)
-                # Rate limit between engines (skip after last engine)
-                if i < len(self.engines) - 1:
-                    await asyncio.sleep(self.rate_limit_delay)
-            except SearchError as e:
-                errors.append(e)
-                logger.error(f"Engine {engine.name} failed: {e}")
-
-        # If all engines failed, raise an error
-        if errors and not all_results:
-            raise SearchError(
-                "WebSearchManager",
-                f"All search engines failed: {[str(e) for e in errors]}",
+        for variant_idx, search_query in enumerate(unique_variants):
+            # Cache key must capture all knobs that change result sets
+            query_hash = hashlib.sha256(search_query.encode()).hexdigest()[:16]
+            cache_key = (
+                f"{query_hash}:{search_type}:{medical_focus}"
+                f":{self.max_results_per_engine}"
+                f":{self.max_total_results}:{engine_names}"
             )
 
-        # Filter and rank results
-        filtered_results = self._filter_results(all_results, medical_focus)
-        ranked_results = self._rank_results(filtered_results, query, search_type)
+            # Check cache using TTLCache (handles expiration automatically)
+            cached_results = self._cache.get(cache_key)
+            if cached_results is not None:
+                logger.debug(f"Using cached results for: {search_query}")
+                return cached_results
 
-        # Limit results
-        final_results = ranked_results[: self.max_total_results]
+            logger.info(f"Searching for: '{search_query}' (from: '{query}')")
 
-        # Cache results using TTLCache (handles expiration automatically)
-        self._cache.set(cache_key, final_results)
+            # Search across all engines
+            all_results: list[SearchResult] = []
+            errors: list[SearchError] = []
+            for i, engine in enumerate(self.engines):
+                try:
+                    results = await engine.search(search_query, self.max_results_per_engine)
+                    all_results.extend(results)
+                    # Rate limit between engines (skip after last engine)
+                    if i < len(self.engines) - 1:
+                        await asyncio.sleep(self.rate_limit_delay)
+                except SearchError as e:
+                    errors.append(e)
+                    logger.error(f"Engine {engine.name} failed: {e}")
 
-        logger.info(f"Search complete: {len(final_results)} results from {len(all_results)} total")
-        return final_results
+            # If all engines failed, raise an error
+            if errors and not all_results:
+                raise SearchError(
+                    "WebSearchManager",
+                    f"All search engines failed: {[str(e) for e in errors]}",
+                )
+
+            if all_results:
+                # Filter and rank results
+                filtered_results = self._filter_results(all_results, medical_focus)
+                ranked_results = self._rank_results(filtered_results, query, search_type)
+
+                # Limit results
+                final_results = ranked_results[: self.max_total_results]
+
+                # Cache results using TTLCache (handles expiration automatically)
+                self._cache.set(cache_key, final_results)
+
+                if variant_idx > 0:
+                    logger.info(
+                        f"Search complete: {len(final_results)} results "
+                        f"(found on attempt {variant_idx + 1} with shortened query)"
+                    )
+                else:
+                    logger.info(
+                        f"Search complete: {len(final_results)} results "
+                        f"from {len(all_results)} total"
+                    )
+                return final_results
+
+            logger.debug(f"Zero results for variant '{search_query}', trying shorter query")
+
+        # All variants exhausted — return empty
+        logger.warning(f"All query variants returned zero results for: '{query}'")
+        return []
 
     @beartype
     def _enhance_query(self, query: str, search_type: str) -> str:

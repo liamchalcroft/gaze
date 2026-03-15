@@ -33,7 +33,12 @@ class AdapterProtocol(Protocol):
         messages: list[dict[str, Any]],
         max_tokens: int,
         temperature: float,
-        tools: list[dict[str, Any]] | None,
-        response_format: dict[str, Any] | None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
         stream: bool = False,
+        seed: int | None = None,
     ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog] | AsyncIterator[str]: ...
+
+    async def aclose(self) -> None:
+        """Release resources held by the adapter (clients, models, caches)."""
+        ...

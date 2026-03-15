@@ -1,8 +1,7 @@
 """Shared base class for search engines.
 
 Deduplicates the common session management, retry logic, and configuration
-handling that was duplicated between ``SearchEngine`` (web) and
-``ImageSearchEngine`` (image).
+handling shared by ``PubMedSearchEngine`` and ``OpenISearchEngine``.
 """
 
 from __future__ import annotations
@@ -25,6 +24,22 @@ from radiant_harness.exceptions import HarnessError
 # ---------------------------------------------------------------------------
 # Credential scrubbing
 # ---------------------------------------------------------------------------
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
+    """Sanitize a text field from an external API response.
+
+    Strips control characters and truncates to *max_length* to reduce
+    prompt-injection surface when these values later appear in LLM
+    conversations.
+    """
+    value = _CONTROL_CHAR_RE.sub("", value)
+    if len(value) > max_length:
+        value = value[:max_length]
+    return value
+
+
 _SENSITIVE_QS_RE = re.compile(r"(api_key=)[^&\s)\"']+")
 
 

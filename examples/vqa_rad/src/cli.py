@@ -79,6 +79,10 @@ async def run_evaluation(
     output_dir: Path,
     reasoning: bool,
     base_url: str | None = None,
+    max_tokens: int | None = None,
+    batch_size: int = 1,
+    max_image_dim: int | None = None,
+    seed: int | None = None,
 ) -> dict[str, float]:
     """Run VQA-RAD evaluation."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -118,6 +122,9 @@ async def run_evaluation(
         max_turns=resolved_max_turns,
         reasoning_enabled=reasoning,
         adapter_factory=adapter_factory,
+        max_encode_dimension=max_image_dim,
+        seed=seed,
+        max_tokens=max_tokens,
     )
 
     logger.info(f"Running evaluation with model: {model_name}")
@@ -126,7 +133,8 @@ async def run_evaluation(
         f"Max turns: {resolved_max_turns}"
     )
 
-    # Process samples
+    # Process samples concurrently using batch_size as concurrency limit
+    semaphore = asyncio.Semaphore(batch_size)
     results: list[AgenticResult] = []
     predictions: list[str] = []
     references: list[str] = []
@@ -134,57 +142,68 @@ async def run_evaluation(
     num_failures = 0
     failures: list[dict[str, object]] = []
 
-    try:
-        for i, sample in enumerate(dataset):
+    async def _process_sample(
+        i: int, sample: dict[str, Any],
+    ) -> tuple[int, AgenticResult, str, str, str]:
+        async with semaphore:
             logger.info(f"Processing sample {i + 1}/{len(dataset)}")
-
             metadata = {
                 "question": sample["question"],
                 "answer_type": sample["answer_type"],
             }
+            result = await processor.analyze(
+                images=sample["image_path"],
+                metadata=metadata,
+            )
 
-            try:
-                result = await processor.analyze(
-                    images=sample["image_path"],
-                    metadata=metadata,
-                )
-                results.append(result)
+            pred_answer = result.final_response.get("answer", "")
 
-                pred_answer = result.final_response.get("answer", "")
-                predictions.append(pred_answer)
-                references.append(sample["answer"])
-                answer_types.append(sample["answer_type"])
-
-                # Save individual result
-                result_file = output_dir / f"sample_{i}.json"
-                with result_file.open("w") as f:
-                    json.dump(
-                        {
-                            "sample_id": i,
-                            "question": sample["question"],
-                            "prediction": pred_answer,
-                            "ground_truth": sample["answer"],
-                            "answer_type": sample["answer_type"],
-                            "response": result.final_response,
-                            "num_turns": result.num_turns,
-                            "tools_used": list(result.get_tools_used()),
-                            "confidence": result.confidence,
-                            "total_tokens": result.total_tokens,
-                        },
-                        f,
-                        indent=2,
-                        cls=_SafeEncoder,
-                    )
-
-                logger.info(
-                    f"Sample {i}: pred='{pred_answer}', gt='{sample['answer']}', "
-                    f"type={sample['answer_type']}, turns={result.num_turns}"
+            result_file = output_dir / f"sample_{i}.json"
+            with result_file.open("w") as f:
+                json.dump(
+                    {
+                        "sample_id": i,
+                        "question": sample["question"],
+                        "prediction": pred_answer,
+                        "ground_truth": sample["answer"],
+                        "answer_type": sample["answer_type"],
+                        "response": result.final_response,
+                        "num_turns": result.num_turns,
+                        "tools_used": list(result.get_tools_used()),
+                        "confidence": result.confidence,
+                        "total_tokens": result.total_tokens,
+                    },
+                    f,
+                    indent=2,
+                    cls=_SafeEncoder,
                 )
 
-            except Exception as exc:
-                logger.error(f"Failed to process sample {i}: {exc}")
+            logger.info(
+                f"Sample {i}: pred='{pred_answer}', gt='{sample['answer']}', "
+                f"type={sample['answer_type']}, turns={result.num_turns}"
+            )
+            return i, result, pred_answer, sample["answer"], sample["answer_type"]
+
+    try:
+        raw = await asyncio.gather(
+            *(_process_sample(i, sample) for i, sample in enumerate(dataset)),
+            return_exceptions=True,
+        )
+        for idx, (item, sample) in enumerate(zip(raw, dataset, strict=True)):
+            if isinstance(item, BaseException):
+                logger.error(f"Failed to process sample {idx}: {item}")
                 num_failures += 1
-                failures.append(_failure_record(i, sample["question"], exc))
+                failures.append(_failure_record(
+                    idx,
+                    sample["question"],
+                    item if isinstance(item, Exception) else Exception(str(item)),
+                ))
+            else:
+                _, result, pred_answer, ref_answer, answer_type = item
+                results.append(result)
+                predictions.append(pred_answer)
+                references.append(ref_answer)
+                answer_types.append(answer_type)
     finally:
         await processor.aclose()
 
@@ -223,6 +242,10 @@ async def run_evaluation(
                     "use_tools": resolved_use_tools,
                     "use_search": resolved_use_search,
                     "max_turns": resolved_max_turns,
+                    "max_tokens": max_tokens,
+                    "max_image_dim": max_image_dim,
+                    "temperature": 0.0,
+                    "seed": seed,
                 },
                 "num_samples": len(results),
                 "num_failures": num_failures,
@@ -249,7 +272,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="openai/gpt-4o",
-        help="Model name (OpenRouter format, or local model ID for --base-url)",
+        help="Model name (must support image input; OpenRouter format, or local model ID for --base-url)",
     )
     parser.add_argument(
         "--base-url",
@@ -300,9 +323,33 @@ def parse_args() -> argparse.Namespace:
         help="Override max turns (single_turn requires 1; agentic defaults to 5)",
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max completion tokens per turn (default: harness default 16384)",
+    )
+    parser.add_argument(
+        "--max-image-dim",
+        type=int,
+        default=None,
+        help="Downscale images so neither side exceeds this many pixels before encoding",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Number of samples to process concurrently",
+    )
+    parser.add_argument(
         "--reasoning",
         action="store_true",
         help="Enable model reasoning mode",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
     )
     parser.add_argument(
         "-v",
@@ -317,6 +364,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Main entry point."""
     args = parse_args()
+
+    if args.seed is not None:
+        import random
+
+        random.seed(args.seed)
 
     # Configure logging
     if args.verbose:
@@ -339,6 +391,10 @@ def main() -> None:
                 output_dir=args.output_dir,
                 reasoning=args.reasoning,
                 base_url=args.base_url,
+                max_tokens=args.max_tokens,
+                batch_size=args.batch_size,
+                max_image_dim=args.max_image_dim,
+                seed=args.seed,
             )
         )
         print("\n=== VQA-RAD Results ===")  # noqa: T201

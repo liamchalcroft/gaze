@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from radiant_harness.utils import clamp_confidence
+from radiant_harness.utils import coerce_json_types
+
 
 def normalize_pubmedqa_answer(answer: str) -> str:
     """Normalize a PubmedQA answer to canonical form.
@@ -65,17 +68,12 @@ PUBMEDQA_SCHEMA: dict[str, Any] = {
 
 
 def validate_pubmedqa_response(response: dict[str, Any]) -> bool:
-    """Validate that a response has required PubmedQA fields.
-
-    Args:
-        response: Parsed JSON response
-
-    Returns:
-        True if all required fields present and valid
-    """
+    """Validate that a response has required PubmedQA fields."""
     required = ["answer", "confidence", "reasoning", "key_evidence", "continue"]
     if not all(field in response for field in required):
         return False
+
+    coerce_json_types(response, PUBMEDQA_SCHEMA)
 
     # Normalize answer to canonical form (local models may return "Yes" etc.)
     raw_answer = str(response.get("answer", "")).lower().strip()
@@ -84,20 +82,9 @@ def validate_pubmedqa_response(response: dict[str, Any]) -> bool:
         return False
     response["answer"] = normalized
 
-    # Validate confidence is in valid range (coerce strings from local models)
-    confidence = response.get("confidence")
-    if isinstance(confidence, str):
-        try:
-            confidence = float(confidence)
-            response["confidence"] = confidence
-        except ValueError:
-            return False
-    if not (isinstance(confidence, int | float) and 0 <= confidence <= 1):
+    clamped = clamp_confidence(response.get("confidence"))
+    if clamped is None:
         return False
-
-    # Coerce key_evidence from string to list if needed
-    evidence = response.get("key_evidence")
-    if isinstance(evidence, str):
-        response["key_evidence"] = [evidence] if evidence else []
+    response["confidence"] = clamped
 
     return True

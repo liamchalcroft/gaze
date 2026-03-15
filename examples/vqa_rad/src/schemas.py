@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from radiant_harness.utils import clamp_confidence
+from radiant_harness.utils import coerce_json_types
+
 VQA_RAD_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
@@ -72,16 +75,13 @@ VQA_RAD_SCHEMA: dict[str, Any] = {
     },
 }
 
+# answer_type aliases produced by local models
+_CLOSED_ALIASES = {"yes/no", "binary", "boolean", "closed-ended", "closed"}
+_OPEN_ALIASES = {"free-form", "open-ended", "open"}
+
 
 def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
-    """Validate that a response has required VQA-RAD fields.
-
-    Args:
-        response: Parsed JSON response
-
-    Returns:
-        True if all required fields present and valid
-    """
+    """Validate that a response has required VQA-RAD fields."""
     required = [
         "answer",
         "answer_type",
@@ -94,37 +94,31 @@ def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
     if not all(field in response for field in required):
         return False
 
-    # Validate answer_type (coerce common alternatives from local models)
-    answer_type = response.get("answer_type", "")
-    if isinstance(answer_type, str):
-        answer_type = answer_type.lower().strip()
-    if answer_type in ("yes/no", "binary", "boolean", "closed-ended", "closed"):
+    coerce_json_types(response, VQA_RAD_SCHEMA)
+
+    # Normalize answer_type aliases from local models
+    answer_type = str(response.get("answer_type", "")).lower().strip()
+    if answer_type in _CLOSED_ALIASES:
         response["answer_type"] = "closed"
-    elif answer_type in ("free-form", "open-ended", "open"):
+    elif answer_type in _OPEN_ALIASES:
         response["answer_type"] = "open"
     if response.get("answer_type") not in ("closed", "open"):
         return False
 
-    # Validate confidence range (coerce strings from local models)
-    confidence = response.get("confidence")
-    if isinstance(confidence, str):
-        try:
-            confidence = float(confidence)
-            response["confidence"] = confidence
-        except ValueError:
-            return False
-    if not isinstance(confidence, int | float) or not 0 <= confidence <= 1:
+    clamped = clamp_confidence(response.get("confidence"))
+    if clamped is None:
         return False
+    response["confidence"] = clamped
 
-    # Coerce image_observations from string to list if needed
-    obs = response.get("image_observations")
-    if isinstance(obs, str):
-        response["image_observations"] = [obs] if obs else []
-
-    # Coerce region_of_interest from string to dict if needed
+    # Coerce region_of_interest: ensure it has the required inner keys
     roi = response.get("region_of_interest")
     if isinstance(roi, str):
         response["region_of_interest"] = {"description": roi, "location": "unknown"}
+    elif isinstance(roi, dict):
+        if "description" not in roi:
+            # Local models often use alternative keys like "anatomical_structure"
+            roi["description"] = roi.pop("anatomical_structure", roi.pop("region", "unknown"))
+        if "location" not in roi:
+            roi["location"] = roi.pop("area", "unknown")
 
-    # Validate answer is not empty
     return bool(response.get("answer"))

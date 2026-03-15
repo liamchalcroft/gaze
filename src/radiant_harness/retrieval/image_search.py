@@ -35,6 +35,7 @@ from radiant_harness.config import SearchConfig
 from radiant_harness.config import get_config
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError
+from radiant_harness.retrieval.base import _sanitize_api_field
 
 # Pre-sorted by keyword length (longest first) so longer, more specific
 # keywords are matched before shorter substrings (e.g. "ct scan" before "ct").
@@ -115,22 +116,6 @@ def _atexit_cleanup_temp_dirs() -> None:
 
 
 atexit.register(_atexit_cleanup_temp_dirs)
-
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-
-
-def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
-    """Sanitize a text field from an external API response.
-
-    Strips control characters and truncates to *max_length* to reduce
-    prompt-injection surface when these values later appear in LLM
-    conversations.
-    """
-    value = _CONTROL_CHAR_RE.sub("", value)
-    if len(value) > max_length:
-        value = value[:max_length]
-    return value
-
 
 _PMCID_RE = re.compile(r"^PMC\d{1,10}$")
 
@@ -269,11 +254,11 @@ def _validate_download_url(
             )
 
 
-class ImageSearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
-    """Base class for image search engines.
+class OpenISearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
+    """NIH Open-i Biomedical Image Search Engine.
 
-    Inherits session management, retry logic, and honest bot User-Agent
-    from :class:`BaseSearchEngine`.
+    Provides access to the NIH Open-i database of biomedical images,
+    including MRI, CT, X-ray, and other medical imaging modalities.
     """
 
     def _make_error(
@@ -282,14 +267,6 @@ class ImageSearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
         original_error: Exception | None = None,
     ) -> ImageSearchError:
         return ImageSearchError(self.name, message, original_error)
-
-
-class OpenISearchEngine(ImageSearchEngine):
-    """NIH Open-i Biomedical Image Search Engine.
-
-    Provides access to the NIH Open-i database of biomedical images,
-    including MRI, CT, X-ray, and other medical imaging modalities.
-    """
 
     @beartype
     def __init__(self, config: SearchConfig | None = None) -> None:
@@ -306,7 +283,7 @@ class OpenISearchEngine(ImageSearchEngine):
         self.openi_base_url = f"{parsed.scheme}://{parsed.netloc}/"
 
     async def _search_impl(self, query: str, max_results: int) -> list[ImageSearchResult]:
-        params = {
+        params: dict[str, str | int] = {
             "query": query,
             "m": max_results,
             "it": "x,p,m,ct",
@@ -512,7 +489,7 @@ class MedicalImageSearchManager:
             with _temp_dirs_lock:
                 _temp_dirs.add(self.download_dir)
 
-        self.engines: list[ImageSearchEngine] = []
+        self.engines: list[OpenISearchEngine] = []
         engines = engines or ["openi"]
         supported_engines = {"openi"}
         for engine in engines:
