@@ -1780,46 +1780,46 @@ async def _execute_morphological(
 
 
 # Static prompt documentation for tools with fixed parameters
-CROP_PROMPT_DOC = (
+_CROP_PROMPT_DOC = (
     "**crop** - Extract region [x1, y1, x2, y2] normalized (0-1); pixel coords auto-converted"
 )
 
-THRESHOLD_PROMPT_DOC = (
+_THRESHOLD_PROMPT_DOC = (
     "**threshold** - Apply intensity windowing, converts to grayscale (lower: 0-254, upper: 1-255)"
 )
 
-FLIP_HORIZONTAL_PROMPT_DOC = "**flip_horizontal** - Mirror image left-right"
+_FLIP_HORIZONTAL_PROMPT_DOC = "**flip_horizontal** - Mirror image left-right"
 
-FLIP_VERTICAL_PROMPT_DOC = "**flip_vertical** - Mirror image top-bottom"
+_FLIP_VERTICAL_PROMPT_DOC = "**flip_vertical** - Mirror image top-bottom"
 
-ROTATE_PROMPT_DOC = "**rotate** - Rotate image by 90 degrees (clockwise: boolean, default true)"
+_ROTATE_PROMPT_DOC = "**rotate** - Rotate image by 90 degrees (clockwise: boolean, default true)"
 
-RESET_PROMPT_DOC = "**reset** - Return to original image"
+_RESET_PROMPT_DOC = "**reset** - Return to original image"
 
-EQUALIZE_PROMPT_DOC = "**equalize_histogram** - Equalize intensity distribution (grayscale)"
+_EQUALIZE_PROMPT_DOC = "**equalize_histogram** - Equalize intensity distribution (grayscale)"
 
-INTENSITY_STATS_PROMPT_DOC = (
+_INTENSITY_STATS_PROMPT_DOC = (
     "**get_intensity_stats** - Get intensity statistics "
     "(optional box [x1,y1,x2,y2] 0-1; pixel coords auto-converted)"
 )
 
-MEASURE_PROMPT_DOC = (
+_MEASURE_PROMPT_DOC = (
     "**measure** - Measure distance between two points "
     "(point1, point2: [x,y] 0-1; pixel coords auto-converted)"
 )
 
-SYMMETRY_DIFF_PROMPT_DOC = (
+_SYMMETRY_DIFF_PROMPT_DOC = (
     "**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale)"
 )
 
-INVERT_PROMPT_DOC = "**invert** - Invert image intensities, converts to grayscale (negative)"
+_INVERT_PROMPT_DOC = "**invert** - Invert image intensities, converts to grayscale (negative)"
 
-INTENSITY_PROFILE_PROMPT_DOC = (
+_INTENSITY_PROFILE_PROMPT_DOC = (
     "**intensity_profile** - Sample intensities along a line "
     "(point1, point2: [x,y] 0-1; pixel coords auto-converted)"
 )
 
-ANNOTATE_REGION_PROMPT_DOC = (
+_ANNOTATE_REGION_PROMPT_DOC = (
     "**annotate_region** - Draw bounding box overlay, "
     "visual only (box [x1,y1,x2,y2] 0-1, color, label)"
 )
@@ -1888,7 +1888,7 @@ def create_visual_tools(
                 },
                 execute=_execute_crop,
                 requires_image=True,
-                prompt_documentation=CROP_PROMPT_DOC,
+                prompt_documentation=_CROP_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -1996,7 +1996,7 @@ def create_visual_tools(
                 },
                 execute=_execute_threshold,
                 requires_image=True,
-                prompt_documentation=THRESHOLD_PROMPT_DOC,
+                prompt_documentation=_THRESHOLD_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2052,7 +2052,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_equalize,
                 requires_image=True,
-                prompt_documentation=EQUALIZE_PROMPT_DOC,
+                prompt_documentation=_EQUALIZE_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2202,7 +2202,7 @@ def create_visual_tools(
                 },
                 execute=_execute_intensity_stats,
                 requires_image=True,
-                prompt_documentation=INTENSITY_STATS_PROMPT_DOC,
+                prompt_documentation=_INTENSITY_STATS_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2233,7 +2233,7 @@ def create_visual_tools(
                 },
                 execute=_execute_intensity_profile,
                 requires_image=True,
-                prompt_documentation=INTENSITY_PROFILE_PROMPT_DOC,
+                prompt_documentation=_INTENSITY_PROFILE_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2249,7 +2249,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_symmetry_diff,
                 requires_image=True,
-                prompt_documentation=SYMMETRY_DIFF_PROMPT_DOC,
+                prompt_documentation=_SYMMETRY_DIFF_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2265,7 +2265,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_invert,
                 requires_image=True,
-                prompt_documentation=INVERT_PROMPT_DOC,
+                prompt_documentation=_INVERT_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2299,7 +2299,7 @@ def create_visual_tools(
                 },
                 execute=_execute_annotate_region,
                 requires_image=True,
-                prompt_documentation=ANNOTATE_REGION_PROMPT_DOC,
+                prompt_documentation=_ANNOTATE_REGION_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2312,7 +2312,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_flip_horizontal,
                 requires_image=True,
-                prompt_documentation=FLIP_HORIZONTAL_PROMPT_DOC,
+                prompt_documentation=_FLIP_HORIZONTAL_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2325,7 +2325,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_flip_vertical,
                 requires_image=True,
-                prompt_documentation=FLIP_VERTICAL_PROMPT_DOC,
+                prompt_documentation=_FLIP_VERTICAL_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2344,7 +2344,7 @@ def create_visual_tools(
                 },
                 execute=_execute_rotate,
                 requires_image=True,
-                prompt_documentation=ROTATE_PROMPT_DOC,
+                prompt_documentation=_ROTATE_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2396,7 +2396,7 @@ def create_visual_tools(
                 },
                 execute=_execute_measure,
                 requires_image=True,
-                prompt_documentation=MEASURE_PROMPT_DOC,
+                prompt_documentation=_MEASURE_PROMPT_DOC,
                 category="visual",
             )
         )
@@ -2409,7 +2409,7 @@ def create_visual_tools(
                 parameters={},
                 execute=_execute_reset,
                 requires_image=True,
-                prompt_documentation=RESET_PROMPT_DOC,
+                prompt_documentation=_RESET_PROMPT_DOC,
                 category="visual",
             )
         )

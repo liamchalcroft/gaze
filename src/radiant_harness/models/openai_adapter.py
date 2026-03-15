@@ -25,7 +25,7 @@ from radiant_harness.exceptions import ModelError
 from radiant_harness.models.adapter_protocol import AdapterProtocol
 from radiant_harness.models.adapter_protocol import GenerationLog
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def _safe_error_summary(e: Exception) -> str:
@@ -57,7 +57,7 @@ class OpenAIAdapter(AdapterProtocol):
 
     _ALLOWED_BASE_URLS: frozenset[str] = frozenset(
         {
-            OPENROUTER_BASE_URL,
+            _OPENROUTER_BASE_URL,
             "https://api.openai.com/v1",
         }
     )
@@ -144,7 +144,7 @@ class OpenAIAdapter(AdapterProtocol):
             # Resolve base_url: explicit > auto-detect OpenRouter > default (OpenAI)
             base_url = self._base_url
             if base_url is None and not openai_key and openrouter_key:
-                base_url = OPENROUTER_BASE_URL
+                base_url = _OPENROUTER_BASE_URL
                 logger.info("Using OpenRouter base URL (OPENROUTER_API_KEY detected)")
 
             kwargs: dict[str, Any] = {

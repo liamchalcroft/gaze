@@ -213,7 +213,7 @@ async def _execute_search_images(
 
 
 # Prompt documentation for search tools
-SEARCH_WEB_PROMPT_DOC = (
+_SEARCH_WEB_PROMPT_DOC = (
     "**search_web** - Search PubMed for medical literature and evidence\n"
     "  - Parameter `query` (string): Medical search terms "
     '(e.g., "glioblastoma MRI imaging characteristics")\n'
@@ -228,7 +228,7 @@ SEARCH_WEB_PROMPT_DOC = (
     "and specific findings in query"
 )
 
-SEARCH_IMAGES_PROMPT_DOC = (
+_SEARCH_IMAGES_PROMPT_DOC = (
     "**search_images** - Search NIH Open-i for reference "
     "medical images\n"
     "  - Parameter `query` (string): Image search terms "
@@ -300,7 +300,7 @@ def create_search_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                 },
                 execute=_execute_search_web,
                 requires_image=False,
-                prompt_documentation=SEARCH_WEB_PROMPT_DOC,
+                prompt_documentation=_SEARCH_WEB_PROMPT_DOC,
                 category="search",
             )
         )
@@ -342,7 +342,7 @@ def create_search_tools(disabled_tools: set[str] | None = None) -> list[Tool]:
                 },
                 execute=_execute_search_images,
                 requires_image=False,
-                prompt_documentation=SEARCH_IMAGES_PROMPT_DOC,
+                prompt_documentation=_SEARCH_IMAGES_PROMPT_DOC,
                 category="search",
             )
         )
