@@ -182,6 +182,11 @@ raw_data/
 !examples/nova/src/data/**
 !examples/nova/src/evaluation/
 !examples/nova/src/evaluation/**
+# But keep generated Python cache artifacts ignored inside those trees.
+examples/nova/src/data/**/__pycache__/
+examples/nova/src/data/**/*.py[cod]
+examples/nova/src/evaluation/**/__pycache__/
+examples/nova/src/evaluation/**/*.py[cod]
 
 # Model checkpoints and weights
 checkpoints/
@@ -204,6 +209,11 @@ eval*/
 # Re-include NOVA example evaluation code
 !examples/nova/src/evaluation/
 !examples/nova/src/evaluation/**
+# Keep generated cache artifacts ignored even inside re-included example code.
+examples/nova/src/data/**/__pycache__/
+examples/nova/src/data/**/*.py[cod]
+examples/nova/src/evaluation/**/__pycache__/
+examples/nova/src/evaluation/**/*.py[cod]
 
 # Cache directories
 cache/
