@@ -167,7 +167,6 @@ nova = [
     "torch",
     "torchvision",
     "torchmetrics",
-    "pycocotools",
     "pandas",
     "datasets",
     "sacrebleu",
@@ -177,7 +176,6 @@ nova = [
 ]
 medmarks = [
     "verifiers>=0.1.6,<1",
-    "prime>=0.3.35",
     "datasets>=2.0.0",
 ]
 verifiers = [
@@ -198,5 +196,4 @@ rl = [
     "datasets",
     "transformers",
     "torch",
-    "accelerate",
 ]
