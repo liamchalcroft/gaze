@@ -29,8 +29,6 @@ def deep_freeze(obj: Any) -> Any: ...  # noqa: ANN401
 
 def deep_freeze(obj: Any) -> Any:  # noqa: ANN401
     """Recursively freeze a JSON-like structure."""
-    if isinstance(obj, MappingProxyType):
-        obj = cast("dict[str, Any]", dict(obj))
     if isinstance(obj, Mapping):
         m = cast("Mapping[str, Any]", obj)
         return MappingProxyType({str(k): deep_freeze(v) for k, v in m.items()})
@@ -60,8 +58,6 @@ def deep_thaw(obj: Any) -> Any: ...  # noqa: ANN401
 
 def deep_thaw(obj: Any) -> Any:  # noqa: ANN401
     """Recursively convert frozen containers back to plain JSON-like objects."""
-    if isinstance(obj, MappingProxyType):
-        obj = cast("dict[str, Any]", dict(obj))
     if isinstance(obj, Mapping):
         m = cast("Mapping[str, Any]", obj)
         return {str(k): deep_thaw(v) for k, v in m.items()}
