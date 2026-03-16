@@ -114,6 +114,7 @@ def test_ground_truth_multiple_boxes(tmp_path: Path) -> None:
 def test_nova_dataset_smoke(monkeypatch, tmp_path: Path) -> None:
     """Smoke test for NovaDataset using parquet + snapshot_download."""
     pd = pytest.importorskip("pandas")
+    pytest.importorskip("torch")
 
     from src.data import nova_dataset
     from src.data.nova_dataset import NovaDataset

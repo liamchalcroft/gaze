@@ -205,7 +205,7 @@ class TestBertScoreClamping:
         """Verify returned bert_f1 is clamped to [0, 1]."""
         from unittest.mock import patch
 
-        import torch
+        torch = pytest.importorskip("torch")
 
         from src.evaluation.caption import evaluate_caption
 
@@ -225,7 +225,7 @@ class TestBertScoreClamping:
         """Edge case: if BERTScore somehow exceeds 1.0, clamp it."""
         from unittest.mock import patch
 
-        import torch
+        torch = pytest.importorskip("torch")
 
         from src.evaluation.caption import evaluate_caption
 
@@ -272,6 +272,7 @@ class TestLocalizationAnalysisLoading:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        pytest.importorskip("matplotlib")
         from experiments import plot
 
         run_dir = tmp_path / "runs" / "main_results" / "run_a"
@@ -545,6 +546,7 @@ class TestRescaleVsClamp:
     """Smoke test: rescale_and_clamp_box vs clamp_and_validate_box."""
 
     def test_rescale_preserves_relative_position(self) -> None:
+        pytest.importorskip("torch")
         from src.evaluation.detection import rescale_and_clamp_box
 
         # Model outputs in 1000x1000 space for a 480x480 image
@@ -555,6 +557,7 @@ class TestRescaleVsClamp:
         assert all(0 <= c <= 480 for c in box), f"All coords in [0, 480]: {box}"
 
     def test_clamp_squishes_out_of_bounds(self) -> None:
+        pytest.importorskip("torch")
         from src.evaluation.detection import clamp_and_validate_box
 
         box = clamp_and_validate_box([100, 200, 700, 900], 480, 480)
@@ -562,6 +565,7 @@ class TestRescaleVsClamp:
         assert box[3] == 480.0, "Clamped y2 should equal height"
 
     def test_rescale_better_than_clamp_for_shifted_coords(self) -> None:
+        pytest.importorskip("torch")
         from src.evaluation.detection import clamp_and_validate_box
         from src.evaluation.detection import rescale_and_clamp_box
 
@@ -580,6 +584,7 @@ class TestRescaleVsClamp:
         assert clamped[2] == 480.0, "Clamped x2 should be clipped"
 
     def test_swapped_coordinates_handled(self) -> None:
+        pytest.importorskip("torch")
         from src.evaluation.detection import rescale_and_clamp_box
 
         box = rescale_and_clamp_box([300, 400, 100, 200], 480, 480)
@@ -655,6 +660,6 @@ class TestSampleStdAggregation:
         assert expected_std > 1.0, "Sample std of [0, 2] should be > 1.0 (Bessel correction)"
 
     def test_aggregate_source_uses_n_minus_1(self) -> None:
-        """Verify the aggregate module source code uses (len(xs) - 1) denominator."""
-        content = (EXAMPLE_ROOT / "experiments" / "aggregate.py").read_text()
-        assert "(len(xs) - 1)" in content, "aggregate._std must use Bessel correction"
+        """Verify sample_std uses (len(xs) - 1) denominator (Bessel correction)."""
+        content = (EXAMPLE_ROOT / "experiments" / "__init__.py").read_text()
+        assert "(len(xs) - 1)" in content, "sample_std must use Bessel correction"

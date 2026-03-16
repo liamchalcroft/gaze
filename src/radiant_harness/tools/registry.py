@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 # Valid JSON Schema types for tool parameters
 _VALID_PARAM_TYPES = {"string", "number", "integer", "boolean", "array", "object", "null"}
 
+# Image mode sets for encode_image — hoisted to avoid per-call allocation.
+_JPEG_SAFE_MODES: frozenset[str] = frozenset({"RGB", "L"})
+_PNG_UNSAFE_MODES: frozenset[str] = frozenset({"F"})
+_SUPPORTED_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "PNG"})
+
 
 @dataclass(frozen=True)
 class EncodedImage:
@@ -82,19 +87,17 @@ def encode_image(
     from radiant_harness.config import get_config
 
     fmt = format.upper()
-    if fmt not in {"JPEG", "PNG"}:
+    if fmt not in _SUPPORTED_IMAGE_FORMATS:
         raise ValueError(f"Unsupported image format: {format!r}. Use 'JPEG' or 'PNG'.")
 
     # JPEG only supports RGB and L modes.  Medical images may use I (32-bit
     # int), I;16 (16-bit int from DICOM-converted PNGs), or F (float32).
     # Alpha modes (RGBA, LA, PA) and palette mode (P) also need conversion.
-    jpeg_safe_modes = {"RGB", "L"}
-    if fmt == "JPEG" and image.mode not in jpeg_safe_modes:
+    if fmt == "JPEG" and image.mode not in _JPEG_SAFE_MODES:
         image = image.convert("RGB")
 
     # PNG cannot save mode F (float32).  Convert to L for lossless grayscale.
-    png_unsafe_modes = {"F"}
-    if fmt == "PNG" and image.mode in png_unsafe_modes:
+    if fmt == "PNG" and image.mode in _PNG_UNSAFE_MODES:
         image = image.convert("L")
 
     buffer = BytesIO()
@@ -134,6 +137,7 @@ class ToolDocumenter:
             tools: List of tools to document. Can be empty and tools added later.
         """
         self._tools: dict[str, Tool] = {}
+        self._schemas_cache: list[dict[str, Any]] | None = None
         for tool in tools or []:
             self.register(tool)
 
@@ -145,6 +149,7 @@ class ToolDocumenter:
             tool: Tool to register
         """
         self._tools[tool.name] = tool
+        self._schemas_cache = None  # Invalidate on change
 
     @beartype
     def get_tool(self, name: str) -> Tool | None:
@@ -171,12 +176,16 @@ class ToolDocumenter:
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get OpenAI-compatible tool schemas for all registered tools.
 
+        Results are cached and invalidated when tools are registered.
+
         Returns:
             List of tool schemas in OpenAI function-calling format
 
         Raises:
             ValueError: If tool has invalid schema configuration
         """
+        if self._schemas_cache is not None:
+            return self._schemas_cache
         schemas: list[dict[str, Any]] = []
         for tool in self._tools.values():
             properties: dict[str, Any] = {}
@@ -244,6 +253,7 @@ class ToolDocumenter:
                 },
             }
             schemas.append(schema)
+        self._schemas_cache = schemas
         return schemas
 
     @beartype

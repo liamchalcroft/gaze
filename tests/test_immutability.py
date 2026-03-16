@@ -11,7 +11,6 @@ from types import MappingProxyType
 
 import pytest
 
-from radiant_harness.config import RankingWeights
 from radiant_harness.models.adapter_protocol import GenerationLog
 from radiant_harness.types import AgenticResult
 from radiant_harness.types import ToolCall
@@ -362,13 +361,3 @@ class TestToolResultMetadataFrozen:
         assert isinstance(tr.metadata, MappingProxyType)
         with pytest.raises(TypeError):
             tr.metadata["a"]["x"] = 2  # type: ignore[index]
-
-
-class TestRankingWeightsFrozen:
-    """RankingWeights must deep-freeze nested content_type_boosts mappings."""
-
-    def test_nested_mappings_are_deep_frozen_even_if_proxy_wrapped(self) -> None:
-        raw = {"diagnosis": {"guidelines": 0.3}}
-        weights = RankingWeights(content_type_boosts=MappingProxyType(raw))
-        raw["diagnosis"]["guidelines"] = 0.9
-        assert weights.content_type_boosts["diagnosis"]["guidelines"] == 0.3

@@ -215,6 +215,42 @@ class ImageInput:
             return self
         return await asyncio.to_thread(self.load)
 
+    def _load_pil_only(self) -> ImageInput:
+        """Load PIL pixel data without base64 encoding.
+
+        Used internally when encoding will be deferred (e.g. before
+        downscaling) to avoid a wasted JPEG+base64 cycle at full resolution.
+        """
+        if self.pil_image is not None:
+            return self
+
+        try:
+            img = Image.open(self.path)
+            img.load()
+        except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
+            raise ValueError(f"Failed to load image '{self.path}': {e}") from e
+        max_dim = get_config().image.max_image_dimension
+        if img.width > max_dim or img.height > max_dim:
+            img.close()
+            raise ValueError(
+                f"Image dimensions {img.width}x{img.height} exceed "
+                f"maximum allowed dimension of {max_dim}px"
+            )
+        return ImageInput(
+            path=self.path,
+            label=self.label,
+            width=img.width,
+            height=img.height,
+            encoded=None,
+            pil_image=img,
+        )
+
+    async def _aload_pil_only(self) -> ImageInput:
+        """Async version of :meth:`_load_pil_only`."""
+        if self.pil_image is not None:
+            return self
+        return await asyncio.to_thread(self._load_pil_only)
+
 
 def _try_wrap_inner_schema(
     salvaged: dict[str, Any],
@@ -270,11 +306,24 @@ def _try_wrap_inner_schema(
 def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
     """Return a new ImageInput downscaled so neither side exceeds *max_dim*.
 
-    If the image already fits, returns the original unchanged.
+    If the image already fits, returns it with encoding (encoding lazily if
+    the caller used ``_load_pil_only`` to defer it).
     Uses Lanczos resampling for quality.
     """
-    if img.pil_image is None or (img.width <= max_dim and img.height <= max_dim):
+    if img.pil_image is None:
         return img
+    if img.width <= max_dim and img.height <= max_dim:
+        # Already fits — encode now if deferred by _load_pil_only.
+        if img.encoded is not None:
+            return img
+        return ImageInput(
+            path=img.path,
+            label=img.label,
+            width=img.width,
+            height=img.height,
+            encoded=encode_image(img.pil_image),
+            pil_image=img.pil_image,
+        )
     pil = img.pil_image.copy()
     pil.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
     logger.info(
@@ -413,6 +462,14 @@ class AgenticProcessorBase(ABC):
         self._shared_web_search_manager = None
         self._shared_image_search_manager = None
 
+        # Per-processor caches — tools, schemas, and docs are invariant across
+        # analyze() calls because use_tools/use_web_search/_disabled_tools are
+        # fixed at construction time.
+        self._visual_tools_cache: list[Tool] | None = None
+        self._search_tools_cache: list[Tool] | None = None
+        self._tool_schemas_cache: list[dict[str, Any]] | None = None
+        self._tool_docs_cache: str | None = None
+
     @beartype
     def _ensure_initialized(self) -> None:
         """Ensure model adapter is initialized."""
@@ -456,6 +513,18 @@ class AgenticProcessorBase(ABC):
         if close_tasks:
             await asyncio.gather(*close_tasks)
 
+    def _get_visual_tools(self) -> list[Tool]:
+        """Return cached visual tools, creating them on first call."""
+        if self._visual_tools_cache is None:
+            self._visual_tools_cache = create_visual_tools(self._disabled_tools)
+        return self._visual_tools_cache
+
+    def _get_search_tools(self) -> list[Tool]:
+        """Return cached search tools, creating them on first call."""
+        if self._search_tools_cache is None:
+            self._search_tools_cache = create_search_tools(self._disabled_tools)
+        return self._search_tools_cache
+
     @beartype
     def _create_tool_registry(
         self,
@@ -475,7 +544,7 @@ class AgenticProcessorBase(ABC):
         image_search_manager = None
         if not images:
             if self.use_web_search:
-                tools = create_search_tools(self._disabled_tools)
+                tools = list(self._get_search_tools())
                 tool_names = {tool.name for tool in tools}
                 if "search_web" in tool_names:
                     web_search_manager = self._get_shared_web_search_manager()
@@ -492,10 +561,10 @@ class AgenticProcessorBase(ABC):
         tools: list[Tool] = []
 
         if self.use_tools:
-            tools.extend(create_visual_tools(self._disabled_tools))
+            tools.extend(self._get_visual_tools())
 
         if self.use_web_search:
-            tools.extend(create_search_tools(self._disabled_tools))
+            tools.extend(self._get_search_tools())
 
         if not tools:
             return None
@@ -652,13 +721,17 @@ class AgenticProcessorBase(ABC):
 
         image_inputs = self._normalize_image_inputs(images, image_labels)
 
-        image_inputs = list(await asyncio.gather(*(img.aload() for img in image_inputs)))
-
-        # Downscale images for local models with small context windows.
+        # When downscaling is needed, defer JPEG+base64 encoding until after
+        # the resize to avoid encoding at full resolution then discarding it.
         if self.max_encode_dimension is not None:
+            image_inputs = list(
+                await asyncio.gather(*(img._aload_pil_only() for img in image_inputs))
+            )
             image_inputs = [
                 _downscale_image(img, self.max_encode_dimension) for img in image_inputs
             ]
+        else:
+            image_inputs = list(await asyncio.gather(*(img.aload() for img in image_inputs)))
 
         # Single-turn mode never offers tools (last turn withholds them),
         # so skip registry creation to avoid wasted I/O and memory.
@@ -764,7 +837,12 @@ class AgenticProcessorBase(ABC):
                 system_prompt += f"\n\nField descriptions:\n{hints_block}"
 
         if tool_registry and self.max_turns > 1:
-            tool_docs = tool_registry.get_documenter().generate_prompt_documentation()
+            # Reuse cached docs across analyze() calls — tools are invariant.
+            if self._tool_docs_cache is None:
+                self._tool_docs_cache = (
+                    tool_registry.get_documenter().generate_prompt_documentation()
+                )
+            tool_docs = self._tool_docs_cache
             if tool_docs:
                 system_prompt = (
                     f"{system_prompt}\n\n"
@@ -808,7 +886,13 @@ class AgenticProcessorBase(ABC):
         if model_adapter is None:
             raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
 
-        tool_schemas = tool_registry.get_tool_schemas() if tool_registry else None
+        # Reuse cached schemas across analyze() calls — tools are invariant.
+        if tool_registry is not None:
+            if self._tool_schemas_cache is None:
+                self._tool_schemas_cache = tool_registry.get_tool_schemas()
+            tool_schemas = self._tool_schemas_cache
+        else:
+            tool_schemas = None
 
         total_tokens: int = 0
         nudge_count: int = 0

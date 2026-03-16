@@ -60,12 +60,21 @@ class ToolResult:
     image_base64: str | None = None
     image_mime_type: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=lambda: {})
+    _data_url: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if bool(self.image_base64) != bool(self.image_mime_type):
             raise ValueError("image_base64 and image_mime_type must both be set or both be None")
         # Deep-freeze metadata even when callers pass a pre-wrapped proxy.
         object.__setattr__(self, "metadata", deep_freeze(self.metadata))
+        # Pre-compute data URL once to avoid re-creating the large string
+        # on every call (consistent with EncodedImage._data_url caching).
+        if self.image_base64 and self.image_mime_type:
+            object.__setattr__(
+                self,
+                "_data_url",
+                f"data:{self.image_mime_type};base64,{self.image_base64}",
+            )
 
     @property
     def success(self) -> bool:
@@ -74,9 +83,7 @@ class ToolResult:
 
     def get_image_data_url(self) -> str | None:
         """Get data URL for image if present."""
-        if self.image_base64 and self.image_mime_type:
-            return f"data:{self.image_mime_type};base64,{self.image_base64}"
-        return None
+        return self._data_url
 
     @property
     def formatted_results(self) -> str | None:

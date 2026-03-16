@@ -46,7 +46,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.11'
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage.xml
         flags: unittests
@@ -72,9 +72,4 @@ jobs:
       run: uv sync --extra nova
 
     - name: Run NOVA tests
-      run: |
-        if uv run python -c "import torch" 2>/dev/null; then
-          uv run pytest examples/nova/tests/ -x --tb=short
-        else
-          echo "Skipping NOVA tests (torch not available)"
-        fi
+      run: uv run pytest examples/nova/tests/ -x --tb=short
