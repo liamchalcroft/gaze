@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from typing import cast
 
 from beartype import beartype
 from beartype.roar import BeartypeException
@@ -1431,10 +1432,11 @@ class AgenticProcessorBase(ABC):
                 missing_fields: list[str] = []
                 if response_schema is not None:
                     schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-                    required = schema_obj.get("required", [])
-                    if isinstance(required, list):
+                    required_raw = schema_obj.get("required", [])
+                    if isinstance(required_raw, list):
+                        required_list = cast("list[str]", required_raw)
                         missing_fields = [
-                            field for field in required if field not in final_response
+                            field for field in required_list if field not in final_response
                         ]
                 raise SchemaValidationError(
                     f"Final response failed schema validation. Top-level keys: {top_keys}",
@@ -1667,13 +1669,14 @@ class AgenticProcessorBase(ABC):
             if not isinstance(content, list):
                 continue
             # Fast path: skip messages already stripped (no image_url parts left).
-            if not any(part.get("type") == "image_url" for part in content):
+            parts = cast("list[dict[str, Any]]", content)
+            if not any(part.get("type") == "image_url" for part in parts):
                 continue
             placeholder = (
                 "[original image omitted]" if role == "user" else "[previous tool image omitted]"
             )
             new_content: list[dict[str, Any]] = []
-            for part in content:
+            for part in parts:
                 if part.get("type") == "image_url":
                     new_content.append({"type": "text", "text": placeholder})
                 else:

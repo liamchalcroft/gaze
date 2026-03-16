@@ -18,6 +18,11 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import cast
+
+if TYPE_CHECKING:
+    from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+    from radiant_harness.retrieval.web_search import WebSearchManager
 
 from beartype import beartype
 from beartype.roar import BeartypeException
@@ -363,8 +368,8 @@ class ToolRegistry:
 
         # Lazily-created search managers — reused across tool calls within a
         # single agentic session to keep TCP connections alive.
-        self._web_search_manager = web_search_manager
-        self._image_search_manager = image_search_manager
+        self._web_search_manager: WebSearchManager | None = web_search_manager
+        self._image_search_manager: MedicalImageSearchManager | None = image_search_manager
         self._owns_web_search_manager = web_search_manager is None
         self._owns_image_search_manager = image_search_manager is None
 
@@ -475,18 +480,19 @@ class ToolRegistry:
 
             # Coerce elements inside "array" params whose items are "number" or "integer"
             elif param_type == "array" and isinstance(val, list):
+                elements = cast("list[Any]", val)
                 items_type = param_info.get("items", {}).get("type")
                 if items_type == "number":
                     kwargs[param_name] = [
                         float(v) if isinstance(v, int) and not isinstance(v, bool) else v
-                        for v in val
+                        for v in elements
                     ]
                 elif items_type == "integer":
                     kwargs[param_name] = [
                         int(v)
                         if isinstance(v, float) and not isinstance(v, bool) and v == int(v)
                         else v
-                        for v in val
+                        for v in elements
                     ]
 
         try:

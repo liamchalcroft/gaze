@@ -325,7 +325,7 @@ class TestToolCallParity:
         )
 
         assert tool_calls is not None
-        assert isinstance(tool_calls[0]["arguments"], str)
+        assert tool_calls[0]["arguments"] == '{"x": 100}'
 
     @pytest.mark.asyncio
     async def test_id_is_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,7 +344,7 @@ class TestToolCallParity:
         )
 
         assert tool_calls is not None
-        assert isinstance(tool_calls[0]["id"], str)
+        assert tool_calls[0]["id"] == "call_abc"
 
 
 # ---------------------------------------------------------------------------

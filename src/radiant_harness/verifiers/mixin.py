@@ -98,7 +98,7 @@ class VerifiableProcessorMixin:
         dataset_path: str | None = None,
         image_base_path: Path | None = None,
         **processor_kwargs: Any,
-    ) -> type[vf.MultiTurnEnv]:
+    ) -> type:
         """Create a verifiers MultiTurnEnv class from this processor.
 
         The returned environment class can be used directly with verifiers
@@ -137,6 +137,15 @@ class VerifiableProcessorMixin:
                 env_dataset_path: str | None = None,
                 **env_kwargs: Any,
             ) -> None:
+                # Create processor and adapter *before* super().__init__
+                # because BaseMultiTurnEnv.__init__ calls _prepare_cases →
+                # _build_prompt → get_system_prompt which needs _processor.
+                self._processor = processor_cls(**processor_kwargs)
+                self._adapter = RadiantHarnessAdapter(
+                    processor=self._processor,
+                )
+                self._image_base_path = image_base_path
+
                 # Use provided cases/path or fall back to class-level defaults
                 actual_cases = env_cases or cases
                 actual_path = env_dataset_path or dataset_path
@@ -148,13 +157,6 @@ class VerifiableProcessorMixin:
                     name=f"{processor_cls.__name__}Env",
                     **env_kwargs,
                 )
-
-                # Create processor instance
-                self._processor = processor_cls(**processor_kwargs)
-                self._adapter = RadiantHarnessAdapter(
-                    processor=self._processor,
-                )
-                self._image_base_path = image_base_path
 
             def get_system_prompt(self) -> str:
                 """Get system prompt from processor."""

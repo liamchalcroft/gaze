@@ -136,7 +136,7 @@ class TestLungApexHierarchy:
         # So they aren't in the same children list. Score should be 0.
         # This is still better than before: at least bilateral lung -> lung apex
         # gives partial credit when pred is "bilateral lung" and GT is "lung apex"
-        assert isinstance(score, float)
+        assert score == 0.0
 
 
 # -- Finding #4: bbox coordinate ordering in validation -----------------

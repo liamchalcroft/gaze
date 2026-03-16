@@ -57,11 +57,11 @@ def _sanitize_exception_message(exc: Exception) -> str:
 # ---------------------------------------------------------------------------
 # Generic type variables
 # ---------------------------------------------------------------------------
-ResultT = TypeVar("ResultT")
-"""Type variable for search result dataclasses."""
+_ResultT = TypeVar("_ResultT")
+"""Module-private type variable for search result dataclasses."""
 
-ErrorT = TypeVar("ErrorT", bound="SearchEngineError")
-"""Type variable for engine-specific error types."""
+_ErrorT = TypeVar("_ErrorT", bound="SearchEngineError")
+"""Module-private type variable for engine-specific error types."""
 
 
 # ---------------------------------------------------------------------------
@@ -90,15 +90,15 @@ class SearchEngineError(HarnessError):
 # ---------------------------------------------------------------------------
 # Abstract base search engine
 # ---------------------------------------------------------------------------
-class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
+class BaseSearchEngine(ABC, Generic[_ResultT, _ErrorT]):
     """Abstract base for search engines with retry / session management.
 
     Subclasses must implement :meth:`_search_impl` and :meth:`_make_error`.
 
     Type parameters:
-        ResultT: The result dataclass returned by the engine (e.g.
+        _ResultT: The result dataclass returned by the engine (e.g.
             ``SearchResult``, ``ImageSearchResult``).
-        ErrorT: The engine-specific error type raised on failure (e.g.
+        _ErrorT: The engine-specific error type raised on failure (e.g.
             ``SearchError``, ``ImageSearchError``).
     """
 
@@ -163,7 +163,7 @@ class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
     # -- retry wrapper -------------------------------------------------------
 
     @beartype
-    async def search(self, query: str, max_results: int = 5) -> list[ResultT]:
+    async def search(self, query: str, max_results: int = 5) -> list[_ResultT]:
         """Search with automatic retry and exponential back-off.
 
         Returns:
@@ -190,7 +190,7 @@ class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
     # -- abstract interface --------------------------------------------------
 
     @abstractmethod
-    async def _search_impl(self, query: str, max_results: int) -> list[ResultT]:
+    async def _search_impl(self, query: str, max_results: int) -> list[_ResultT]:
         """Execute the actual search.  Implemented by concrete engines."""
         ...
 
@@ -202,7 +202,7 @@ class BaseSearchEngine(ABC, Generic[ResultT, ErrorT]):
     ) -> SearchEngineError:
         """Construct the engine-specific error type.
 
-        This avoids requiring the generic ``ErrorT`` at runtime while still
+        This avoids requiring the generic ``_ErrorT`` at runtime while still
         letting each concrete engine raise its own error class.
         """
         ...

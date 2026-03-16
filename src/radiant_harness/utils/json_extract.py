@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from typing import cast
 
 from beartype import beartype
 
@@ -44,7 +45,7 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
     try:
         result = json.loads(text)
         if isinstance(result, dict):
-            return result
+            return cast("dict[str, Any]", result)
         return None
     except json.JSONDecodeError:
         pass
@@ -58,7 +59,7 @@ def extract_json_from_text(text: str) -> dict[str, Any] | None:
         try:
             result, _ = decoder.raw_decode(text, i)
             if isinstance(result, dict):
-                return result
+                return cast("dict[str, Any]", result)
         except json.JSONDecodeError:
             continue
 

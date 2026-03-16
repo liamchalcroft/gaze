@@ -327,7 +327,7 @@ class TestToolCallParity:
         import json
 
         parsed = json.loads(tool_calls[0]["arguments"])
-        assert isinstance(parsed, dict)
+        assert parsed == {"x": 10}
 
     def test_id_is_string(self) -> None:
         adapter = HuggingFaceAdapter(model_name="dummy")

@@ -264,7 +264,7 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
             journal = _sanitize_api_field(article.get("fulljournalname", ""), max_length=200)
             pub_date = _sanitize_api_field(article.get("pubdate", ""), max_length=30)
             doi = _sanitize_api_field(article.get("doi", ""), max_length=100)
-            article_ids = article.get("articleids", [])
+            article_ids: list[dict[str, str]] = article.get("articleids", [])
 
             # Check for open access (PMC ID present → open access)
             open_access = any(

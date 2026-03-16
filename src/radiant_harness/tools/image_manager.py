@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
+
+if TYPE_CHECKING:
+    from radiant_harness.tools.registry import EncodedImage
 
 from beartype import beartype
 from loguru import logger
@@ -32,7 +36,7 @@ class ImageManager:
         self._image_path: Path | None = None
         self._current_image: Image.Image | None = None
         self._original_image: Image.Image | None = None
-        self._original_encoding: Any = None
+        self._original_encoding: EncodedImage | None = None
         self._image_lock = asyncio.Lock()
         self._modified: bool = False
 
