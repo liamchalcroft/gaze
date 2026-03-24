@@ -152,6 +152,7 @@ class TestBboxOrderingValidation:
             "answer": "effusion",
             "location": {"reference": "right lung", "bbox": bbox},
             "confidence": 0.9,
+            "continue": False,
         }
 
     def test_valid_bbox_passes(self) -> None:

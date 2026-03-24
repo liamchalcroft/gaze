@@ -42,8 +42,6 @@ PUBMEDQA_SCHEMA: dict[str, Any] = {
                 },
                 "confidence": {
                     "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
                     "description": "Confidence in the answer (0.0-1.0)",
                 },
                 "reasoning": {
@@ -87,4 +85,4 @@ def validate_pubmedqa_response(response: dict[str, Any]) -> bool:
         return False
     response["confidence"] = clamped
 
-    return True
+    return isinstance(response.get("continue"), bool)

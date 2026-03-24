@@ -40,18 +40,15 @@ GEMEX_SCHEMA: dict[str, Any] = {
                         "bbox": {
                             "type": "array",
                             "items": {"type": "integer"},
-                            "minItems": 4,
-                            "maxItems": 4,
-                            "description": "Bounding box [x1, y1, x2, y2] in pixels",
+                            "description": "Bounding box [x1, y1, x2, y2] in pixels (exactly 4 elements)",
                         },
                     },
                     "required": ["reference", "bbox"],
+                    "additionalProperties": False,
                     "description": "Visual grounding location",
                 },
                 "confidence": {
                     "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
                     "description": "Confidence in the answer (0.0-1.0)",
                 },
                 "continue": {
@@ -68,7 +65,7 @@ GEMEX_SCHEMA: dict[str, Any] = {
 
 def validate_gemex_response(response: dict[str, Any]) -> bool:
     """Validate that a response has required GEMeX fields."""
-    required = ["reasoning", "answer", "location", "confidence"]
+    required = ["reasoning", "answer", "location", "confidence", "continue"]
     if not all(field in response for field in required):
         return False
 
@@ -98,6 +95,9 @@ def validate_gemex_response(response: dict[str, Any]) -> bool:
     if clamped is None:
         return False
     response["confidence"] = clamped
+
+    if not isinstance(response.get("continue"), bool):
+        return False
 
     return bool(response.get("answer"))
 

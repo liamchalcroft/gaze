@@ -294,6 +294,7 @@ class TestSchemaValidatorStrictness:
             "answer": "pleural effusion",
             "location": {"reference": "right lung", "bbox": [10, 20, 200, 300]},
             "confidence": 0.85,
+            "continue": False,
         }
         assert validate_gemex_response(resp) is True
 

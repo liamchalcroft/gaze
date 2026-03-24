@@ -121,4 +121,7 @@ def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
         if "location" not in roi:
             roi["location"] = roi.pop("area", "unknown")
 
+    if not isinstance(response.get("continue"), bool):
+        return False
+
     return bool(response.get("answer"))

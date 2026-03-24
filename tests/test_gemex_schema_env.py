@@ -46,9 +46,8 @@ class TestContinueFieldRequired:
         required_keys = set(schema["required"])
         assert prop_keys == required_keys, f"Properties {prop_keys - required_keys} not in required"
 
-    def test_valid_response_without_continue(self) -> None:
-        """A response missing `continue` still passes the validator
-        (validator is lenient; schema enforcement is API-side)."""
+    def test_valid_response_without_continue_fails(self) -> None:
+        """A response missing `continue` now fails validation (aligned with schema)."""
         response = {
             "reasoning": "Bilateral opacities seen in lower zones.",
             "answer": "pleural effusion",
@@ -58,7 +57,7 @@ class TestContinueFieldRequired:
             },
             "confidence": 0.85,
         }
-        assert validate_gemex_response(response) is True
+        assert validate_gemex_response(response) is False
 
     def test_valid_response_with_continue_false(self) -> None:
         """A response with continue=false should still pass."""
@@ -144,7 +143,7 @@ class TestIsCompletedContinueField:
         return False  # invalid → not completed
 
     def test_complete_without_continue(self) -> None:
-        """Valid response without continue → episode complete."""
+        """Response without continue fails validation → episode not complete."""
         assert (
             self._make_env_and_check(
                 {
@@ -154,7 +153,7 @@ class TestIsCompletedContinueField:
                     "confidence": 0.8,
                 }
             )
-            is True
+            is False
         )
 
     def test_complete_with_continue_false(self) -> None:
@@ -228,6 +227,7 @@ class TestUnifiedRewardPath:
                 "answer": "pleural effusion",
                 "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
                 "confidence": 0.9,
+                "continue": False,
             }
         )
         completion = [{"role": "assistant", "content": response}]
@@ -285,6 +285,7 @@ class TestUnifiedRewardPath:
                         "bbox": [100, 100, 200, 200],
                     },
                     "confidence": 0.85,
+                    "continue": False,
                 }
             )
             + "\n```"
@@ -308,6 +309,7 @@ class TestUnifiedRewardPath:
                 "answer": "pleural effusion",
                 "location": {"reference": "wrong region", "bbox": [0, 0, 1, 1]},
                 "confidence": 0.9,
+                "continue": False,
             }
         )
         completion = [{"role": "assistant", "content": response}]
@@ -331,6 +333,7 @@ class TestUnifiedRewardPath:
                 "answer": "pleural effusion",
                 "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
                 "confidence": 0.9,
+                "continue": False,
             }
         )
         completion = [{"role": "assistant", "content": response}]
@@ -374,6 +377,7 @@ class TestUnifiedRewardPath:
                 "answer": "pleural effusion",
                 "location": {"reference": "right lower lobe", "bbox": [100, 100, 200, 200]},
                 "confidence": 0.9,
+                "continue": False,
             }
         )
         # Plain string instead of message list
