@@ -808,6 +808,8 @@ class TestToolExecutors:
         result = await registry.execute("adjust_sharpness", factor=2.0)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.metadata["factor"] == 2.0
 
     @pytest.mark.asyncio
     async def test_equalize_tool(self, tmp_path: Path) -> None:
@@ -817,6 +819,8 @@ class TestToolExecutors:
         result = await registry.execute("equalize_histogram")
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.metadata.get("image_replaced") is True
 
     @pytest.mark.asyncio
     async def test_intensity_stats_tool(self, tmp_path: Path) -> None:
@@ -883,6 +887,8 @@ class TestToolExecutors:
         result = await registry.execute("detect_edges", method="sobel")
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.metadata["method"] == "sobel"
 
     @pytest.mark.asyncio
     async def test_symmetry_diff_tool(self, tmp_path: Path) -> None:
@@ -892,6 +898,8 @@ class TestToolExecutors:
         result = await registry.execute("symmetry_diff")
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert "symmetry" in result.description.lower() or "diff" in result.description.lower()
 
     @pytest.mark.asyncio
     async def test_annotate_region_tool(self, tmp_path: Path) -> None:
@@ -903,6 +911,8 @@ class TestToolExecutors:
         )
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert "annotated" in result.description.lower()
 
     @pytest.mark.asyncio
     async def test_invert_tool(self, tmp_path: Path) -> None:
@@ -912,6 +922,8 @@ class TestToolExecutors:
         result = await registry.execute("invert")
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert "invert" in result.description.lower()
 
     @pytest.mark.asyncio
     async def test_window_level_tool_preset(self, tmp_path: Path) -> None:
@@ -938,6 +950,9 @@ class TestToolExecutors:
         result = await registry.execute("adaptive_equalize", clip_limit=2.0, tile_size=4)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.metadata["clip_limit"] == 2.0
+        assert result.metadata["tile_size"] == 4
 
     @pytest.mark.asyncio
     async def test_intensity_profile_tool(self, tmp_path: Path) -> None:
@@ -957,6 +972,8 @@ class TestToolExecutors:
         result = await registry.execute("denoise", sigma=1.0)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert "denoise" in result.description.lower() or "noise" in result.description.lower()
 
     @pytest.mark.asyncio
     async def test_morphological_tool(self, tmp_path: Path) -> None:
@@ -966,6 +983,8 @@ class TestToolExecutors:
         result = await registry.execute("morphological", operation="erode", iterations=1)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.metadata["operation"] == "erode"
 
     @pytest.mark.asyncio
     async def test_morphological_invalid_op_raises(self, tmp_path: Path) -> None:

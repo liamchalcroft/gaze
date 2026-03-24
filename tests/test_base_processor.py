@@ -223,6 +223,8 @@ class TestImageInputAload:
         for inp in loaded:
             assert inp.width == 64
             assert inp.encoded is not None
+            assert len(inp.encoded.data) > 0
+            assert inp.encoded.mime_type.startswith("image/")
 
     @pytest.mark.asyncio
     async def test_aload_rejects_oversized_image(self, tmp_path: Path) -> None:

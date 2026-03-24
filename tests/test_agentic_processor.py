@@ -751,6 +751,7 @@ async def test_graceful_tool_failure_lets_model_recover() -> None:
     tool_result_turns = [t for t in result.turns if t.role == "tool_result"]
     assert len(tool_result_turns) == 1
     assert tool_result_turns[0].tool_results[0].error is not None
+    assert "boom" in tool_result_turns[0].tool_results[0].error.lower()
 
 
 @pytest.mark.asyncio
@@ -1861,6 +1862,8 @@ async def test_non_dict_tool_args_returns_error_not_crash() -> None:
     tool_turns = [t for t in result.turns if t.role == "tool_result"]
     assert len(tool_turns) == 1
     assert tool_turns[0].tool_results[0].error is not None
+    err = tool_turns[0].tool_results[0].error.lower()
+    assert "json" in err or "malformed" in err or "type" in err
 
 
 # ---------------------------------------------------------------------------
@@ -2465,3 +2468,306 @@ async def test_truncation_error_max_tokens_hint() -> None:
     with pytest.raises(AgenticProcessingError, match="Increase max_tokens"):
         await processor.analyze(images=None, metadata={})
     await processor.aclose()
+
+
+# =====================================================================
+# continue field coercion: None, int, bool-like values
+# =====================================================================
+
+
+class NullContinueAdapter(AdapterProtocol):
+    """Adapter that returns 'continue' as null (None)."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        return (
+            '{"continue": null, "result": "done"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+    async def aclose(self) -> None:
+        pass
+
+
+class IntContinueAdapter(AdapterProtocol):
+    """Adapter returning 'continue' as int 1 then 0."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                '{"continue": 1, "result": "thinking"}',
+                None,
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+        return (
+            '{"continue": 0, "result": "done"}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_null_continue_coerced_to_false() -> None:
+    """null/None in 'continue' field is coerced to False (model is done)."""
+    adapter = NullContinueAdapter()
+
+    class NullContinueProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return "result" in response
+
+    processor = NullContinueProcessor()
+    result = await processor.analyze(images=None, metadata={})
+    assert result.final_response["result"] == "done"
+    assert adapter.calls == 1  # Accepted on first turn (null → false → done)
+
+
+@pytest.mark.asyncio
+async def test_int_continue_coerced_to_bool() -> None:
+    """Integer 0/1 in 'continue' field is coerced to bool."""
+    adapter = IntContinueAdapter()
+
+    class IntContinueProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=3,
+                adapter_factory=lambda: adapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return None
+
+        def validate_response(self, response):
+            return "result" in response
+
+    processor = IntContinueProcessor()
+    result = await processor.analyze(images=None, metadata={})
+    # Turn 1: continue=1 → True (keep going), turn 2: continue=0 → False (done)
+    assert result.final_response["result"] == "done"
+    assert adapter.calls == 2
+
+
+# =====================================================================
+# AgenticResult confidence bounds validation
+# =====================================================================
+
+from radiant_harness.types import Turn  # noqa: E402
+
+
+class TestAgenticResultConfidenceBounds:
+    """AgenticResult rejects confidence outside [0.0, 1.0]."""
+
+    def test_confidence_above_one_raises(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            AgenticResult(
+                final_response={"continue": False},
+                turns=(Turn(role="assistant", content="ok"),),
+                total_tokens=10,
+                confidence=1.5,
+            )
+
+    def test_confidence_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            AgenticResult(
+                final_response={"continue": False},
+                turns=(Turn(role="assistant", content="ok"),),
+                total_tokens=10,
+                confidence=-0.1,
+            )
+
+    def test_confidence_nan_raises(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            AgenticResult(
+                final_response={"continue": False},
+                turns=(Turn(role="assistant", content="ok"),),
+                total_tokens=10,
+                confidence=float("nan"),
+            )
+
+    def test_confidence_inf_raises(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            AgenticResult(
+                final_response={"continue": False},
+                turns=(Turn(role="assistant", content="ok"),),
+                total_tokens=10,
+                confidence=float("inf"),
+            )
+
+    def test_confidence_boundary_zero_ok(self) -> None:
+        result = AgenticResult(
+            final_response={"continue": False},
+            turns=(Turn(role="assistant", content="ok"),),
+            total_tokens=10,
+            confidence=0.0,
+        )
+        assert result.confidence == 0.0
+
+    def test_confidence_boundary_one_ok(self) -> None:
+        result = AgenticResult(
+            final_response={"continue": False},
+            turns=(Turn(role="assistant", content="ok"),),
+            total_tokens=10,
+            confidence=1.0,
+        )
+        assert result.confidence == 1.0
+
+
+# =====================================================================
+# Post-loop inner-schema wrapping re-runs coerce_json_types
+# =====================================================================
+
+
+class InnerSchemaAdapter(AdapterProtocol):
+    """Adapter that returns a sub-object (inner schema keys) instead of full schema.
+
+    Simulates a local model that outputs the inner caption object fields
+    at the top level, with string types that need coercion.
+    """
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages=None,
+        max_tokens=None,
+        temperature=None,
+        tools=None,
+        response_format=None,
+        **kwargs,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format
+        self.calls += 1
+        # Return inner-object keys at top level, with string score (needs coercion)
+        return (
+            '{"text": "A brain MRI", "score": "0.85", "continue": false}',
+            None,
+            GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+        )
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_post_loop_wrapping_recoerces_types() -> None:
+    """After inner-schema wrapping, coerce_json_types re-runs on wrapped dict."""
+
+    class InnerSchemaProcessor(AgenticProcessorBase):
+        def __init__(self) -> None:
+            super().__init__(
+                model_name="test-model",
+                use_tools=False,
+                use_web_search=False,
+                max_turns=1,
+                adapter_factory=InnerSchemaAdapter,
+            )
+
+        def get_system_prompt(self, images, metadata):
+            return "system"
+
+        def get_user_message(self, images, metadata):
+            return "user"
+
+        def get_response_schema(self):
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "caption": {
+                                "type": "object",
+                                "properties": {
+                                    "text": {"type": "string"},
+                                    "score": {"type": "number"},
+                                },
+                            },
+                            "tags": {"type": "array"},
+                            "continue": {"type": "boolean"},
+                        },
+                        "required": ["caption", "tags", "continue"],
+                    },
+                },
+            }
+
+        def validate_response(self, response):
+            if "caption" not in response:
+                return False
+            cap = response["caption"]
+            if not isinstance(cap, dict):
+                return False
+            return "text" in cap and isinstance(cap.get("score"), int | float)
+
+    processor = InnerSchemaProcessor()
+    result = await processor.analyze(images=None, metadata={})
+    # The model returned {text, score, continue} — inner keys of "caption".
+    # _try_wrap_inner_schema wraps under "caption", then coerce_json_types
+    # converts score from string "0.85" to float 0.85.
+    assert "caption" in result.final_response
+    cap = result.final_response["caption"]
+    assert cap["text"] == "A brain MRI"
+    assert isinstance(cap["score"], float)
+    assert cap["score"] == pytest.approx(0.85)
