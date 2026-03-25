@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +23,10 @@ from radiant_harness.tools import ToolRegistry
 from radiant_harness.tools import encode_image
 from radiant_harness.types import ToolResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _echo_tool(registry: ToolRegistry, value: int = 0) -> ToolResult:  # noqa: ARG001
     return ToolResult(tool_name="echo", description=f"echo {value}", metadata={"value": value})
@@ -357,8 +355,8 @@ class SanitizationAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_tool_name_sanitization() -> None:
     """None names and empty-after-sanitization names are skipped; trailing parens stripped."""
-    Proc = _make_processor_cls(SanitizationAdapter)
-    processor = Proc()
+    proc_cls = _make_processor_cls(SanitizationAdapter)
+    processor = proc_cls()
     result = await processor.analyze(images=None, metadata={})
     assert result.final_response["result"] == "ok"
     # Only the echo() call (cleaned to "echo") should have produced a result
@@ -386,9 +384,7 @@ class TruncationAdapter(AdapterProtocol):
             return (
                 "partial text that was cut off...",
                 None,
-                GenerationLog(
-                    prompt_tokens=100, completion_tokens=100, finish_reason="length"
-                ),
+                GenerationLog(prompt_tokens=100, completion_tokens=100, finish_reason="length"),
             )
         return (
             '{"continue": false, "result": "recovered"}',
@@ -401,8 +397,8 @@ class TruncationAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_truncation_intermediate_turn_nudges() -> None:
     """Truncated intermediate turn adds nudge message; model recovers on next turn."""
-    Proc = _make_processor_cls(TruncationAdapter, max_turns=5)
-    processor = Proc()
+    proc_cls = _make_processor_cls(TruncationAdapter, max_turns=5)
+    processor = proc_cls()
     result = await processor.analyze(images=None, metadata={})
     assert result.final_response["result"] == "recovered"
     assert len(result.turns) >= 2
@@ -439,8 +435,8 @@ class IncompleteAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_incomplete_response_nudge() -> None:
     """Incomplete JSON (fails validation) with turns left → nudge, then recover."""
-    Proc = _make_processor_cls(IncompleteAdapter, max_turns=5)
-    processor = Proc()
+    proc_cls = _make_processor_cls(IncompleteAdapter, max_turns=5)
+    processor = proc_cls()
     result = await processor.analyze(images=None, metadata={})
     assert result.final_response["result"] == "fixed"
     assert len(result.turns) >= 2
@@ -466,8 +462,8 @@ class AlwaysContinueAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_force_completion_on_last_turn() -> None:
     """Model always says continue=true → forced to false on last turn."""
-    Proc = _make_processor_cls(AlwaysContinueAdapter, max_turns=1, use_tools=False)
-    processor = Proc()
+    proc_cls = _make_processor_cls(AlwaysContinueAdapter, max_turns=1, use_tools=False)
+    processor = proc_cls()
     result = await processor.analyze(images=None, metadata={})
     assert result.final_response["result"] == "forced"
     assert result.final_response["continue"] is False
@@ -494,8 +490,8 @@ class BadContinueAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_non_boolean_continue_raises() -> None:
     """Non-bool, non-string 'continue' value raises AgenticProcessingError."""
-    Proc = _make_processor_cls(BadContinueAdapter, max_turns=1, use_tools=False)
-    processor = Proc()
+    proc_cls = _make_processor_cls(BadContinueAdapter, max_turns=1, use_tools=False)
+    processor = proc_cls()
     with pytest.raises(AgenticProcessingError, match="continue.*must be boolean"):
         await processor.analyze(images=None, metadata={})
 
@@ -507,8 +503,8 @@ async def test_non_boolean_continue_raises() -> None:
 
 @pytest.mark.unit
 def test_format_tool_results_empty() -> None:
-    Proc = _make_processor_cls(AlwaysContinueAdapter, use_tools=False)
-    processor = Proc()
+    proc_cls = _make_processor_cls(AlwaysContinueAdapter, use_tools=False)
+    processor = proc_cls()
     result = processor._format_tool_results([])
     assert result == "No tools were executed."
 
@@ -532,8 +528,8 @@ class StreamingAdapter(AdapterProtocol):
 @pytest.mark.unit
 async def test_streaming_response_raises() -> None:
     """Streaming responses raise AgenticProcessingError."""
-    Proc = _make_processor_cls(StreamingAdapter, max_turns=1, use_tools=False)
-    processor = Proc()
+    proc_cls = _make_processor_cls(StreamingAdapter, max_turns=1, use_tools=False)
+    processor = proc_cls()
     with pytest.raises(AgenticProcessingError, match="Streaming"):
         await processor.analyze(images=None, metadata={})
 
@@ -651,11 +647,14 @@ async def test_truncation_salvage_on_last_turn() -> None:
     def _validate(self, r):
         return "caption" in r and isinstance(r.get("caption"), dict)
 
-    Proc = _make_processor_cls(
-        LastTurnTruncationAdapter, max_turns=1, use_tools=False,
-        schema=schema, validator=_validate,
+    proc_cls = _make_processor_cls(
+        LastTurnTruncationAdapter,
+        max_turns=1,
+        use_tools=False,
+        schema=schema,
+        validator=_validate,
     )
-    processor = Proc()
+    processor = proc_cls()
     result = await processor.analyze(images=None, metadata={})
     # Should have salvaged and wrapped inner keys under "caption"
     assert result.final_response["caption"]["text"] == "salvaged caption"

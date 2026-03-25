@@ -16,7 +16,6 @@ from radiant_harness.tools import create_visual_tools
 from radiant_harness.tools.registry import ToolDocumenter
 from radiant_harness.types import ToolResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -237,118 +236,132 @@ class TestVisualToolErrors:
     async def test_crop_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch("radiant_harness.tools.visual.crop_image", side_effect=ValueError("bad crop")):
-            with pytest.raises(ToolExecutionError, match="Invalid crop region"):
-                await registry.execute("crop", box=[0.1, 0.1, 0.9, 0.9])
+        with (
+            patch("radiant_harness.tools.visual.crop_image", side_effect=ValueError("bad crop")),
+            pytest.raises(ToolExecutionError, match="Invalid crop region"),
+        ):
+            await registry.execute("crop", box=[0.1, 0.1, 0.9, 0.9])
 
     async def test_contrast_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.adjust_contrast", side_effect=ValueError("bad")
+        with (
+            patch("radiant_harness.tools.visual.adjust_contrast", side_effect=ValueError("bad")),
+            pytest.raises(ToolExecutionError, match="Invalid contrast factor"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid contrast factor"):
-                await registry.execute("adjust_contrast", factor=1.5)
+            await registry.execute("adjust_contrast", factor=1.5)
 
     async def test_threshold_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.apply_intensity_threshold",
-            side_effect=ValueError("bad"),
+        with (
+            patch(
+                "radiant_harness.tools.visual.apply_intensity_threshold",
+                side_effect=ValueError("bad"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid threshold"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid threshold"):
-                await registry.execute("threshold", lower=0, upper=255)
+            await registry.execute("threshold", lower=0, upper=255)
 
     async def test_brightness_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.adjust_brightness", side_effect=ValueError("bad")
+        with (
+            patch("radiant_harness.tools.visual.adjust_brightness", side_effect=ValueError("bad")),
+            pytest.raises(ToolExecutionError, match="Invalid brightness factor"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid brightness factor"):
-                await registry.execute("adjust_brightness", factor=1.5)
+            await registry.execute("adjust_brightness", factor=1.5)
 
     async def test_sharpness_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.adjust_sharpness", side_effect=ValueError("bad")
+        with (
+            patch("radiant_harness.tools.visual.adjust_sharpness", side_effect=ValueError("bad")),
+            pytest.raises(ToolExecutionError, match="Invalid sharpness factor"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid sharpness factor"):
-                await registry.execute("adjust_sharpness", factor=1.5)
+            await registry.execute("adjust_sharpness", factor=1.5)
 
     async def test_intensity_stats_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.get_intensity_stats", side_effect=ValueError("bad box")
+        with (
+            patch(
+                "radiant_harness.tools.visual.get_intensity_stats",
+                side_effect=ValueError("bad box"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid box"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid box"):
-                await registry.execute(
-                    "get_intensity_stats", box=[0.1, 0.1, 0.9, 0.9]
-                )
+            await registry.execute("get_intensity_stats", box=[0.1, 0.1, 0.9, 0.9])
 
     async def test_measure_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.measure_distance", side_effect=ValueError("bad pts")
+        with (
+            patch(
+                "radiant_harness.tools.visual.measure_distance", side_effect=ValueError("bad pts")
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid measurement"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid measurement"):
-                await registry.execute(
-                    "measure", point1=[0.1, 0.1], point2=[0.9, 0.9]
-                )
+            await registry.execute("measure", point1=[0.1, 0.1], point2=[0.9, 0.9])
 
     async def test_show_grid_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.draw_grid_overlay", side_effect=ValueError("bad grid")
+        with (
+            patch(
+                "radiant_harness.tools.visual.draw_grid_overlay",
+                side_effect=ValueError("bad grid"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid grid"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid grid"):
-                await registry.execute("show_grid", divisions=4)
+            await registry.execute("show_grid", divisions=4)
 
     async def test_detect_edges_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.detect_edges", side_effect=ValueError("bad method")
+        with (
+            patch(
+                "radiant_harness.tools.visual.detect_edges", side_effect=ValueError("bad method")
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid edge detection"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid edge detection"):
-                await registry.execute("detect_edges", method="sobel")
+            await registry.execute("detect_edges", method="sobel")
 
     async def test_annotate_region_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.annotate_region", side_effect=ValueError("bad annot")
+        with (
+            patch(
+                "radiant_harness.tools.visual.annotate_region",
+                side_effect=ValueError("bad annot"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid annotation"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid annotation"):
-                await registry.execute(
-                    "annotate_region", box=[0.1, 0.1, 0.9, 0.9], color="red"
-                )
+            await registry.execute("annotate_region", box=[0.1, 0.1, 0.9, 0.9], color="red")
 
     async def test_intensity_profile_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.compute_intensity_profile",
-            side_effect=ValueError("bad pts"),
+        with (
+            patch(
+                "radiant_harness.tools.visual.compute_intensity_profile",
+                side_effect=ValueError("bad pts"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid profile"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid profile"):
-                await registry.execute(
-                    "intensity_profile", point1=[0.1, 0.1], point2=[0.9, 0.9]
-                )
+            await registry.execute("intensity_profile", point1=[0.1, 0.1], point2=[0.9, 0.9])
 
     async def test_denoise_value_error(self, tmp_path: Path) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
-        with patch(
-            "radiant_harness.tools.visual.denoise_gaussian", side_effect=ValueError("bad sigma")
+        with (
+            patch(
+                "radiant_harness.tools.visual.denoise_gaussian",
+                side_effect=ValueError("bad sigma"),
+            ),
+            pytest.raises(ToolExecutionError, match="Invalid denoise"),
         ):
-            with pytest.raises(ToolExecutionError, match="Invalid denoise"):
-                await registry.execute("denoise", sigma=1.0)
+            await registry.execute("denoise", sigma=1.0)
 
     async def test_no_image_raises(self) -> None:
         """Executing a tool that requires an image on empty registry raises."""

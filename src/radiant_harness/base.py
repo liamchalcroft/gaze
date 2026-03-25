@@ -21,13 +21,13 @@ from typing import Any
 from typing import cast
 
 from beartype import beartype
-from beartype.roar import BeartypeException
 from loguru import logger
 from PIL import Image
 
 from radiant_harness._frozen import deep_thaw
 from radiant_harness.config import get_config
 from radiant_harness.exceptions import AgenticProcessingError
+from radiant_harness.exceptions import HarnessError
 from radiant_harness.exceptions import SchemaValidationError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
@@ -39,6 +39,7 @@ from radiant_harness.tools import create_search_tools
 from radiant_harness.tools import create_visual_tools
 from radiant_harness.tools import encode_image
 from radiant_harness.types import AgenticResult
+from radiant_harness.types import RunConfig
 from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
@@ -1376,10 +1377,26 @@ class AgenticProcessorBase(ABC):
             if "continue" not in parsed:
                 parsed["continue"] = False
             if not isinstance(wants_continue, bool):
-                # Some models return "true"/"false" strings instead of booleans.
-                # Coerce on intermediate turns; only crash on the final turn where
-                # strict schema enforcement is expected.
-                if isinstance(wants_continue, str) and wants_continue.lower() in ("true", "false"):
+                # Local models frequently return non-bool values for "continue":
+                #   None / null  → treat as false (model is done)
+                #   0 / 1        → coerce to bool
+                #   "true"/"false" strings → coerce to bool
+                if wants_continue is None:
+                    wants_continue = False
+                    parsed["continue"] = False
+                    logger.warning(f"Turn {turn_idx + 1}: coerced null 'continue' to False")
+                elif isinstance(wants_continue, int):
+                    original_value = wants_continue
+                    wants_continue = bool(wants_continue)
+                    parsed["continue"] = wants_continue
+                    logger.warning(
+                        f"Turn {turn_idx + 1}: coerced int 'continue' "
+                        f"value {original_value!r} to bool {wants_continue!r}"
+                    )
+                elif isinstance(wants_continue, str) and wants_continue.lower() in (
+                    "true",
+                    "false",
+                ):
                     original_value = wants_continue
                     wants_continue = wants_continue.lower() == "true"
                     parsed["continue"] = wants_continue
@@ -1504,12 +1521,19 @@ class AgenticProcessorBase(ABC):
             # responses can recover these cases.
             if response_schema is not None:
                 wrapped = _try_wrap_inner_schema(final_response, response_schema)
-                if wrapped is not final_response and self.validate_response(wrapped):
-                    logger.warning(
-                        f"Recovered response via inner-schema wrapping "
-                        f"(original keys: {list(final_response.keys())[:10]})"
-                    )
-                    final_response = wrapped
+                if wrapped is not final_response:
+                    # Re-run coerce on the wrapped dict — the pre-wrapping coerce
+                    # at line 1516 operated on the un-wrapped structure where field
+                    # names didn't match the top-level schema, so nested fields
+                    # went uncoerced.  Now that wrapping placed them under the
+                    # correct parent key, coercion can find and fix them.
+                    coerce_json_types(wrapped, response_schema)
+                    if self.validate_response(wrapped):
+                        logger.warning(
+                            f"Recovered response via inner-schema wrapping "
+                            f"(original keys: {list(final_response.keys())[:10]})"
+                        )
+                        final_response = wrapped
 
             if not self.validate_response(final_response):
                 top_keys = list(final_response.keys())[:10]
@@ -1531,11 +1555,20 @@ class AgenticProcessorBase(ABC):
 
         confidence = self.calculate_confidence(final_response, turns)
 
+        run_config = RunConfig(
+            model_name=self.model_name,
+            temperature=_DEFAULT_TEMPERATURE,
+            seed=self.seed,
+            max_tokens=self.max_tokens or _DEFAULT_MAX_TOKENS,
+            max_turns=self.max_turns,
+        )
+
         return AgenticResult(
             final_response=final_response,
             turns=tuple(turns),
             total_tokens=total_tokens,
             confidence=confidence,
+            run_config=run_config,
         )
 
     def _parse_tool_args(self, tool_call: ToolCall) -> dict[str, Any]:
@@ -1613,22 +1646,27 @@ class AgenticProcessorBase(ABC):
                 error=str(e),
             )
         except (
-            ValueError,
             TypeError,
-            KeyError,
-            AttributeError,
-            OSError,
+            ValueError,
             RuntimeError,
-            BeartypeException,
+            OSError,
+            LookupError,
+            AttributeError,
+            ArithmeticError,
             asyncio.TimeoutError,
+            HarnessError,
         ) as e:
             logger.warning(
-                f"Tool '{tool_call.name}' crashed on turn {turn_idx + 1}: {e}",
+                "Tool '%s' crashed on turn %d (%s): %s",
+                tool_call.name,
+                turn_idx + 1,
+                type(e).__name__,
+                e,
             )
             return ToolResult(
                 tool_name=tool_call.name,
                 description=f"Tool '{tool_call.name}' encountered an error",
-                error=str(e),
+                error=f"{type(e).__name__}: {e}",
             )
 
     @beartype

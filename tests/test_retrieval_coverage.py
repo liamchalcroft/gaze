@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import shutil
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -20,7 +17,6 @@ from radiant_harness.retrieval.image_search import MedicalImageSearchManager
 from radiant_harness.retrieval.image_search import OpenISearchEngine
 from radiant_harness.retrieval.image_search import _validate_download_url
 from radiant_harness.retrieval.web_search import PubMedSearchEngine
-
 
 # ---------------------------------------------------------------------------
 # PubMed: _fetch_article_details  (lines 275-336)
@@ -90,9 +86,7 @@ class TestFetchArticleDetails:
             patch.object(
                 engine, "_fetch_summary", new_callable=AsyncMock, return_value=summary_data
             ),
-            patch.object(
-                engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}
-            ),
+            patch.object(engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}),
         ):
             results = await engine._fetch_article_details(["12345"])
 
@@ -107,9 +101,7 @@ class TestFetchArticleDetails:
             patch.object(
                 engine, "_fetch_summary", new_callable=AsyncMock, return_value={"error": "bad"}
             ),
-            patch.object(
-                engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}
-            ),
+            patch.object(engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}),
         ):
             results = await engine._fetch_article_details(["12345"])
 
@@ -138,9 +130,7 @@ class TestFetchArticleDetails:
             patch.object(
                 engine, "_fetch_summary", new_callable=AsyncMock, return_value=summary_data
             ),
-            patch.object(
-                engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}
-            ),
+            patch.object(engine, "_fetch_abstracts", new_callable=AsyncMock, return_value={}),
         ):
             results = await engine._fetch_article_details(["111"])
 
@@ -173,7 +163,9 @@ class TestPubMedSearchEdgeCases:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        with patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch.object(
+            engine, "_get_session", new_callable=AsyncMock, return_value=mock_session
+        ):
             results = await engine._search_impl("test query", max_results=5)
 
         assert results == []
@@ -191,7 +183,9 @@ class TestPubMedSearchEdgeCases:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        with patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=mock_session):
+        with patch.object(
+            engine, "_get_session", new_callable=AsyncMock, return_value=mock_session
+        ):
             results = await engine._search_impl("test query", max_results=5)
 
         assert results == []
@@ -232,13 +226,15 @@ class TestMedicalImageSearchManagerEdgeCases:
         )
 
         mock_session = AsyncMock()
-        mock_session.get = MagicMock(
-            side_effect=aiohttp.ClientError("connection failed")
-        )
+        mock_session.get = MagicMock(side_effect=aiohttp.ClientError("connection failed"))
 
-        with patch.object(mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session):
-            with pytest.raises(ImageDownloadError, match="connection failed"):
-                await mgr.download_image(result)
+        with (
+            patch.object(
+                mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
+            ),
+            pytest.raises(ImageDownloadError, match="connection failed"),
+        ):
+            await mgr.download_image(result)
 
         await mgr.close()
 
@@ -303,15 +299,19 @@ class TestDoDownload:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        with patch.object(mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session):
-            with patch("radiant_harness.retrieval.image_search._validate_download_url"):
-                with pytest.raises(ImageDownloadError, match="HTTP 404"):
-                    await mgr._do_download(
-                        mock_session,
-                        result,
-                        "abc123",
-                        ".jpg",
-                    )
+        with (
+            patch.object(
+                mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
+            ),
+            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            pytest.raises(ImageDownloadError, match="HTTP 404"),
+        ):
+            await mgr._do_download(
+                mock_session,
+                result,
+                "abc123",
+                ".jpg",
+            )
         await mgr.close()
 
     async def test_non_image_content_type_raises(self, tmp_path: Path) -> None:
@@ -333,9 +333,11 @@ class TestDoDownload:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        with patch("radiant_harness.retrieval.image_search._validate_download_url"):
-            with pytest.raises(ImageDownloadError, match="not an image"):
-                await mgr._do_download(mock_session, result, "abc", ".jpg")
+        with (
+            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            pytest.raises(ImageDownloadError, match="not an image"),
+        ):
+            await mgr._do_download(mock_session, result, "abc", ".jpg")
         await mgr.close()
 
     async def test_content_length_too_large_raises(self, tmp_path: Path) -> None:
@@ -360,9 +362,11 @@ class TestDoDownload:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_resp)
 
-        with patch("radiant_harness.retrieval.image_search._validate_download_url"):
-            with pytest.raises(ImageDownloadError, match="too large"):
-                await mgr._do_download(mock_session, result, "abc", ".jpg")
+        with (
+            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            pytest.raises(ImageDownloadError, match="too large"),
+        ):
+            await mgr._do_download(mock_session, result, "abc", ".jpg")
         await mgr.close()
 
 
@@ -389,9 +393,9 @@ async def test_openi_invalid_json_raises() -> None:
 
     mock_resp = AsyncMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json = AsyncMock(side_effect=aiohttp.ContentTypeError(
-        MagicMock(), MagicMock(), message="bad json"
-    ))
+    mock_resp.json = AsyncMock(
+        side_effect=aiohttp.ContentTypeError(MagicMock(), MagicMock(), message="bad json")
+    )
     mock_resp.text = AsyncMock(return_value="<html>not json</html>")
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
@@ -399,9 +403,11 @@ async def test_openi_invalid_json_raises() -> None:
     mock_session = AsyncMock()
     mock_session.get = MagicMock(return_value=mock_resp)
 
-    with patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=mock_session):
-        with pytest.raises(ImageSearchError, match="invalid JSON"):
-            await engine._search_impl("brain MRI", max_results=5)
+    with (
+        patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=mock_session),
+        pytest.raises(ImageSearchError, match="invalid JSON"),
+    ):
+        await engine._search_impl("brain MRI", max_results=5)
 
     await engine.close()
 
@@ -416,12 +422,14 @@ def test_validate_download_url_dns_failure() -> None:
     """DNS resolution failure raises ImageDownloadError."""
     import socket
 
-    with patch("socket.getaddrinfo", side_effect=socket.gaierror("DNS failed")):
-        with pytest.raises(ImageDownloadError, match="DNS resolution failed"):
-            _validate_download_url(
-                "https://openi.nlm.nih.gov/imgs/test.jpg",
-                allowed_hostnames=frozenset({"openi.nlm.nih.gov"}),
-            )
+    with (
+        patch("socket.getaddrinfo", side_effect=socket.gaierror("DNS failed")),
+        pytest.raises(ImageDownloadError, match="DNS resolution failed"),
+    ):
+        _validate_download_url(
+            "https://openi.nlm.nih.gov/imgs/test.jpg",
+            allowed_hostnames=frozenset({"openi.nlm.nih.gov"}),
+        )
 
 
 # ---------------------------------------------------------------------------
