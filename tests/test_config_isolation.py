@@ -10,6 +10,7 @@ import pytest
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
+from radiant_harness.config import _validate_base_url
 from radiant_harness.config import config_context
 from radiant_harness.config import get_config
 from radiant_harness.config import reset_config
@@ -141,3 +142,79 @@ class TestAutouseFixture:
     def test_b_config_is_default(self) -> None:
         """Config must be back to defaults — proves the fixture ran."""
         assert get_config().cache.max_cache_size == CacheConfig().max_cache_size
+
+
+class TestImageProcessingConfigValidation:
+    """Test all __post_init__ validation branches (config.py lines 61-114)."""
+
+    def test_min_image_size_below_one_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_image_size must be >= 1"):
+            ImageProcessingConfig(min_image_size=0)
+
+    def test_max_dimension_below_min_size_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_image_dimension.*must be >= min_image_size"):
+            ImageProcessingConfig(min_image_size=100, max_image_dimension=50)
+
+    def test_min_zoom_ge_max_zoom_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_zoom_factor.*must be < max_zoom_factor"):
+            ImageProcessingConfig(min_zoom_factor=5.0, max_zoom_factor=2.0)
+
+    def test_min_contrast_ge_max_contrast_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_contrast_factor.*must be < max_contrast_factor"):
+            ImageProcessingConfig(min_contrast_factor=3.0, max_contrast_factor=0.5)
+
+    def test_jpeg_quality_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="default_jpeg_quality must be between 1 and 100"):
+            ImageProcessingConfig(default_jpeg_quality=0)
+
+    def test_jpeg_quality_above_100_raises(self) -> None:
+        with pytest.raises(ValueError, match="default_jpeg_quality must be between 1 and 100"):
+            ImageProcessingConfig(default_jpeg_quality=101)
+
+    def test_min_brightness_ge_max_brightness_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_brightness_factor.*must be < max_brightness_factor"):
+            ImageProcessingConfig(min_brightness_factor=3.0, max_brightness_factor=0.5)
+
+    def test_min_sharpness_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_sharpness_factor must be >= 0"):
+            ImageProcessingConfig(min_sharpness_factor=-1.0)
+
+    def test_min_sharpness_ge_max_sharpness_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_sharpness_factor.*must be < max_sharpness_factor"):
+            ImageProcessingConfig(min_sharpness_factor=5.0, max_sharpness_factor=1.0)
+
+    def test_grid_divisions_below_two_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_grid_divisions must be between 2 and 20"):
+            ImageProcessingConfig(max_grid_divisions=1)
+
+    def test_grid_divisions_above_twenty_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_grid_divisions must be between 2 and 20"):
+            ImageProcessingConfig(max_grid_divisions=21)
+
+    def test_gaussian_sigma_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_gaussian_sigma must be > 0"):
+            ImageProcessingConfig(min_gaussian_sigma=0.0)
+
+    def test_gaussian_sigma_min_ge_max_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_gaussian_sigma.*must be < max_gaussian_sigma"):
+            ImageProcessingConfig(min_gaussian_sigma=6.0, max_gaussian_sigma=1.0)
+
+    def test_morphological_iterations_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_morphological_iterations must be between 1 and 20"):
+            ImageProcessingConfig(max_morphological_iterations=0)
+
+    def test_morphological_iterations_above_twenty_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_morphological_iterations must be between 1 and 20"):
+            ImageProcessingConfig(max_morphological_iterations=21)
+
+    def test_clahe_clip_min_ge_max_raises(self) -> None:
+        with pytest.raises(ValueError, match="min_clahe_clip_limit.*must be < max_clahe_clip_limit"):
+            ImageProcessingConfig(min_clahe_clip_limit=10.0, max_clahe_clip_limit=1.0)
+
+
+class TestValidateBaseUrl:
+    """Test _validate_base_url edge cases (config.py line 190)."""
+
+    def test_missing_hostname_raises(self) -> None:
+        with pytest.raises(ValueError, match="has no hostname"):
+            _validate_base_url("https:///path/only", "test_field")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -216,3 +217,82 @@ class TestImageManagerCopyIsolation:
         assert mgr.current_image is not None
         assert mgr.current_image.size == (100, 100)
         assert mgr.current_image is not mgr._original_image  # noqa: SLF001
+
+
+class TestImageManagerOSErrors:
+    """Cover set_image generic OSError (lines 126-127)."""
+
+    def test_set_image_generic_oserror_is_wrapped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = _create_image(tmp_path)
+        mgr = ImageManager()
+
+        def _raise_oserror(*_args: object, **_kwargs: object) -> None:
+            raise OSError("Simulated disk failure")
+
+        monkeypatch.setattr("PIL.Image.open", _raise_oserror)
+        with pytest.raises(ToolExecutionError, match="Failed to read"):
+            mgr.set_image(path)
+
+
+class TestEnsureLoadedErrorPaths:
+    """Cover ensure_loaded async error handlers (lines 150, 164-169)."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_loaded_file_not_found(self, tmp_path: Path) -> None:
+        """FileNotFoundError from async load is wrapped (line 164-165)."""
+        ghost = tmp_path / "ghost.png"
+        mgr = ImageManager()
+        mgr._image_path = ghost  # noqa: SLF001
+        with pytest.raises(ToolExecutionError, match="not found"):
+            await mgr.ensure_loaded()
+
+    @pytest.mark.asyncio
+    async def test_ensure_loaded_invalid_image(self, tmp_path: Path) -> None:
+        """UnidentifiedImageError from async load is wrapped (line 166-167)."""
+        bad = tmp_path / "bad.png"
+        bad.write_text("not an image")
+        mgr = ImageManager()
+        mgr._image_path = bad  # noqa: SLF001
+        with pytest.raises(ToolExecutionError, match="not a valid image"):
+            await mgr.ensure_loaded()
+
+    @pytest.mark.asyncio
+    async def test_ensure_loaded_generic_oserror(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Generic OSError from async load is wrapped (lines 168-169)."""
+        path = _create_image(tmp_path)
+        mgr = ImageManager()
+        mgr._image_path = path  # noqa: SLF001
+
+        def _raise_oserror(*_args: object, **_kwargs: object) -> None:
+            raise OSError("Simulated disk failure")
+
+        monkeypatch.setattr("PIL.Image.open", _raise_oserror)
+        with pytest.raises(ToolExecutionError, match="Failed to read"):
+            await mgr.ensure_loaded()
+
+    @pytest.mark.asyncio
+    async def test_ensure_loaded_double_check_via_concurrent_calls(self, tmp_path: Path) -> None:
+        """Two concurrent ensure_loaded calls; second hits double-check (line 150)."""
+        path = _create_image(tmp_path)
+        mgr = ImageManager()
+        mgr._image_path = path  # noqa: SLF001
+
+        await asyncio.gather(mgr.ensure_loaded(), mgr.ensure_loaded())
+        assert mgr.has_image
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (50, 50)
+
+
+class TestResetToOriginalNoop:
+    """Cover reset_to_original no-op fast path (line 252)."""
+
+    def test_reset_noop_when_current_is_original(self) -> None:
+        """When _current_image is _original_image, reset returns immediately."""
+        img = Image.new("RGB", (30, 30), color=(100, 100, 100))
+        mgr = ImageManager()
+        mgr._original_image = img  # noqa: SLF001
+        mgr._current_image = img  # noqa: SLF001
+
+        mgr.reset_to_original()
+        assert mgr.current_image is img
+        assert mgr.current_image.size == (30, 30)

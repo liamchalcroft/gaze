@@ -4,7 +4,42 @@ from __future__ import annotations
 
 import pytest
 
+from radiant_harness.utils import clamp_confidence
 from radiant_harness.utils.iou import compute_iou
+
+
+class TestClampConfidenceStrings:
+    """Cover clamp_confidence with numeric string inputs (lines 44-46)."""
+
+    def test_numeric_string_in_range(self) -> None:
+        assert clamp_confidence("0.85") == 0.85
+
+    def test_numeric_string_zero(self) -> None:
+        assert clamp_confidence("0") == 0.0
+
+    def test_numeric_string_one(self) -> None:
+        assert clamp_confidence("1.0") == 1.0
+
+    def test_numeric_string_clamped_high(self) -> None:
+        assert clamp_confidence("1.5") == 1.0
+
+    def test_numeric_string_clamped_low(self) -> None:
+        assert clamp_confidence("-0.5") == 0.0
+
+    def test_numeric_string_nan_returns_none(self) -> None:
+        assert clamp_confidence("nan") is None
+
+    def test_numeric_string_inf_returns_none(self) -> None:
+        assert clamp_confidence("inf") is None
+
+    def test_numeric_string_negative_inf_returns_none(self) -> None:
+        assert clamp_confidence("-inf") is None
+
+    def test_numeric_string_large_scale_clamped(self) -> None:
+        assert clamp_confidence("75") == 1.0
+
+    def test_unparseable_string_returns_none(self) -> None:
+        assert clamp_confidence("not_a_number") is None
 
 
 class TestIoU:

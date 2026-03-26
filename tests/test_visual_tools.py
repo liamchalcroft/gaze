@@ -281,14 +281,19 @@ class TestAdjustSharpness:
 
     def test_blur(self) -> None:
         img = _make_image()
-        result = adjust_sharpness(img, 0.0, config=_CFG)
+        result = adjust_sharpness(img, 0.1, config=_CFG)
         assert result.size == img.size
+
+    def test_zero_sharpness_rejected(self) -> None:
+        """Factor 0.0 destroys all diagnostic detail and is rejected."""
+        img = _make_image()
+        with pytest.raises(ValueError, match="factor must be in range"):
+            adjust_sharpness(img, 0.0, config=_CFG)
 
     def test_negative_raises(self) -> None:
         img = _make_image()
-        cfg = ImageProcessingConfig(min_sharpness_factor=0.0, max_sharpness_factor=3.0)
         with pytest.raises(ValueError, match="factor must be in range"):
-            adjust_sharpness(img, -0.5, config=cfg)
+            adjust_sharpness(img, -0.5, config=_CFG)
 
 
 class TestEqualizeHistogram:
@@ -726,6 +731,7 @@ class TestToolExecutors:
         result = await registry.execute("zoom", factor=2.0)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 100
         assert result.metadata["factor"] == 2.0
 
     @pytest.mark.asyncio
@@ -744,6 +750,9 @@ class TestToolExecutors:
         registry = ToolRegistry(image_path=image_path, tools=tools)
         result = await registry.execute("adjust_contrast", factor=1.5)
         assert result.success
+        assert result.image_base64 is not None
+        assert len(result.image_base64) > 100
+        assert result.metadata["factor"] == 1.5
 
     @pytest.mark.asyncio
     async def test_threshold_tool(self, tmp_path: Path) -> None:
@@ -798,6 +807,7 @@ class TestToolExecutors:
         result = await registry.execute("adjust_brightness", factor=1.5)
         assert result.success
         assert result.image_base64 is not None
+        assert len(result.image_base64) > 100
         assert result.metadata["factor"] == 1.5
 
     @pytest.mark.asyncio
@@ -808,7 +818,7 @@ class TestToolExecutors:
         result = await registry.execute("adjust_sharpness", factor=2.0)
         assert result.success
         assert result.image_base64 is not None
-        assert len(result.image_base64) > 0
+        assert len(result.image_base64) > 100
         assert result.metadata["factor"] == 2.0
 
     @pytest.mark.asyncio
@@ -819,7 +829,7 @@ class TestToolExecutors:
         result = await registry.execute("equalize_histogram")
         assert result.success
         assert result.image_base64 is not None
-        assert len(result.image_base64) > 0
+        assert len(result.image_base64) > 100
         assert result.metadata.get("image_replaced") is True
 
     @pytest.mark.asyncio

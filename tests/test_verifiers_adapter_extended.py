@@ -1,12 +1,14 @@
 """Tests for radiant_harness.verifiers.adapter — RadiantHarnessAdapter.
 
 Covers _extract_user_prompt, _convert_response_to_messages,
-_collect_tool_calls, _collect_tool_results, and create_environment_class.
+_collect_tool_calls, _collect_tool_results, create_environment_class,
+AdapterEnv.env_response, AdapterEnv.is_completed, and Path image_path.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -226,3 +228,151 @@ class TestCreateEnvironmentClass:
         env = env_cls(cases=[])
         assert hasattr(env, "_adapter")
         assert isinstance(env._adapter, RadiantHarnessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# AdapterEnv.env_response  (adapter.py lines 205-214)
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterEnvResponse:
+    @pytest.mark.asyncio
+    async def test_env_response_updates_state(self) -> None:
+        """env_response increments turn, counts tool_calls, sets is_complete."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+        env_cls = adapter.create_environment_class()
+        env = env_cls(cases=[])
+
+        # Monkey-patch process_verifiers_messages to avoid real model call
+        async def fake_process(
+            messages: Any, info: Any  # noqa: ARG001
+        ) -> dict[str, Any]:
+            return {
+                "response": {"answer": "tumor"},
+                "messages": [{"role": "assistant", "content": '{"answer": "tumor"}'}],
+                "tool_calls": [{"id": "tc_1", "name": "zoom", "arguments": "{}"}],
+                "turns": 1,
+                "is_complete": True,
+            }
+
+        env._adapter.process_verifiers_messages = fake_process  # type: ignore[assignment]
+
+        messages = [{"role": "user", "content": "Analyze scan"}]
+        state: dict[str, Any] = {"turn": 0, "tool_uses": 0}
+
+        new_messages, new_state = await env.env_response(messages, state)
+
+        assert new_state["turn"] == 1
+        assert new_state["tool_uses"] == 1
+        assert new_state["is_complete"] is True
+        assert len(new_messages) == 1
+        assert new_messages[0]["role"] == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_env_response_with_no_tool_calls(self) -> None:
+        """When no tools are used, tool_uses stays at zero."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+        env_cls = adapter.create_environment_class()
+        env = env_cls(cases=[])
+
+        async def fake_process(
+            messages: Any, info: Any  # noqa: ARG001
+        ) -> dict[str, Any]:
+            return {
+                "response": {"answer": "normal"},
+                "messages": [{"role": "assistant", "content": '{"answer": "normal"}'}],
+                "tool_calls": [],
+                "turns": 1,
+                "is_complete": False,
+            }
+
+        env._adapter.process_verifiers_messages = fake_process  # type: ignore[assignment]
+
+        messages = [{"role": "user", "content": "Test"}]
+        state: dict[str, Any] = {"turn": 2, "tool_uses": 5}
+
+        _, new_state = await env.env_response(messages, state)
+
+        assert new_state["turn"] == 3
+        assert new_state["tool_uses"] == 5
+        assert new_state["is_complete"] is False
+
+
+# ---------------------------------------------------------------------------
+# AdapterEnv.is_completed  (adapter.py lines 223-225)
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterEnvIsCompleted:
+    @pytest.mark.asyncio
+    async def test_completed_via_max_turns(self) -> None:
+        """super().is_completed returns True when turn >= max_turns (line 223-224)."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+        env_cls = adapter.create_environment_class()
+        env = env_cls(cases=[], max_turns=3)
+
+        messages = [{"role": "user", "content": "x"}]
+        state: dict[str, Any] = {"turn": 3, "is_complete": False}
+        assert await env.is_completed(messages, state) is True
+
+    @pytest.mark.asyncio
+    async def test_completed_via_state_flag(self) -> None:
+        """state['is_complete'] = True triggers completion (line 225)."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+        env_cls = adapter.create_environment_class()
+        env = env_cls(cases=[], max_turns=100)
+
+        messages = [{"role": "user", "content": "x"}]
+        state: dict[str, Any] = {"turn": 1, "is_complete": True}
+        assert await env.is_completed(messages, state) is True
+
+    @pytest.mark.asyncio
+    async def test_not_completed(self) -> None:
+        """Neither max_turns nor state flag → not complete."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+        env_cls = adapter.create_environment_class()
+        env = env_cls(cases=[], max_turns=100)
+
+        messages = [{"role": "user", "content": "x"}]
+        state: dict[str, Any] = {"turn": 1, "is_complete": False}
+        assert await env.is_completed(messages, state) is False
+
+
+# ---------------------------------------------------------------------------
+# process_verifiers_messages with Path image_path  (adapter.py line 69)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessWithPathImagePath:
+    @pytest.mark.asyncio
+    async def test_path_object_image_path_passed_through(self) -> None:
+        """When info['image_path'] is a Path, it is used directly (not str→Path)."""
+        processor = _make_processor()
+        adapter = RadiantHarnessAdapter(processor=processor)
+
+        captured: dict[str, Any] = {}
+
+        async def fake_analyze(*, images: Any = None, metadata: Any = None) -> AgenticResult:
+            captured["images"] = images
+            return AgenticResult(
+                final_response={"answer": "ok", "continue": False},
+                turns=[],
+                total_tokens=10,
+                confidence=0.5,
+            )
+
+        adapter.processor.analyze = fake_analyze  # type: ignore[assignment]
+
+        messages = [{"role": "user", "content": "test"}]
+        info: dict[str, Any] = {"image_path": Path("/tmp/test.png")}
+
+        result = await adapter.process_verifiers_messages(messages, info)
+
+        assert isinstance(captured["images"], Path)
+        assert captured["images"] == Path("/tmp/test.png")
+        assert result["is_complete"] is True
