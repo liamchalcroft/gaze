@@ -124,46 +124,6 @@ def load_prompt(
 
 
 @beartype
-def load_system_prompt(
-    prompts_dir: Path,
-    mode: str,
-    context: dict[str, Any],
-) -> str:
-    """Load the system prompt for a given mode.
-
-    Args:
-        prompts_dir: Base directory containing mode subdirectories
-        mode: Analysis mode ('agentic' or 'single_turn')
-        context: Dictionary of variables for template rendering
-
-    Returns:
-        Rendered system prompt string
-    """
-    return load_prompt(prompts_dir, "system.jinja", mode, context)
-
-
-@beartype
-def load_task_prompt(
-    prompts_dir: Path,
-    mode: str,
-    context: dict[str, Any],
-    template_name: str = "task.jinja",
-) -> str:
-    """Load the task prompt for a given mode.
-
-    Args:
-        prompts_dir: Base directory containing mode subdirectories
-        mode: Analysis mode ('agentic' or 'single_turn')
-        context: Dictionary of variables for template rendering
-        template_name: Name of the task template (default: 'task.jinja')
-
-    Returns:
-        Rendered task prompt string
-    """
-    return load_prompt(prompts_dir, template_name, mode, context)
-
-
-@beartype
 def combine_prompts(
     system_prompt: str,
     task_prompt: str,
@@ -243,6 +203,6 @@ def create_prompt(
             },
         )
     """
-    system_prompt = load_system_prompt(prompts_dir, mode, context)
+    system_prompt = load_prompt(prompts_dir, "system.jinja", mode, context)
     task_prompt = load_prompt(prompts_dir, template_name, mode, context)
     return combine_prompts(system_prompt, task_prompt, mode)

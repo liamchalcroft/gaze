@@ -34,7 +34,6 @@ from radiant_harness.base import ImageInput
 from radiant_harness.config import CacheConfig
 from radiant_harness.config import HarnessConfig
 from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.config import RankingWeights
 from radiant_harness.config import SearchConfig
 from radiant_harness.config import config_context
 from radiant_harness.config import get_config
@@ -61,12 +60,9 @@ if TYPE_CHECKING:
 
 # HuggingFace adapters are lazily imported to avoid torch dependency
 # Use: from radiant_harness import HuggingFaceAdapter, HuggingFaceVLMAdapter
-from radiant_harness.prompts import AnalysisMode
 from radiant_harness.prompts import combine_prompts
 from radiant_harness.prompts import create_prompt
 from radiant_harness.prompts import load_prompt
-from radiant_harness.prompts import load_system_prompt
-from radiant_harness.prompts import load_task_prompt
 from radiant_harness.prompts import load_template
 from radiant_harness.tools import EncodedImage
 from radiant_harness.tools import Tool
@@ -75,10 +71,10 @@ from radiant_harness.tools import create_search_tools
 from radiant_harness.tools import create_visual_tools
 from radiant_harness.tools import encode_image
 from radiant_harness.types import AgenticResult
+from radiant_harness.types import RunConfig
 from radiant_harness.types import ToolCall
 from radiant_harness.types import ToolResult
 from radiant_harness.types import Turn
-from radiant_harness.types import TurnRole
 from radiant_harness.utils.json_coerce import coerce_json_types
 
 __version__ = "0.1.0"
@@ -92,15 +88,14 @@ __all__ = [
     "CacheConfig",
     "SearchConfig",
     "ImageProcessingConfig",
-    "RankingWeights",
     "config_context",
     "get_config",
     "reset_config",
     "set_config",
     # Result types
     "AgenticResult",
+    "RunConfig",
     "Turn",
-    "TurnRole",
     "ToolCall",
     "ToolResult",
     # Tools
@@ -120,11 +115,8 @@ __all__ = [
     "GenerationLog",
     "AdapterProtocol",
     # Prompts
-    "AnalysisMode",
     "load_template",
     "load_prompt",
-    "load_system_prompt",
-    "load_task_prompt",
     "create_prompt",
     "combine_prompts",
     # Utilities

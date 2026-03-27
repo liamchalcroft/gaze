@@ -32,6 +32,7 @@ from radiant_harness.exceptions import SchemaValidationError
 from radiant_harness.exceptions import ToolExecutionError
 from radiant_harness.exceptions import UnknownToolError
 from radiant_harness.models import AdapterProtocol
+from radiant_harness.retrieval.base import _sanitize_exception_message
 from radiant_harness.tools import EncodedImage
 from radiant_harness.tools import Tool
 from radiant_harness.tools import ToolRegistry
@@ -98,11 +99,6 @@ _INTENSITY_MODIFYING_TOOLS = frozenset(
 )
 
 
-def _make_boundary() -> str:
-    """Generate a random boundary token unlikely to appear in tool output."""
-    return secrets.token_hex(8)
-
-
 def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
     """Sanitize tool result text before injecting into the LLM conversation.
 
@@ -116,7 +112,7 @@ def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHAR
     text = _CONTROL_CHAR_RE.sub("", text)
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[...truncated]"
-    boundary = _make_boundary()
+    boundary = secrets.token_hex(8)
     return f"[Tool Result - External Data - {boundary}]\n{text}\n[End Tool Result - {boundary}]"
 
 
@@ -773,6 +769,8 @@ class AgenticProcessorBase(ABC):
                 raise ValueError(
                     f"Number of labels ({len(labels)}) must match number of images (1)"
                 )
+            if ".." in images.parts:
+                raise ValueError(f"Path traversal detected: {images}")
             if not images.exists():
                 raise FileNotFoundError(f"Image file not found: {images}")
             if images.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
@@ -793,6 +791,8 @@ class AgenticProcessorBase(ABC):
                 result.append(ImageInput.from_pil(item, label=label))
             else:
                 # Path
+                if ".." in item.parts:
+                    raise ValueError(f"Path traversal detected: {item}")
                 if not item.exists():
                     raise FileNotFoundError(f"Image file not found: {item}")
                 if item.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
@@ -1643,7 +1643,7 @@ class AgenticProcessorBase(ABC):
             return ToolResult(
                 tool_name=tool_call.name,
                 description=f"Tool '{tool_call.name}' failed",
-                error=str(e),
+                error=_sanitize_exception_message(e),
             )
         except (
             TypeError,
@@ -1661,12 +1661,12 @@ class AgenticProcessorBase(ABC):
                 tool_call.name,
                 turn_idx + 1,
                 type(e).__name__,
-                e,
+                _sanitize_exception_message(e),
             )
             return ToolResult(
                 tool_name=tool_call.name,
                 description=f"Tool '{tool_call.name}' encountered an error",
-                error=f"{type(e).__name__}: {e}",
+                error=f"{type(e).__name__}: {_sanitize_exception_message(e)}",
             )
 
     @beartype
