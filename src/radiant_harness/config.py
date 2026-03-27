@@ -10,17 +10,13 @@ import contextlib
 import ipaddress
 import threading
 from collections.abc import Iterator
-from collections.abc import Mapping
 from contextvars import ContextVar
 from contextvars import Token
 from dataclasses import dataclass
 from dataclasses import field
-from types import MappingProxyType
 from urllib.parse import urlparse
 
 from beartype import beartype
-
-from radiant_harness._frozen import deep_freeze
 
 
 @dataclass(frozen=True)
@@ -48,17 +44,17 @@ class ImageProcessingConfig:
     min_threshold_window: int = 50
     default_jpeg_quality: int = 85
     min_brightness_factor: float = 0.5
-    max_brightness_factor: float = 3.0
-    min_sharpness_factor: float = 0.0
+    max_brightness_factor: float = 2.0
+    min_sharpness_factor: float = 0.1
     max_sharpness_factor: float = 3.0
     max_grid_divisions: int = 8
     min_gaussian_sigma: float = 0.5
     max_gaussian_sigma: float = 5.0
     max_morphological_iterations: int = 5
     min_clahe_clip_limit: float = 1.0
-    max_clahe_clip_limit: float = 10.0
+    max_clahe_clip_limit: float = 4.0
     max_clahe_tile_size: int = 32
-    min_window_width: int = 10
+    min_window_width: int = 50
 
     def __post_init__(self) -> None:
         if self.min_image_size < 1:
@@ -224,8 +220,6 @@ class SearchConfig:
         timeout_seconds: Request timeout in seconds
         max_retries: Maximum number of retry attempts
         rate_limit_delay_seconds: Delay between API calls in seconds
-        max_results_per_engine: Default results to fetch per engine
-        max_total_results: Maximum total results to return
         max_content_preview_length: Maximum characters for content preview
         max_snippet_length: Maximum characters for snippet extraction
         max_content_for_llm: Maximum characters for LLM formatting
@@ -236,8 +230,6 @@ class SearchConfig:
     timeout_seconds: int = 30
     max_retries: int = 3
     rate_limit_delay_seconds: float = 1.0
-    max_results_per_engine: int = 5
-    max_total_results: int = 10
     max_content_preview_length: int = 500
     max_snippet_length: int = 100
     max_content_for_llm: int = 5000
@@ -253,83 +245,12 @@ class SearchConfig:
             raise ValueError(
                 f"rate_limit_delay_seconds must be >= 0, got {self.rate_limit_delay_seconds}"
             )
-        if self.max_results_per_engine < 1:
-            raise ValueError(
-                f"max_results_per_engine must be >= 1, got {self.max_results_per_engine}"
-            )
-        if self.max_total_results < 1:
-            raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
         for attr in ("ncbi_base_url", "openi_base_url"):
             _validate_base_url(
                 getattr(self, attr),
                 attr,
                 allowed_hostnames=_ALLOWED_SEARCH_HOSTNAMES,
             )
-
-
-@dataclass(frozen=True)
-class RankingWeights:
-    """Weights for search result ranking.
-
-    All weights should be positive floats. The final score is computed as:
-    score = reliability + (medical_relevance * medical_relevance_weight) + ...
-
-    Attributes:
-        medical_relevance_weight: Weight for medical relevance score
-        recency_max_boost: Maximum boost for recent publications
-        recency_decay_years: Number of years over which recency boost decays
-        open_access_boost: Boost for open access articles
-        title_match_weight: Weight per query term match in title
-        content_match_weight: Weight per query term match in content
-        entity_match_weight: Weight per medical entity match
-        phrase_match_weight: Weight per bigram phrase match (compound terms)
-        content_type_boosts: Boosts by content type per search type
-    """
-
-    medical_relevance_weight: float = 0.3
-    recency_max_boost: float = 0.15
-    recency_decay_years: int = 15
-    open_access_boost: float = 0.1
-    title_match_weight: float = 0.2
-    content_match_weight: float = 0.05
-    entity_match_weight: float = 0.1
-    phrase_match_weight: float = 0.15
-    content_type_boosts: Mapping[str, Mapping[str, float]] = field(
-        default_factory=lambda: {
-            "diagnosis": {"guidelines": 0.3, "review": 0.2, "article": 0.1, "case_report": 0.05},
-            "guidelines": {"guidelines": 0.3, "review": 0.2},
-            "research": {"article": 0.2, "review": 0.1},
-            "anatomy": {"review": 0.2, "article": 0.1},
-            "treatment": {"guidelines": 0.3, "review": 0.2, "article": 0.1, "case_report": 0.05},
-            "differential": {
-                "review": 0.25,
-                "guidelines": 0.2,
-                "article": 0.1,
-                "case_report": 0.05,
-            },
-        }
-    )
-
-    def __post_init__(self) -> None:
-        for attr in (
-            "medical_relevance_weight",
-            "recency_max_boost",
-            "open_access_boost",
-            "title_match_weight",
-            "content_match_weight",
-            "entity_match_weight",
-            "phrase_match_weight",
-        ):
-            val = getattr(self, attr)
-            if val < 0:
-                raise ValueError(f"{attr} must be >= 0, got {val}")
-        if self.recency_decay_years < 1:
-            raise ValueError(f"recency_decay_years must be >= 1, got {self.recency_decay_years}")
-        # Deep-freeze nested mappings even when callers pass pre-wrapped proxies.
-        frozen = deep_freeze(self.content_type_boosts)
-        if not isinstance(frozen, MappingProxyType):
-            raise TypeError("content_type_boosts must freeze to a mapping proxy")
-        object.__setattr__(self, "content_type_boosts", frozen)
 
 
 @dataclass(frozen=True)
@@ -357,7 +278,6 @@ class HarnessConfig:
     image: ImageProcessingConfig = field(default_factory=ImageProcessingConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
-    ranking: RankingWeights = field(default_factory=RankingWeights)
 
 
 class _ConfigHolder:

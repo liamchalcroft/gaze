@@ -281,7 +281,7 @@ class TestBrightnessBoundaries:
 
     def test_brightness_at_max(self) -> None:
         img = Image.new("L", (32, 32), color=128)
-        result = adjust_brightness(img, 3.0)
+        result = adjust_brightness(img, 2.0)
         assert result.size == (32, 32)
 
 
@@ -290,8 +290,14 @@ class TestSharpnessBoundaries:
 
     def test_sharpness_at_min(self) -> None:
         img = Image.new("L", (32, 32), color=128)
-        result = adjust_sharpness(img, 0.0)  # full blur
+        result = adjust_sharpness(img, 0.1)  # near-full blur (0.0 now rejected)
         assert result.size == (32, 32)
+
+    def test_sharpness_rejects_zero(self) -> None:
+        """Factor 0.0 destroys all diagnostic detail and is now rejected."""
+        img = Image.new("L", (32, 32), color=128)
+        with pytest.raises(ValueError, match="factor must be in range"):
+            adjust_sharpness(img, 0.0)
 
     def test_sharpness_at_max(self) -> None:
         img = Image.new("L", (32, 32), color=128)
@@ -394,20 +400,20 @@ class TestWindowLevelPresetOverride:
     def test_preset_overrides_center_width(self) -> None:
         """apply_window_level with preset+center+width uses preset values."""
         img = Image.new("L", (64, 64), color=128)
-        # "brain" preset is (40, 80).  Passing center=100, width=200 should be ignored.
+        # "brain" MRI preset is (128, 230).  Passing center=100, width=200 should be ignored.
         result = apply_window_level(img, center=100, width=200, preset="brain")
         assert result.size == (64, 64)
         # Verify it actually applied brain preset values, not center=100/width=200.
-        # With brain (center=40, width=80): lower=0, upper=80.
-        # pixel 128 > upper 80 => clamped to 80 => (80-0)/(80-0)*255 = 255
+        # With brain (center=128, width=230): lower=13, upper=243.
+        # pixel 128 is at center => (128-13)/(243-13)*255 ≈ 127
         import numpy as np
 
         arr = np.array(result)
-        assert arr[0, 0] == 255  # 128 is above brain window upper bound
+        assert 120 <= arr[0, 0] <= 135  # 128 is near center of MRI brain window
 
     def test_preset_only_no_warning(self) -> None:
         """apply_window_level with only preset should not produce issues."""
-        img = Image.new("L", (32, 32), color=40)
+        img = Image.new("L", (32, 32), color=128)
         result = apply_window_level(img, preset="brain")
         assert result.size == (32, 32)
 
@@ -457,10 +463,10 @@ class TestWindowLevelMetadata:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=image_path, tools=tools)
 
-        # Pass center=999, width=999 but preset="subdural"
-        result = await registry.execute("window_level", center=999, width=999, preset="subdural")
+        # Pass center=999, width=999 but preset="ct_subdural"
+        result = await registry.execute("window_level", center=999, width=999, preset="ct_subdural")
         assert result.success
-        expected_center, expected_width = WINDOW_PRESETS["subdural"]
+        expected_center, expected_width = WINDOW_PRESETS["ct_subdural"]
         assert result.metadata["center"] == expected_center
         assert result.metadata["width"] == expected_width
         # NOT 999
@@ -485,9 +491,9 @@ class TestWindowLevelMetadata:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=image_path, tools=tools)
 
-        result = await registry.execute("window_level", preset="bone")
-        assert "bone" in result.description
-        expected_center, expected_width = WINDOW_PRESETS["bone"]
+        result = await registry.execute("window_level", preset="ct_bone")
+        assert "ct_bone" in result.description
+        expected_center, expected_width = WINDOW_PRESETS["ct_bone"]
         assert str(expected_center) in result.description
         assert str(expected_width) in result.description
 

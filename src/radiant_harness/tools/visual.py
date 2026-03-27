@@ -644,17 +644,23 @@ def invert_image(image: Image.Image) -> Image.Image:
 # MRI presets — designed for 8-bit MRI pixel values (0-255) as produced
 # by standard DICOM-to-PNG/JPEG conversion pipelines.
 WINDOW_PRESETS: dict[str, tuple[int, int]] = {
-    # CT presets
-    "brain": (40, 80),
-    "subdural": (75, 215),
-    "bone": (400, 1800),
-    "soft_tissue": (40, 400),
-    "stroke": (32, 40),
-    "posterior_fossa": (36, 120),
+    # CT presets (Hounsfield units) — ONLY appropriate for CT data.
+    # On 8-bit MRI images these will clip the dynamic range severely.
+    "ct_brain": (40, 80),
+    "ct_subdural": (75, 215),
+    "ct_bone": (400, 1800),
+    "ct_soft_tissue": (40, 400),
+    "ct_stroke": (32, 80),
+    "ct_posterior_fossa": (36, 120),
     # MRI presets (8-bit pixel values)
+    "brain": (128, 230),
     "mri_brain": (128, 230),
+    "flair": (110, 200),
     "mri_flair": (110, 200),
+    "t2": (140, 220),
     "mri_t2": (140, 220),
+    "stroke": (100, 180),
+    "posterior_fossa": (120, 210),
 }
 
 
@@ -667,8 +673,10 @@ def apply_window_level(
 ) -> Image.Image:
     """Apply clinical window/level to *image*.
 
-    Either provide center+width or a preset name. Preset names:
-    brain, subdural, bone, soft_tissue, stroke, posterior_fossa.
+    Either provide center+width or a preset name. MRI presets (8-bit):
+    brain, flair, t2, stroke, posterior_fossa.
+    CT presets (Hounsfield units): ct_brain, ct_subdural, ct_bone,
+    ct_soft_tissue, ct_stroke, ct_posterior_fossa.
 
     Args:
         image: Input PIL Image
@@ -1394,10 +1402,15 @@ async def _execute_equalize(registry: ToolRegistry) -> ToolResult:
 
     return ToolResult(
         tool_name="equalize_histogram",
-        description="Applied histogram equalization",
+        description=(
+            "Applied histogram equalization (converted to grayscale). "
+            "WARNING — IMAGE REPLACED: the current image is now equalized, "
+            "not the original scan. Intensity values have changed. "
+            "Call reset() before final answer."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"size": current.size},
+        metadata={"size": current.size, "image_replaced": True},
     )
 
 
@@ -1527,10 +1540,15 @@ async def _execute_detect_edges(registry: ToolRegistry, method: str = "sobel") -
 
     return ToolResult(
         tool_name="detect_edges",
-        description=f"Detected edges using {method} operator",
+        description=(
+            f"Detected edges using {method} operator. "
+            "WARNING — IMAGE REPLACED: the current image is now an edge map, "
+            "not the original scan. Coordinates and intensities no longer correspond "
+            "to the original image. Call reset() before final answer."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"method": method, "size": current.size},
+        metadata={"method": method, "size": current.size, "image_replaced": True},
     )
 
 
@@ -1542,10 +1560,15 @@ async def _execute_symmetry_diff(registry: ToolRegistry) -> ToolResult:
 
     return ToolResult(
         tool_name="symmetry_diff",
-        description="Computed left-right symmetry difference map",
+        description=(
+            "Computed left-right symmetry difference map. "
+            "WARNING — IMAGE REPLACED: the current image is now a difference map, "
+            "not the original scan. Coordinates and intensities no longer correspond "
+            "to the original image. Call reset() before final answer."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"size": current.size},
+        metadata={"size": current.size, "image_replaced": True},
     )
 
 
@@ -1605,10 +1628,15 @@ async def _execute_invert(registry: ToolRegistry) -> ToolResult:
 
     return ToolResult(
         tool_name="invert",
-        description="Inverted image intensities",
+        description=(
+            "Inverted image intensities (converted to grayscale). "
+            "WARNING — IMAGE REPLACED: the current image is now inverted, "
+            "not the original scan. Intensity values are reversed. "
+            "Call reset() before final answer."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"size": current.size},
+        metadata={"size": current.size, "image_replaced": True},
     )
 
 
@@ -1736,10 +1764,15 @@ async def _execute_denoise(registry: ToolRegistry, sigma: float) -> ToolResult:
 
     return ToolResult(
         tool_name="denoise",
-        description=f"Applied Gaussian denoise (sigma={sigma})",
+        description=(
+            f"Applied Gaussian denoise (sigma={sigma}). "
+            "WARNING — IMAGE REPLACED: the current image is now blurred, "
+            "not the original scan. Fine details may be lost. "
+            "Call reset() before final answer."
+        ),
         image_base64=encoded.data,
         image_mime_type=encoded.mime_type,
-        metadata={"sigma": sigma, "size": current.size},
+        metadata={"sigma": sigma, "size": current.size, "image_replaced": True},
     )
 
 
@@ -1765,6 +1798,10 @@ async def _execute_morphological(
     desc = f"Applied morphological {operation} x{iterations}"
     if threshold_value is not None:
         desc += f" (threshold={threshold_value})"
+    desc += (
+        ". WARNING — IMAGE REPLACED: the current image is now a morphological result "
+        "(grayscale), not the original scan. Call reset() before final answer."
+    )
     return ToolResult(
         tool_name="morphological",
         description=desc,
@@ -1775,6 +1812,7 @@ async def _execute_morphological(
             "iterations": iterations,
             "threshold_value": threshold_value,
             "size": current.size,
+            "image_replaced": True,
         },
     )
 
@@ -1796,7 +1834,10 @@ _ROTATE_PROMPT_DOC = "**rotate** - Rotate image by 90 degrees (clockwise: boolea
 
 _RESET_PROMPT_DOC = "**reset** - Return to original image"
 
-_EQUALIZE_PROMPT_DOC = "**equalize_histogram** - Equalize intensity distribution (grayscale)"
+_EQUALIZE_PROMPT_DOC = (
+    "**equalize_histogram** - Equalize intensity distribution (grayscale). "
+    "REPLACES current image — call reset() before final answer"
+)
 
 _INTENSITY_STATS_PROMPT_DOC = (
     "**get_intensity_stats** - Get intensity statistics "
@@ -1809,10 +1850,14 @@ _MEASURE_PROMPT_DOC = (
 )
 
 _SYMMETRY_DIFF_PROMPT_DOC = (
-    "**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale)"
+    "**symmetry_diff** - Compute left-right symmetry difference map (converts to grayscale). "
+    "REPLACES current image — call reset() before final answer"
 )
 
-_INVERT_PROMPT_DOC = "**invert** - Invert image intensities, converts to grayscale (negative)"
+_INVERT_PROMPT_DOC = (
+    "**invert** - Invert image intensities, converts to grayscale (negative). "
+    "REPLACES current image — call reset() before final answer"
+)
 
 _INTENSITY_PROFILE_PROMPT_DOC = (
     "**intensity_profile** - Sample intensities along a line "
@@ -2005,7 +2050,8 @@ def create_visual_tools(
         presets_list = ", ".join(sorted(WINDOW_PRESETS.keys()))
         window_prompt_doc = (
             f"**window_level** - Clinical windowing, converts to grayscale. "
-            f"Presets assume CT Hounsfield units; use center/width for 8-bit images. "
+            f"MRI presets (brain, flair, t2, stroke, posterior_fossa) are for 8-bit images. "
+            f"CT presets (ct_*) assume Hounsfield units. "
             f"Must provide EITHER preset ({presets_list}) OR both center and width."
         )
         tools.append(
@@ -2047,7 +2093,8 @@ def create_visual_tools(
             Tool(
                 name="equalize_histogram",
                 description=(
-                    "Equalize intensity histogram for improved contrast distribution (grayscale)."
+                    "Equalize intensity histogram for improved contrast distribution (grayscale). "
+                    "Replaces current image — call reset() before final answer."
                 ),
                 parameters={},
                 execute=_execute_equalize,
@@ -2097,7 +2144,8 @@ def create_visual_tools(
             Tool(
                 name="detect_edges",
                 description=(
-                    "Detect edges using Sobel or Laplacian operators for boundary delineation."
+                    "Detect edges using Sobel or Laplacian operators for boundary delineation. "
+                    "Replaces current image — call reset() before final answer."
                 ),
                 parameters={
                     "method": {
@@ -2110,8 +2158,9 @@ def create_visual_tools(
                 execute=_execute_detect_edges,
                 requires_image=True,
                 prompt_documentation=(
-                    "**detect_edges** - Edge detection, converts "
-                    "to grayscale (method: sobel/laplacian)"
+                    "**detect_edges** - Edge detection, converts to grayscale "
+                    "(method: sobel/laplacian). REPLACES current image — call reset() before "
+                    "final answer"
                 ),
                 category="visual",
             )
@@ -2120,12 +2169,16 @@ def create_visual_tools(
     if "denoise" not in disabled:
         denoise_prompt_doc = (
             f"**denoise** - Gaussian noise reduction "
-            f"(sigma: {cfg.min_gaussian_sigma}-{cfg.max_gaussian_sigma})"
+            f"(sigma: {cfg.min_gaussian_sigma}-{cfg.max_gaussian_sigma}). "
+            f"REPLACES current image — call reset() before final answer"
         )
         tools.append(
             Tool(
                 name="denoise",
-                description="Apply Gaussian blur for noise reduction.",
+                description=(
+                    "Apply Gaussian blur for noise reduction. "
+                    "Replaces current image — call reset() before final answer."
+                ),
                 parameters={
                     "sigma": {
                         "type": "number",
@@ -2145,14 +2198,16 @@ def create_visual_tools(
         morph_prompt_doc = (
             f"**morphological** - Morphological ops, converts to grayscale "
             f"(operation: erode/dilate/open/close, "
-            f"iterations: 1-{cfg.max_morphological_iterations})"
+            f"iterations: 1-{cfg.max_morphological_iterations}). "
+            f"REPLACES current image — call reset() before final answer"
         )
         tools.append(
             Tool(
                 name="morphological",
                 description=(
                     "Morphological operations for mask cleanup after thresholding. "
-                    "erode=shrink, dilate=expand, open=remove noise, close=fill holes."
+                    "erode=shrink, dilate=expand, open=remove noise, close=fill holes. "
+                    "Replaces current image — call reset() before final answer."
                 ),
                 parameters={
                     "operation": {
@@ -2244,7 +2299,8 @@ def create_visual_tools(
                 name="symmetry_diff",
                 description=(
                     "Compute left-right symmetry difference map. "
-                    "Bright regions indicate asymmetry (potential pathology)."
+                    "Bright regions indicate asymmetry (potential pathology). "
+                    "Replaces current image — call reset() before final answer."
                 ),
                 parameters={},
                 execute=_execute_symmetry_diff,
@@ -2260,7 +2316,8 @@ def create_visual_tools(
                 name="invert",
                 description=(
                     "Invert pixel intensities (negative image). "
-                    "Toggling display mode can reveal findings hidden in one polarity."
+                    "Toggling display mode can reveal findings hidden in one polarity. "
+                    "Replaces current image — call reset() before final answer."
                 ),
                 parameters={},
                 execute=_execute_invert,

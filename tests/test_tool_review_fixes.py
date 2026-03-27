@@ -118,20 +118,20 @@ class TestWindowLevelMinWidth:
         with pytest.raises(ValueError, match="width must be >= "):
             apply_window_level(img, center=128, width=1)
 
-    def test_width_10_succeeds(self) -> None:
-        """width=10 (the default minimum) must work."""
+    def test_width_at_minimum_succeeds(self) -> None:
+        """width=50 (the default minimum) must work."""
         img = Image.new("L", (32, 32), color=128)
-        result = apply_window_level(img, center=128, width=10)
+        result = apply_window_level(img, center=128, width=50)
         assert result.size == (32, 32)
 
     def test_width_below_minimum_fails(self) -> None:
-        """width below min_window_width=10 must be rejected."""
+        """width below min_window_width=50 must be rejected."""
         img = Image.new("L", (32, 32), color=128)
         with pytest.raises(ValueError, match="width must be >= "):
-            apply_window_level(img, center=128, width=2)
+            apply_window_level(img, center=128, width=20)
 
     def test_preset_stroke_still_works(self) -> None:
-        """The 'stroke' preset has width=8, must still work."""
+        """The 'stroke' MRI preset (width=180) must still work."""
         img = Image.new("L", (32, 32), color=128)
         result = apply_window_level(img, preset="stroke")
         assert result.size == (32, 32)
@@ -228,38 +228,35 @@ class TestWindowLevelFloatDivision:
     """Verify apply_window_level uses float (not integer) division for bounds."""
 
     def test_odd_width_not_lossy(self) -> None:
-        """With center=128, width=11, effective window should be exactly 11, not 10."""
+        """With center=128, width=51, effective window should be exactly 51, not 50."""
         import numpy as np
 
         img = Image.new("L", (32, 32), color=128)
-        result = apply_window_level(img, center=128, width=11)
+        result = apply_window_level(img, center=128, width=51)
         arr = np.array(result)
-        # center=128, width=11 → lower=122.5, upper=133.5
-        # pixel=128 is within [122.5, 133.5] and should map to ~128
-        # With old integer division: lower=123, upper=133 (window=10, asymmetric)
-        # With float division: lower=122.5, upper=133.5 (window=11, symmetric)
+        # center=128, width=51 → lower=102.5, upper=153.5
+        # pixel=128 is within [102.5, 153.5] and should map to ~128
+        # With float division: lower=102.5, upper=153.5 (window=51, symmetric)
         assert arr.max() > 0, "Odd-width window should not produce all-black"
         # The center pixel (128) should map to approximately the midpoint
-        expected_mid = int((128 - 122.5) / 11 * 255)
+        expected_mid = int((128 - 102.5) / 51 * 255)
         assert abs(int(arr[0, 0]) - expected_mid) <= 1
 
     def test_symmetric_windowing(self) -> None:
         """Window bounds should be symmetric around center for any width."""
         import numpy as np
 
-        # Pixel at center-5 and center+5 should map to symmetric output
-        img_data = np.full((1, 11), 0, dtype=np.uint8)
-        for i in range(11):
-            img_data[0, i] = 95 + i  # 95..105
+        # Pixel at center-25 and center+25 should map to symmetric output
+        img_data = np.full((1, 51), 0, dtype=np.uint8)
+        for i in range(51):
+            img_data[0, i] = 75 + i  # 75..125
         img = Image.fromarray(img_data, mode="L")
-        result = apply_window_level(img, center=100, width=11)
+        result = apply_window_level(img, center=100, width=51)
         arr = np.array(result, dtype=np.float64)
-        # lower=94.5, upper=105.5 → all pixels within range
-        # pixel 95 → (95-94.5)/11*255 ≈ 11.6
-        # pixel 105 → (105-94.5)/11*255 ≈ 243.4
+        # lower=74.5, upper=125.5 → all pixels within range
         # Values at equal distance from center should be symmetric
-        mid = 5  # center pixel (value=100)
-        for offset in range(1, 5):
+        mid = 25  # center pixel (value=100)
+        for offset in range(1, 25):
             lo_val = arr[0, mid - offset]
             hi_val = arr[0, mid + offset]
             assert abs(lo_val + hi_val - 255) <= 2, (

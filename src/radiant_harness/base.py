@@ -293,8 +293,11 @@ def _try_wrap_inner_schema(
                 else:
                     wrapped[other_name] = ""
             wrapped["continue"] = False
-            logger.info(
-                f"Wrapped salvaged inner-schema keys {sorted(salvaged_keys)} under '{prop_name}'"
+            defaulted_keys = sorted(set(wrapped.keys()) - {prop_name, "continue"})
+            logger.warning(
+                f"Wrapped salvaged inner-schema keys {sorted(salvaged_keys)} under '{prop_name}'. "
+                f"Fields filled with empty defaults (may produce zero evaluation scores): "
+                f"{defaulted_keys}"
             )
             return wrapped
     return salvaged

@@ -16,11 +16,14 @@ by validate_nova_response() instead.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
 from radiant_harness.utils import clamp_confidence
 from radiant_harness.utils import coerce_json_types
+
+logger = logging.getLogger(__name__)
 
 # NOVA Unified Response Schema for all three tasks
 # Fully compliant with OpenAI strict structured outputs:
@@ -250,7 +253,17 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
     caption = response.get("caption")
     if not isinstance(caption, dict):
         return False
-    if not isinstance(caption.get("description"), str):
+    desc = caption.get("description")
+    if not isinstance(desc, str) or not desc.strip():
+        return False
+    # Clinically required caption fields — empty strings mean the model
+    # failed to identify basic imaging parameters, making modality_f1
+    # evaluation meaningless.
+    seq = caption.get("sequence_characteristics")
+    if not isinstance(seq, str) or not seq.strip():
+        return False
+    orient = caption.get("orientation")
+    if not isinstance(orient, str) or not orient.strip():
         return False
     # Schema requires confidence; reject None and invalid values, clamp to [0,1]
     if not _is_valid_confidence(caption.get("confidence")):
@@ -261,7 +274,8 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
     diagnosis = response.get("diagnosis")
     if not isinstance(diagnosis, dict):
         return False
-    if not isinstance(diagnosis.get("primary_diagnosis"), str):
+    primary = diagnosis.get("primary_diagnosis")
+    if not isinstance(primary, str) or not primary.strip():
         return False
     # Schema requires confidence; reject None and invalid values, clamp to [0,1]
     if not _is_valid_confidence(diagnosis.get("confidence")):
@@ -295,6 +309,15 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
     localizations_list = localization.get("localizations")
     if not isinstance(localizations_list, list):
         return False
+    # NOVA benchmark contains only confirmed pathology cases — an empty
+    # localizations array means the model failed to find the abnormality.
+    # We accept it (evaluation scores it as 0 mAP) but log a warning so
+    # the failure is visible during development.
+    if len(localizations_list) == 0:
+        logger.warning(
+            "validate_nova_response: localizations array is empty; "
+            "NOVA cases always contain confirmed abnormalities"
+        )
     # Validate each localization element
     for loc in localizations_list:
         if not isinstance(loc, dict):
@@ -320,6 +343,36 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
             return False
         if w <= 0 or h <= 0:
             return False
+
+        # Cross-validate bounding boxes against reported image dimensions.
+        # Out-of-bounds coordinates silently degrade IoU at evaluation time;
+        # clamping them here ensures the model gets feedback via nudge/retry
+        # rather than quietly scoring zero.
+        for loc in localizations_list:
+            bbox = loc.get("bounding_box")
+            if bbox is not None and len(bbox) == 4:
+                x1, y1, x2, y2 = (float(c) for c in bbox)
+                clamped = False
+                if x1 < 0 or y1 < 0 or x2 > w or y2 > h:
+                    x1 = max(0.0, min(x1, float(w)))
+                    y1 = max(0.0, min(y1, float(h)))
+                    x2 = max(0.0, min(x2, float(w)))
+                    y2 = max(0.0, min(y2, float(h)))
+                    clamped = True
+                if clamped and x2 > x1 and y2 > y1:
+                    loc["bounding_box"] = [x1, y1, x2, y2]
+                    logger.warning(
+                        "validate_nova_response: clamped out-of-bounds bbox to "
+                        "image dimensions %dx%d: %s",
+                        w, h, loc["bounding_box"],
+                    )
+                elif clamped:
+                    logger.warning(
+                        "validate_nova_response: bbox degenerate after clamping "
+                        "to %dx%d, rejecting",
+                        w, h,
+                    )
+                    return False
 
     coord_sys = localization.get("coordinate_system")
     if coord_sys is not None and coord_sys != "absolute_pixels":

@@ -289,9 +289,9 @@ class TestIoUAreaPenaltyBypass:
             f"Area penalty was bypassed."
         )
 
-    def test_normalized_mode_pixel_coords_skips_penalty_without_image_area(self) -> None:
+    def test_normalized_mode_pixel_coords_fails_closed_without_image_area(self) -> None:
         """When pixel coords are detected but no image_area in info,
-        penalty is safely skipped rather than using a broken estimate."""
+        fail closed (return 0.0) to prevent gaming via coord mismatch."""
         from radiant_harness.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
@@ -300,8 +300,8 @@ class TestIoUAreaPenaltyBypass:
         completion = "[0, 0, 512, 512]"
         reward = reward_fn("prompt", completion, info)
 
-        # Without image_area, penalty is skipped → IoU=1.0 returned
-        assert reward == 1.0, f"Expected reward=1.0 when penalty skipped, got {reward}"
+        # Pixel-scale coords + no image_area → 0.0 (fail closed)
+        assert reward == 0.0, f"Expected reward=0.0 (fail closed), got {reward}"
 
     def test_normalized_mode_valid_coords_penalized(self) -> None:
         """Full-image box in [0,1] range gets full penalty."""
@@ -344,12 +344,12 @@ class TestConfigBoundsDefaults:
         cfg = get_config()
         assert cfg.image.min_threshold_window >= 50
 
-    def test_min_window_width_default_at_least_10(self) -> None:
-        """A 2-unit window reduces 8-bit images to near-binary."""
+    def test_min_window_width_default_at_least_50(self) -> None:
+        """Narrow windows compress 8-bit MRI to few output levels."""
         from radiant_harness.config import get_config
 
         cfg = get_config()
-        assert cfg.image.min_window_width >= 10
+        assert cfg.image.min_window_width >= 50
 
 
 # =====================================================================

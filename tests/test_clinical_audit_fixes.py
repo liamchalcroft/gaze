@@ -92,17 +92,17 @@ class TestIoURewardAreaPenalty:
         # IoU = 1.0, but area_ratio = 160000/262144 ≈ 0.61 > 0.5 → penalty applied
         assert 0.0 < score < 1.0
 
-    def test_pixel_coords_without_image_area_skips_penalty(self) -> None:
-        """When pixel coords are detected but no image_area, skip penalty (don't crash)."""
+    def test_pixel_coords_without_image_area_fails_closed(self) -> None:
+        """When pixel coords are detected but no image_area, fail closed (return 0.0)."""
         reward = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
         pred_text = '{"bbox": [0, 0, 400, 400]}'
         info = {
             "bbox": [0, 0, 400, 400],
-            # No image_area — penalty should be skipped
+            # No image_area — fail closed to prevent gaming via coord mismatch
         }
         score = reward("", pred_text, info)
-        # IoU = 1.0, penalty skipped → full score
-        assert score == 1.0
+        # Pixel-scale coords + no image_area → 0.0 (fail closed)
+        assert score == 0.0
 
     def test_normalized_coords_still_penalized(self) -> None:
         """Normalized coords in [0,1] with large area still get penalized."""
@@ -176,7 +176,7 @@ class TestWindowLevelPresetSafety:
     """All window presets must respect the min_window_width safety floor."""
 
     def test_all_presets_above_min_width(self) -> None:
-        """Every preset must have width >= min_window_width (default 10)."""
+        """Every preset must have width >= min_window_width (default 50)."""
         from radiant_harness.config import get_config
 
         min_width = get_config().image.min_window_width
@@ -187,9 +187,9 @@ class TestWindowLevelPresetSafety:
             )
 
     def test_stroke_preset_updated(self) -> None:
-        """Stroke preset must no longer use the unsafe width=8."""
+        """Stroke MRI preset must have width >= min_window_width."""
         _, width = WINDOW_PRESETS["stroke"]
-        assert width >= 10, f"Stroke preset width={width} is still below safety floor"
+        assert width >= 50, f"Stroke preset width={width} is below safety floor"
 
     def test_preset_no_longer_exempt_from_safety_check(self) -> None:
         """Presets go through the same width check as manual values."""

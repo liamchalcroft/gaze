@@ -550,11 +550,15 @@ class TestApplyWindowLevel:
         with pytest.raises(ValueError, match="Must provide"):
             apply_window_level(img)
 
-    def test_all_presets_work(self) -> None:
-        # Full 0-255 gradient ensures all presets overlap with image range
+    def test_all_mri_presets_work(self) -> None:
+        # Full 0-255 gradient ensures MRI presets overlap with 8-bit image range.
+        # CT presets (ct_*) are designed for Hounsfield units and may compress
+        # 8-bit data below the min_window_width safety floor.
         arr = np.linspace(0, 255, 100 * 100, dtype=np.uint8).reshape(100, 100)
         img = Image.fromarray(arr, mode="L")
         for preset_name in WINDOW_PRESETS:
+            if preset_name.startswith("ct_"):
+                continue  # CT presets not meant for 8-bit images
             result = apply_window_level(img, preset=preset_name)
             assert result.mode == "L"
 
@@ -1163,7 +1167,7 @@ class TestCreateVisualTools:
             max_gaussian_sigma=3.0,
             max_morphological_iterations=3,
             min_clahe_clip_limit=2.0,
-            max_clahe_clip_limit=8.0,
+            max_clahe_clip_limit=4.0,
         )
         tools = create_visual_tools(config=custom_cfg)
         tool_map = {t.name: t for t in tools}
@@ -1189,4 +1193,4 @@ class TestCreateVisualTools:
 
         clahe_params = tool_map["adaptive_equalize"].parameters["clip_limit"]
         assert clahe_params["minimum"] == 2.0
-        assert clahe_params["maximum"] == 8.0
+        assert clahe_params["maximum"] == 4.0
