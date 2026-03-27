@@ -23,20 +23,27 @@ def _coerce_value(value: Any, prop_schema: dict[str, Any]) -> Any:
 
     if expected == "number" and isinstance(value, str):
         try:
-            return float(value)
+            return float(value.strip())
         except ValueError:
             return value
 
     if expected == "integer" and isinstance(value, str):
         try:
-            return int(float(value))
+            return int(float(value.strip()))
         except ValueError:
             return value
 
     if expected == "boolean" and isinstance(value, str):
-        if value.lower() in ("true", "false"):
-            return value.lower() == "true"
+        lowered = value.strip().lower()
+        if lowered in ("true", "yes", "1"):
+            return True
+        if lowered in ("false", "no", "0"):
+            return False
         return value
+
+    # Local models frequently return 1/0 for boolean fields.
+    if expected == "boolean" and isinstance(value, int) and not isinstance(value, bool):
+        return bool(value)
 
     if expected == "array" and isinstance(value, str):
         return [value] if value else []
@@ -45,18 +52,31 @@ def _coerce_value(value: Any, prop_schema: dict[str, Any]) -> Any:
         items_schema = prop_schema.get("items", {})
         items_type = items_schema.get("type")
         if items_type == "integer":
-            coerced: list[int] = []
+            coerced_ints: list[int] = []
             for v in value:
                 if isinstance(v, str):
                     try:
-                        coerced.append(int(float(v)))
+                        coerced_ints.append(int(float(v)))
                     except ValueError:
                         return value
                 elif isinstance(v, int | float):
-                    coerced.append(int(v))
+                    coerced_ints.append(int(v))
                 else:
                     return value
-            return coerced
+            return coerced_ints
+        if items_type == "number":
+            coerced_floats: list[float] = []
+            for v in value:
+                if isinstance(v, str):
+                    try:
+                        coerced_floats.append(float(v))
+                    except ValueError:
+                        return value
+                elif isinstance(v, int | float):
+                    coerced_floats.append(float(v))
+                else:
+                    return value
+            return coerced_floats
         # Recurse into array items that are objects (e.g. localizations[].bounding_box)
         if items_type == "object":
             for item in value:

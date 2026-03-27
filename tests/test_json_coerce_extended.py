@@ -13,6 +13,19 @@ from radiant_harness.utils.json_coerce import _coerce_value
 from radiant_harness.utils.json_coerce import coerce_json_types
 
 # ---------------------------------------------------------------------------
+# _coerce_value: number from string with whitespace
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceNumberWhitespace:
+    def test_number_whitespace_stripped(self) -> None:
+        assert _coerce_value(" 0.85 ", {"type": "number"}) == 0.85
+
+    def test_number_leading_whitespace(self) -> None:
+        assert _coerce_value("  3.14", {"type": "number"}) == 3.14
+
+
+# ---------------------------------------------------------------------------
 # _coerce_value: integer from string (lines 31-34)
 # ---------------------------------------------------------------------------
 
@@ -34,6 +47,9 @@ class TestCoerceIntegerFromString:
     def test_integer_from_empty_string_returns_original(self) -> None:
         assert _coerce_value("", {"type": "integer"}) == ""
 
+    def test_integer_whitespace_stripped(self) -> None:
+        assert _coerce_value(" 42 ", {"type": "integer"}) == 42
+
 
 # ---------------------------------------------------------------------------
 # _coerce_value: boolean from string (lines 37-39)
@@ -53,11 +69,50 @@ class TestCoerceBooleanFromString:
     def test_false_mixed_case(self) -> None:
         assert _coerce_value("FALSE", {"type": "boolean"}) is False
 
+    def test_yes_coerced_to_true(self) -> None:
+        assert _coerce_value("yes", {"type": "boolean"}) is True
+
+    def test_no_coerced_to_false(self) -> None:
+        assert _coerce_value("no", {"type": "boolean"}) is False
+
+    def test_yes_mixed_case(self) -> None:
+        assert _coerce_value("Yes", {"type": "boolean"}) is True
+
+    def test_one_string_coerced_to_true(self) -> None:
+        assert _coerce_value("1", {"type": "boolean"}) is True
+
+    def test_zero_string_coerced_to_false(self) -> None:
+        assert _coerce_value("0", {"type": "boolean"}) is False
+
     def test_non_boolean_string_returns_original(self) -> None:
-        assert _coerce_value("yes", {"type": "boolean"}) == "yes"
+        assert _coerce_value("maybe", {"type": "boolean"}) == "maybe"
 
     def test_empty_string_returns_original(self) -> None:
         assert _coerce_value("", {"type": "boolean"}) == ""
+
+    def test_whitespace_stripped(self) -> None:
+        assert _coerce_value(" true ", {"type": "boolean"}) is True
+
+
+# ---------------------------------------------------------------------------
+# _coerce_value: int → boolean (local models return 1/0 for booleans)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceIntToBoolean:
+    def test_one_coerced_to_true(self) -> None:
+        assert _coerce_value(1, {"type": "boolean"}) is True
+
+    def test_zero_coerced_to_false(self) -> None:
+        assert _coerce_value(0, {"type": "boolean"}) is False
+
+    def test_nonzero_int_coerced_to_true(self) -> None:
+        assert _coerce_value(42, {"type": "boolean"}) is True
+
+    def test_actual_bool_not_coerced(self) -> None:
+        """bool is a subclass of int — make sure we don't double-coerce."""
+        assert _coerce_value(True, {"type": "boolean"}) is True
+        assert _coerce_value(False, {"type": "boolean"}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -234,3 +289,62 @@ class TestCoerceJsonTypesIntegration:
         bb = response["localizations"][0]["bounding_box"]
         assert bb == {"x": 1, "y": 2, "w": 3, "h": 4}
         assert response["localizations"][0]["label"] == "tumor"
+
+
+# ---------------------------------------------------------------------------
+# _coerce_value: array items type "number" (string → float)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceArrayNumberItems:
+    def test_string_items_coerced_to_float(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        result = _coerce_value(["1.5", "2.7", "3.0"], schema)
+        assert result == [1.5, 2.7, 3.0]
+        assert all(isinstance(v, float) for v in result)
+
+    def test_int_items_coerced_to_float(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        result = _coerce_value([1, 2, 3], schema)
+        assert result == [1.0, 2.0, 3.0]
+        assert all(isinstance(v, float) for v in result)
+
+    def test_mixed_string_and_numeric_items(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        result = _coerce_value(["1.5", 2, 3.0], schema)
+        assert result == [1.5, 2.0, 3.0]
+        assert all(isinstance(v, float) for v in result)
+
+    def test_invalid_string_returns_original(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        original = ["1.5", "not_a_number"]
+        result = _coerce_value(original, schema)
+        assert result is original
+
+    def test_non_numeric_item_returns_original(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        original = [1.5, None]
+        result = _coerce_value(original, schema)
+        assert result is original
+
+    def test_empty_array_returns_empty(self) -> None:
+        schema: dict[str, Any] = {"type": "array", "items": {"type": "number"}}
+        result = _coerce_value([], schema)
+        assert result == []
+
+    def test_coerce_json_types_number_array(self) -> None:
+        """End-to-end: coerce_json_types handles number arrays in schema."""
+        response: dict[str, Any] = {"scores": ["0.85", "0.92", "0.71"]}
+        schema: dict[str, Any] = {
+            "json_schema": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "scores": {"type": "array", "items": {"type": "number"}},
+                    },
+                }
+            }
+        }
+        coerce_json_types(response, schema)
+        assert response["scores"] == [0.85, 0.92, 0.71]
+        assert all(isinstance(v, float) for v in response["scores"])

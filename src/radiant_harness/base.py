@@ -340,45 +340,89 @@ def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
     )
 
 
+def _build_prop_skeleton(prop: dict[str, Any]) -> Any:
+    """Build a placeholder value for a single schema property.
+
+    Recursively expands nested objects and arrays so that the skeleton
+    shows the full expected structure, not just ``{...}`` placeholders.
+    """
+    ptype = prop.get("type", "string")
+    if ptype == "boolean":
+        return "true/false"
+    if ptype == "array":
+        items = prop.get("items", {})
+        if items.get("type") == "object":
+            return [_build_object_skeleton(items)]
+        return ["..."]
+    if ptype == "object":
+        return _build_object_skeleton(prop)
+    if ptype in ("number", "integer"):
+        return 0
+    enum_vals = prop.get("enum")
+    return "|".join(enum_vals) if enum_vals else "..."
+
+
+def _build_object_skeleton(schema_obj: dict[str, Any]) -> dict[str, Any]:
+    """Build a nested skeleton dict from an object schema."""
+    props = schema_obj.get("properties", {})
+    skeleton: dict[str, Any] = {}
+    for key, prop in props.items():
+        skeleton[key] = _build_prop_skeleton(prop)
+    return skeleton
+
+
+def _collect_field_hints(
+    props: dict[str, Any], prefix: str = "",
+) -> list[str]:
+    """Recursively collect ``"- key: description"`` lines including nested fields."""
+    hints: list[str] = []
+    for key, prop in props.items():
+        full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+        desc = prop.get("description", "")
+        if desc:
+            hints.append(f"- {full_key}: {desc}")
+        # Recurse into nested objects
+        if prop.get("type") == "object":
+            hints.extend(_collect_field_hints(prop.get("properties", {}), full_key))
+        # Recurse into array item objects
+        if prop.get("type") == "array":
+            items = prop.get("items", {})
+            if items.get("type") == "object":
+                hints.extend(
+                    _collect_field_hints(items.get("properties", {}), f"{full_key}[]")
+                )
+    return hints
+
+
 def _build_schema_skeleton(
     response_schema: dict[str, Any] | None,
-) -> tuple[dict[str, str], list[str]]:
+) -> tuple[dict[str, Any], list[str]]:
     """Build a JSON skeleton and field hints from a response schema.
 
     Built once per analysis and reused for single-turn prompt injection
     and force-finalize nudges, avoiding redundant schema traversal.
 
+    The skeleton recursively expands nested objects so models see the
+    full expected structure (e.g. ``caption.description``) rather than
+    opaque ``{...}`` placeholders.
+
     Returns:
         (skeleton_dict, field_hints) where skeleton_dict maps field names
-        to placeholder strings and field_hints is a list of
-        ``"- key: description"`` lines.
+        to placeholder values and field_hints is a list of
+        ``"- key: description"`` lines (including nested fields).
     """
     if response_schema is None:
-        return {"continue": "false"}, []
+        return {"continue": False}, []
 
     schema_obj = response_schema.get("json_schema", {}).get("schema", {})
     props = schema_obj.get("properties", {})
-    skeleton: dict[str, str] = {}
-    field_hints: list[str] = []
+    skeleton: dict[str, Any] = {}
 
     for key, prop in props.items():
-        ptype = prop.get("type", "string")
-        desc = prop.get("description", "")
-        if ptype == "boolean":
-            skeleton[key] = "true/false"
-        elif ptype == "array":
-            skeleton[key] = "[...]"
-        elif ptype == "object":
-            skeleton[key] = "{...}"
-        elif ptype in ("number", "integer"):
-            skeleton[key] = "0"
-        else:
-            enum_vals = prop.get("enum")
-            skeleton[key] = "|".join(enum_vals) if enum_vals else "..."
-        if desc:
-            field_hints.append(f"- {key}: {desc}")
+        skeleton[key] = _build_prop_skeleton(prop)
 
-    skeleton["continue"] = "false"
+    skeleton["continue"] = False
+    field_hints = _collect_field_hints(props)
     return skeleton, field_hints
 
 
@@ -834,7 +878,8 @@ class AgenticProcessorBase(ABC):
             system_prompt = (
                 f"{system_prompt}\n\n"
                 f"OUTPUT FORMAT: You MUST respond with ONLY a valid JSON object. "
-                f"No other text, no markdown, no explanation outside the JSON.\n"
+                f"No other text, no markdown, no explanation outside the JSON. "
+                f"Keep your reasoning concise — the JSON output is what matters.\n"
                 f"Required structure:\n{skeleton_str}"
             )
             if hints_block:
@@ -909,11 +954,11 @@ class AgenticProcessorBase(ABC):
         def _force_finalize_message() -> str:
             """Build a force-finalize message using the pre-built skeleton."""
             return (
-                "[System: You have failed to produce valid JSON for multiple consecutive turns. "
-                "You MUST respond with ONLY a JSON object NOW. Fill in this template with your "
-                f"best analysis based on what you have observed so far:\n{skeleton_str}\n"
-                "Replace placeholder values with your actual analysis. Respond with ONLY the "
-                "JSON object, no other text.]"
+                "[System: Your previous responses were not valid JSON. "
+                "You MUST respond with ONLY a JSON object NOW — no other text. "
+                f"Copy this template and fill in your analysis:\n{skeleton_str}\n"
+                "Replace every placeholder with your actual findings. "
+                "Set \"continue\": false. Output ONLY the JSON.]"
             )
 
         for turn_idx in range(self.max_turns):
@@ -1224,9 +1269,10 @@ class AgenticProcessorBase(ABC):
                             {
                                 "role": "user",
                                 "content": (
-                                    "[System: Your previous response was too long and was "
-                                    "truncated. Please use tools or provide a concise JSON "
-                                    "response with 'continue' field.]"
+                                    "[System: Your previous response was too long and got "
+                                    "cut off. Be more concise. Respond with ONLY a short "
+                                    "JSON object — no explanations outside the JSON. "
+                                    f"Required structure:\n{skeleton_str}]"
                                 ),
                             }
                         )
@@ -1290,9 +1336,10 @@ class AgenticProcessorBase(ABC):
                         {
                             "role": "user",
                             "content": (
-                                "[System: You returned an empty response. Please provide "
-                                "your analysis as a JSON object. Use tools if you need "
-                                "more information, or set 'continue': false to finalize.]"
+                                "[System: You returned an empty response. Respond with "
+                                "ONLY a JSON object. Use tools if you need more "
+                                "information, or set 'continue': false to finalize. "
+                                f"Required structure:\n{skeleton_str}]"
                             ),
                         }
                     )
@@ -1321,8 +1368,9 @@ class AgenticProcessorBase(ABC):
                                     "role": "user",
                                     "content": (
                                         "[System: Your response was not valid JSON. "
-                                        "Please respond with a JSON object including "
-                                        "a 'continue' field.]"
+                                        "Respond with ONLY a JSON object — no markdown, "
+                                        "no explanation outside the JSON. Required "
+                                        f"structure:\n{skeleton_str}]"
                                     ),
                                 }
                             )
@@ -1351,8 +1399,8 @@ class AgenticProcessorBase(ABC):
                                 "content": (
                                     "[System: Your response was a JSON "
                                     f"{type(parsed_obj).__name__}, not an object. "
-                                    "Please respond with a JSON object including "
-                                    "a 'continue' field.]"
+                                    "Respond with ONLY a JSON object matching this "
+                                    f"structure:\n{skeleton_str}]"
                                 ),
                             }
                         )
@@ -1396,12 +1444,14 @@ class AgenticProcessorBase(ABC):
                         f"Turn {turn_idx + 1}: coerced int 'continue' "
                         f"value {original_value!r} to bool {wants_continue!r}"
                     )
-                elif isinstance(wants_continue, str) and wants_continue.lower() in (
+                elif isinstance(wants_continue, str) and wants_continue.strip().lower() in (
                     "true",
                     "false",
+                    "yes",
+                    "no",
                 ):
                     original_value = wants_continue
-                    wants_continue = wants_continue.lower() == "true"
+                    wants_continue = wants_continue.strip().lower() in ("true", "yes")
                     parsed["continue"] = wants_continue
                     logger.warning(
                         f"Turn {turn_idx + 1}: coerced string 'continue' "
@@ -1451,8 +1501,9 @@ class AgenticProcessorBase(ABC):
                                 "role": "user",
                                 "content": (
                                     "[System: Your response is incomplete — it failed "
-                                    f"validation.{missing_hint} Please provide a complete "
-                                    "response with all required fields and correct types. "
+                                    f"validation.{missing_hint} Respond with a complete "
+                                    "JSON object matching this structure:\n"
+                                    f"{skeleton_str}\n"
                                     "Set 'continue': true if you need more turns.]"
                                 ),
                             }

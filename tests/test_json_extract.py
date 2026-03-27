@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from radiant_harness.utils import extract_json_from_text
+from radiant_harness.utils.json_extract import _try_repair_truncated
 
 
 class TestExtractJsonFromText:
@@ -103,3 +104,77 @@ The lesion appears to be located in the frontal lobe.
             "confidence": 0.92,
             "continue": False,
         }
+
+
+class TestTruncatedJsonRepair:
+    """Test truncated JSON repair for local model outputs."""
+
+    def test_missing_closing_brace(self) -> None:
+        text = '{"diagnosis": "tumor", "confidence": 0.85'
+        result = extract_json_from_text(text)
+        assert result == {"diagnosis": "tumor", "confidence": 0.85}
+
+    def test_missing_nested_closing_braces(self) -> None:
+        # raw_decode finds the complete inner object first; repair handles
+        # the case where no inner object is complete either.
+        text = '{"caption": {"description": "mass in frontal lobe", "confidence": 0.9}'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["description"] == "mass in frontal lobe"
+
+    def test_both_braces_missing(self) -> None:
+        text = '{"caption": {"description": "mass in frontal lobe"'
+        result = extract_json_from_text(text)
+        assert result is not None
+
+    def test_truncated_mid_string_value(self) -> None:
+        text = '{"diagnosis": "glioblastoma multiforme grade IV'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert "glioblastoma" in result["diagnosis"]
+
+    def test_truncated_after_colon(self) -> None:
+        text = '{"diagnosis": "tumor", "confidence": '
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["diagnosis"] == "tumor"
+
+    def test_truncated_mid_key(self) -> None:
+        text = '{"diagnosis": "tumor", "confid'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["diagnosis"] == "tumor"
+
+    def test_too_short_fragment_returns_none(self) -> None:
+        result = _try_repair_truncated('{"a": 1')
+        assert result is None  # < 20 chars
+
+    def test_no_brace_returns_none(self) -> None:
+        result = _try_repair_truncated("no json here at all, just text")
+        assert result is None
+
+    def test_already_balanced_returns_none(self) -> None:
+        result = _try_repair_truncated('{"complete": true}  ')
+        assert result is None
+
+    def test_nested_array_truncation(self) -> None:
+        text = '{"items": ["a", "b", "c"], "count": 3'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["items"] == ["a", "b", "c"]
+
+    def test_deeply_nested_truncation(self) -> None:
+        # raw_decode finds the first complete inner object; repair handles
+        # the case where nothing is complete.
+        text = '{"outer": {"inner": {"value": 42}'
+        result = extract_json_from_text(text)
+        assert result is not None
+        # Inner object {"value": 42} is found by raw_decode
+        assert result["value"] == 42
+
+    def test_repair_where_no_inner_object_complete(self) -> None:
+        """When no inner object is self-contained, repair closes all braces."""
+        text = '{"diagnosis": "tumor", "nested": {"score": 0.85'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert result["diagnosis"] == "tumor"
