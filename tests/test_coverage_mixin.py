@@ -7,6 +7,7 @@ env_response, is_completed, and get_reward_function.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -184,16 +185,19 @@ class TestEnvBuildUserMessage:
         assert msg[1]["type"] == "image_url"
 
 
-class TestEnvBuildInitialState:
-    def test_text_only_state(self) -> None:
+class TestEnvSetupState:
+    @pytest.mark.asyncio
+    async def test_text_only_state(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(cases=[])
         env = env_class()
 
-        state = env.build_initial_state([], {"question": "Q"})
+        state: dict[str, Any] = {"info": {"question": "Q"}}
+        state = await env.setup_state(state)
         assert "image_path" not in state
         assert state["turn"] == 0
 
-    def test_image_path_added_to_state(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_image_path_added_to_state(self, tmp_path: Path) -> None:
         img = tmp_path / "state.png"
         img.touch()
 
@@ -203,18 +207,21 @@ class TestEnvBuildInitialState:
         )
         env = env_class()
 
-        state = env.build_initial_state([], {"image_path": "state.png"})
+        state: dict[str, Any] = {"info": {"image_path": "state.png"}}
+        state = await env.setup_state(state)
         assert "image_path" in state
         assert state["image_path"] == str((tmp_path / "state.png").resolve())
 
-    def test_absolute_image_path_preserved(self) -> None:
+    @pytest.mark.asyncio
+    async def test_absolute_image_path_preserved(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(
             cases=[],
             image_base_path=Path("/base"),
         )
         env = env_class()
 
-        state = env.build_initial_state([], {"image_path": "/abs/img.png"})
+        state: dict[str, Any] = {"info": {"image_path": "/abs/img.png"}}
+        state = await env.setup_state(state)
         assert state["image_path"] == "/abs/img.png"
 
 
@@ -232,15 +239,16 @@ class TestEnvResponse:
         env._adapter = MagicMock()
         env._adapter.process_verifiers_messages = AsyncMock(return_value=mock_result)
 
-        state = {"turn": 0, "tool_uses": 0}
+        state: dict[str, Any] = {"turn": 0, "tool_uses": 0}
         messages = [{"role": "user", "content": "test"}]
 
-        result_msgs, new_state = await env.env_response(messages, state)
+        result_msgs = await env.env_response(messages, state)
 
         assert result_msgs == [{"role": "assistant", "content": "answer"}]
-        assert new_state["turn"] == 1
-        assert new_state["tool_uses"] == 1
-        assert new_state["is_complete"] is False
+        # State is mutated in-place
+        assert state["turn"] == 1
+        assert state["tool_uses"] == 1
+        assert state["is_complete"] is False
 
     @pytest.mark.asyncio
     async def test_passes_image_path_from_state(self) -> None:
@@ -255,14 +263,14 @@ class TestEnvResponse:
         env._adapter = MagicMock()
         env._adapter.process_verifiers_messages = AsyncMock(return_value=mock_result)
 
-        state = {"turn": 0, "tool_uses": 0, "image_path": "/img/scan.png"}
+        state: dict[str, Any] = {"turn": 0, "tool_uses": 0, "image_path": "/img/scan.png"}
         await env.env_response([], state)
 
         call_info = env._adapter.process_verifiers_messages.call_args[1]["info"]
         assert call_info["image_path"] == "/img/scan.png"
 
     @pytest.mark.asyncio
-    async def test_info_none_defaults_to_empty(self) -> None:
+    async def test_info_from_state_defaults_to_empty(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(cases=[])
         env = env_class()
 
@@ -270,37 +278,45 @@ class TestEnvResponse:
         env._adapter = MagicMock()
         env._adapter.process_verifiers_messages = AsyncMock(return_value=mock_result)
 
-        state = {"turn": 0, "tool_uses": 0}
-        await env.env_response([], state, info=None)
+        state: dict[str, Any] = {"turn": 0, "tool_uses": 0}
+        await env.env_response([], state)
 
         call_info = env._adapter.process_verifiers_messages.call_args[1]["info"]
         assert "image_path" in call_info  # from state.get("image_path") → None
 
 
 class TestEnvIsCompleted:
+    @staticmethod
+    def _state(**overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "timing": {"start_time": time.time()},
+            "trajectory": [{"prompt": [], "completion": []}],
+            "prompt": [],
+            "completion": [],
+        }
+        base.update(overrides)
+        return base
+
     @pytest.mark.asyncio
     async def test_max_turns_reached(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(max_turns=2, cases=[])
         env = env_class()
 
-        state = {"turn": 2, "is_complete": False}
-        assert await env.is_completed([], state) is True
+        assert await env.is_completed(self._state(turn=2, is_complete=False)) is True
 
     @pytest.mark.asyncio
     async def test_is_complete_flag_in_state(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(max_turns=10, cases=[])
         env = env_class()
 
-        state = {"turn": 1, "is_complete": True}
-        assert await env.is_completed([], state) is True
+        assert await env.is_completed(self._state(turn=1, is_complete=True)) is True
 
     @pytest.mark.asyncio
     async def test_not_complete(self) -> None:
         env_class = _DummyProcessor.as_verifiers_env(max_turns=10, cases=[])
         env = env_class()
 
-        state = {"turn": 1, "is_complete": False}
-        assert await env.is_completed([], state) is False
+        assert await env.is_completed(self._state(turn=1, is_complete=False)) is False
 
 
 class TestEnvGetRewardFunction:

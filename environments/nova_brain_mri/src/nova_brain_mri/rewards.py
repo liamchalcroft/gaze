@@ -22,6 +22,20 @@ from ._utils import compute_iou, extract_completion_text, extract_json_from_text
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
+# Stopwords that inflate token overlap without carrying semantic content.
+# Must stay in sync with examples/nova/src/rewards.py._CAPTION_STOPWORDS.
+_CAPTION_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "may", "might", "must", "can", "could",
+    "i", "me", "my", "we", "our", "you", "your",
+    "he", "she", "it", "they", "them", "his", "her", "its", "their",
+    "this", "that", "these", "those",
+    "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
+    "into", "about", "between", "through", "during", "before", "after",
+    "and", "or", "but", "nor", "not", "no", "so", "if", "then",
+})
+
 # Must stay in sync with examples/nova/src/rewards.py._ABBREVIATION_MAPPING.
 _ABBREVIATION_MAPPING: dict[str, str] = {
     "sod": "septo-optic dysplasia",
@@ -149,10 +163,19 @@ def caption_reward(
     if not pred_caption or not ref_caption:
         return 0.0
 
-    pred_tokens = Counter(str(pred_caption).lower().split())
-    ref_tokens = Counter(str(ref_caption).lower().split())
+    pred_tokens = Counter(
+        t for t in re.findall(r"\b\w+\b", str(pred_caption).lower())
+        if t not in _CAPTION_STOPWORDS
+    )
+    ref_tokens = Counter(
+        t for t in re.findall(r"\b\w+\b", str(ref_caption).lower())
+        if t not in _CAPTION_STOPWORDS
+    )
 
-    if not ref_tokens:
+    # Both empty after stopword filtering = trivial match (aligned with core TokenF1Reward)
+    if not pred_tokens and not ref_tokens:
+        return 1.0
+    if not pred_tokens or not ref_tokens:
         return 0.0
 
     # Multiset intersection: min count for each shared token preserves frequency
@@ -201,7 +224,10 @@ def diagnosis_reward(
 
     ref_diagnosis = info.get("diagnosis", info.get("gold_diagnosis", ""))
     if isinstance(ref_diagnosis, dict):
-        ref_diagnosis = ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", ""))
+        ref_diagnosis = ref_diagnosis.get(
+            "primary_diagnosis",
+            ref_diagnosis.get("primary", ref_diagnosis.get("diagnosis", "")),
+        )
 
     # Match examples/nova: score primary prediction against reference only.
     # Differentials are not included to avoid inflating scores relative to
@@ -220,8 +246,14 @@ def diagnosis_reward(
 
     top1_match = _normalize_diagnosis(pred_primary) in ref_normalized
 
+    # Coverage: F1 over matched diagnoses (penalises false positives)
     matches = pred_normalized & ref_normalized
-    coverage = len(matches) / len(ref_normalized)
+    if not matches:
+        coverage = 0.0
+    else:
+        cov_precision = len(matches) / len(pred_normalized)
+        cov_recall = len(matches) / len(ref_normalized)
+        coverage = 2 * cov_precision * cov_recall / (cov_precision + cov_recall)
 
     return 0.6 * float(top1_match) + 0.4 * coverage
 
@@ -258,10 +290,13 @@ def _extract_ref_boxes(info: dict[str, Any]) -> list[list[float]]:
     """Extract reference bounding boxes from info dict.
 
     Accepts both "bounding_box" and "bbox" keys (dataset conventions).
+    Falls back to "localizations"/"gold_localizations" keys.
     """
-    ref_source = info.get("boxes", info.get("gold_boxes", []))
+    ref_source = info.get("boxes", info.get("gold_boxes"))
+    if ref_source is None:
+        ref_source = info.get("localizations", info.get("gold_localizations", []))
     if isinstance(ref_source, dict):
-        ref_source = ref_source.get("boxes", [])
+        ref_source = ref_source.get("boxes", ref_source.get("localizations", []))
 
     ref_boxes: list[list[float]] = []
     if isinstance(ref_source, list):
@@ -326,6 +361,17 @@ def localization_reward_factory(
         width = info.get("image_width", info.get("width", 0))
         height = info.get("image_height", info.get("height", 0))
         image_area = float(width) * float(height)
+
+        if image_area <= 0 and pred_boxes:
+            import warnings
+
+            warnings.warn(
+                "localization_reward: image_area=0 disables area penalty. "
+                "Full-image boxes will receive full IoU credit. Pass "
+                "image_width/image_height in info when degenerate-box "
+                "gaming matters (e.g. RL training).",
+                stacklevel=2,
+            )
 
         matched_refs: set[int] = set()
         true_positives = 0

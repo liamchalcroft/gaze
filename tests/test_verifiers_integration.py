@@ -63,9 +63,9 @@ class TestTokenF1Reward:
         reward = TokenF1Reward()
 
         score = reward("", "The brown fox", {"answer": "The quick brown fox"})
-        # Tokens: ["the", "brown", "fox"] vs ["the", "quick", "brown", "fox"]
-        # Intersection: 3, Union: 4, F1 = 2*3/(3+4) = 6/7 ≈ 0.857
-        assert abs(score - 0.857) < 0.01
+        # Stopwords filtered: ["brown", "fox"] vs ["quick", "brown", "fox"]
+        # Intersection: 2, P=2/2=1.0, R=2/3≈0.667, F1 = 0.8
+        assert abs(score - 0.8) < 0.01
 
     def test_no_match(self) -> None:
         reward = TokenF1Reward()
@@ -217,5 +217,8 @@ class TestToolEnvIntegrations:
         assert hasattr(env, "tools")
         assert len(env.tools) == 5  # zoom, crop, contrast, threshold, search
         assert isinstance(env.rubric, vf.Rubric)
-        state = env.build_initial_state(env.dataset[0]["prompt"], env.dataset[0]["info"])
+        import asyncio
+
+        state: dict = {}
+        state = asyncio.get_event_loop().run_until_complete(env.setup_state(state))
         assert state["turn"] == 0

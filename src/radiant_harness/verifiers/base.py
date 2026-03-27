@@ -26,8 +26,7 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
     - Tool request parsing
 
     Subclasses should implement:
-    - build_initial_state: Initialize episode state
-    - is_completed: Check episode completion conditions
+    - setup_state: Initialize episode state
     - env_response: Generate environment responses
     """
 
@@ -70,7 +69,7 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
             }
         )
 
-        super().__init__(name=name, dataset=dataset)
+        super().__init__(max_turns=max_turns, dataset=dataset)
         self._cases = cases
 
     @staticmethod
@@ -158,71 +157,48 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
         """
         return "You are a helpful assistant. Respond accurately and concisely."
 
-    def build_initial_state(
-        self,
-        prompt: vf.Messages,  # noqa: ARG002 - Required by interface
-        info: dict[str, Any],
-    ) -> vf.State:
-        """Build initial state for episode.
+    async def setup_state(self, state: vf.State) -> vf.State:
+        """Initialize episode state.
 
         Override this method to customize initial state.
 
         Args:
-            prompt: Initial messages
-            info: Case information
+            state: State dict pre-populated by verifiers
 
         Returns:
-            Initial state dictionary
+            State with custom fields added
         """
-        return {
-            "turn": 0,
-            "info": info,
-            "tool_uses": 0,
-        }
+        state["turn"] = 0
+        state["tool_uses"] = 0
+        return state
 
-    async def is_completed(
-        self,
-        messages: vf.Messages,  # noqa: ARG002 - Required by interface
-        state: vf.State,
-        info: dict[str, Any] | None = None,  # noqa: ARG002 - Required by interface
-    ) -> bool:
-        """Check if episode is complete.
-
-        Override this method to implement custom completion logic.
-
-        Args:
-            messages: Conversation messages
-            state: Current episode state
-            info: Additional information
-
-        Returns:
-            True if episode should end
-        """
-        # Default: end at max turns
+    @vf.stop
+    async def _turn_limit_reached(self, state: vf.State) -> bool:
+        """Stop when turn limit is reached."""
         return state.get("turn", 0) >= self._max_turns
 
     async def env_response(
         self,
         messages: vf.Messages,  # noqa: ARG002 - Required by interface
         state: vf.State,
-        info: dict[str, Any] | None = None,  # noqa: ARG002 - Required by interface
-    ) -> tuple[vf.Messages, vf.State]:
+        **kwargs: Any,  # noqa: ARG002 - Required by interface
+    ) -> vf.Messages:
         """Generate environment response to assistant message.
 
         Override this method to implement custom environment behavior.
+        Mutate state in-place to track turn progress.
 
         Args:
             messages: Conversation messages
-            state: Current episode state
-            info: Additional information
+            state: Current episode state (mutate in-place)
+            **kwargs: Additional arguments from verifiers
 
         Returns:
-            Tuple of (response_messages, new_state)
+            Response messages
         """
         # Default: increment turn counter, no response
-        new_state = dict(state)
-        new_state["turn"] = state.get("turn", 0) + 1
-        return [], new_state
+        state["turn"] = state.get("turn", 0) + 1
+        return []
 
     def _log_debug(self, line: str) -> None:
         """Write debug log entry."""

@@ -320,59 +320,39 @@ class GEMeXThinkVGToolEnv(vf.ToolEnv):
     def get_system_prompt(self) -> str:
         return SYSTEM_PROMPT
 
-    def build_initial_state(
-        self,
-        prompt: vf.Messages,
-        info: dict[str, Any],
-    ) -> vf.State:
-        """Build initial state for episode."""
-        return {
-            "turn": 0,
-            "info": info,
-            "tool_uses": 0,
-            "has_zoomed": False,
-            "has_cropped": False,
-            "has_searched": False,
-        }
+    async def setup_state(self, state: vf.State) -> vf.State:
+        """Initialize episode state."""
+        state["turn"] = 0
+        state["tool_uses"] = 0
+        state["has_zoomed"] = False
+        state["has_cropped"] = False
+        state["has_searched"] = False
+        return state
 
-    async def is_completed(
-        self,
-        messages: vf.Messages,
-        state: vf.State,
-        info: dict[str, Any] | None = None,
-    ) -> bool:
-        """Check if episode is complete."""
-        if await super().is_completed(messages, state, info):
-            return True
-
-        # Stop at max turns
-        if state.get("turn", 0) >= self._max_turns:
-            return True
-
-        last_asst = _last_assistant_text(messages)
+    @vf.stop
+    async def _valid_response_given(self, state: vf.State) -> bool:
+        """Stop when assistant provides a valid JSON response (unless continue=true)."""
+        trajectory = state.get("trajectory", [])
+        if not trajectory:
+            return False
+        last_completion = trajectory[-1].get("completion", [])
+        last_asst = _last_assistant_text(last_completion)
         if not last_asst:
             return False
-
-        # Check if assistant provided valid JSON response
         response = _extract_json_response(last_asst)
         if response and validate_gemex_response(response):
-            # Respect explicit continue=true signal: the model wants another turn
             return response.get("continue") is not True
-
         return False
 
     async def env_response(
         self,
         messages: vf.Messages,
         state: vf.State,
-        info: dict[str, Any] | None = None,
-    ) -> tuple[vf.Messages, vf.State]:
+        **kwargs: Any,
+    ) -> vf.Messages:
         """Delegate tool handling to ToolEnv and track turns."""
-        new_state = dict(state)
-        new_state["turn"] = state.get("turn", 0) + 1
-        response, updated_state = await super().env_response(messages, new_state, info)
-        updated_state.setdefault("turn", new_state["turn"])
-        return response, updated_state
+        state["turn"] = state.get("turn", 0) + 1
+        return await super().env_response(messages, state, **kwargs)
 
 
 # ---------- Loader ----------

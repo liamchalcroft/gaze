@@ -7,6 +7,7 @@ turn tracking, debug logging, text extraction, and tool request parsing.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +127,7 @@ class TestCaseProcessing:
 
 
 # ---------------------------------------------------------------------------
-# get_system_prompt / build_initial_state
+# get_system_prompt / setup_state
 # ---------------------------------------------------------------------------
 
 
@@ -137,12 +138,13 @@ class TestDefaultBehavior:
         assert "helpful assistant" in prompt.lower()
         assert "accurately" in prompt.lower()
 
-    def test_build_initial_state_structure(self) -> None:
+    @pytest.mark.asyncio
+    async def test_setup_state_structure(self) -> None:
         env = BaseMultiTurnEnv(cases=[], name="State")
-        state = env.build_initial_state(prompt=[], info={"case_index": 0})
+        state: dict[str, Any] = {}
+        state = await env.setup_state(state)
         assert state["turn"] == 0
         assert state["tool_uses"] == 0
-        assert state["info"]["case_index"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -151,33 +153,47 @@ class TestDefaultBehavior:
 
 
 class TestTurnManagement:
+    @staticmethod
+    def _state(**overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "timing": {"start_time": time.time()},
+            "trajectory": [{"prompt": [], "completion": []}],
+            "prompt": [],
+            "completion": [],
+        }
+        base.update(overrides)
+        return base
+
     @pytest.mark.asyncio
     async def test_is_completed_false_below_max_turns(self) -> None:
         env = BaseMultiTurnEnv(cases=[], max_turns=5, name="Comp")
-        assert await env.is_completed([], {"turn": 4}) is False
+        assert await env.is_completed(self._state(turn=4)) is False
 
     @pytest.mark.asyncio
     async def test_is_completed_true_at_max_turns(self) -> None:
         env = BaseMultiTurnEnv(cases=[], max_turns=5, name="Comp")
-        assert await env.is_completed([], {"turn": 5}) is True
+        assert await env.is_completed(self._state(turn=5)) is True
 
     @pytest.mark.asyncio
     async def test_is_completed_true_above_max_turns(self) -> None:
         env = BaseMultiTurnEnv(cases=[], max_turns=3, name="Comp")
-        assert await env.is_completed([], {"turn": 10}) is True
+        assert await env.is_completed(self._state(turn=10)) is True
 
     @pytest.mark.asyncio
     async def test_env_response_increments_turn(self) -> None:
         env = BaseMultiTurnEnv(cases=[], max_turns=10, name="Resp")
-        messages, new_state = await env.env_response([], {"turn": 2})
+        state: dict[str, Any] = {"turn": 2}
+        messages = await env.env_response([], state)
         assert messages == []
-        assert new_state["turn"] == 3
+        # State is mutated in-place
+        assert state["turn"] == 3
 
     @pytest.mark.asyncio
     async def test_env_response_from_zero(self) -> None:
         env = BaseMultiTurnEnv(cases=[], name="Resp")
-        _, new_state = await env.env_response([], {})
-        assert new_state["turn"] == 1
+        state: dict[str, Any] = {}
+        await env.env_response([], state)
+        assert state["turn"] == 1
 
 
 # ---------------------------------------------------------------------------

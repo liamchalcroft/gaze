@@ -8,6 +8,7 @@ AdapterEnv.env_response, AdapterEnv.is_completed, and Path image_path.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -262,11 +263,12 @@ class TestAdapterEnvResponse:
         messages = [{"role": "user", "content": "Analyze scan"}]
         state: dict[str, Any] = {"turn": 0, "tool_uses": 0}
 
-        new_messages, new_state = await env.env_response(messages, state)
+        new_messages = await env.env_response(messages, state)
 
-        assert new_state["turn"] == 1
-        assert new_state["tool_uses"] == 1
-        assert new_state["is_complete"] is True
+        # State is mutated in-place
+        assert state["turn"] == 1
+        assert state["tool_uses"] == 1
+        assert state["is_complete"] is True
         assert len(new_messages) == 1
         assert new_messages[0]["role"] == "assistant"
 
@@ -295,11 +297,12 @@ class TestAdapterEnvResponse:
         messages = [{"role": "user", "content": "Test"}]
         state: dict[str, Any] = {"turn": 2, "tool_uses": 5}
 
-        _, new_state = await env.env_response(messages, state)
+        await env.env_response(messages, state)
 
-        assert new_state["turn"] == 3
-        assert new_state["tool_uses"] == 5
-        assert new_state["is_complete"] is False
+        # State is mutated in-place
+        assert state["turn"] == 3
+        assert state["tool_uses"] == 5
+        assert state["is_complete"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -307,30 +310,40 @@ class TestAdapterEnvResponse:
 # ---------------------------------------------------------------------------
 
 
+def _test_state(**overrides: Any) -> dict[str, Any]:
+    """Create a minimal verifiers-compatible State dict for testing."""
+    base: dict[str, Any] = {
+        "timing": {"start_time": time.time()},
+        "trajectory": [{"prompt": [], "completion": []}],
+        "prompt": [],
+        "completion": [],
+    }
+    base.update(overrides)
+    return base
+
+
 class TestAdapterEnvIsCompleted:
     @pytest.mark.asyncio
     async def test_completed_via_max_turns(self) -> None:
-        """super().is_completed returns True when turn >= max_turns (line 223-224)."""
+        """@vf.stop _turn_limit_reached fires when turn >= max_turns."""
         processor = _make_processor()
         adapter = RadiantHarnessAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=3)
 
-        messages = [{"role": "user", "content": "x"}]
-        state: dict[str, Any] = {"turn": 3, "is_complete": False}
-        assert await env.is_completed(messages, state) is True
+        state = _test_state(turn=3, is_complete=False)
+        assert await env.is_completed(state) is True
 
     @pytest.mark.asyncio
     async def test_completed_via_state_flag(self) -> None:
-        """state['is_complete'] = True triggers completion (line 225)."""
+        """@vf.stop _adapter_complete fires when is_complete=True."""
         processor = _make_processor()
         adapter = RadiantHarnessAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=100)
 
-        messages = [{"role": "user", "content": "x"}]
-        state: dict[str, Any] = {"turn": 1, "is_complete": True}
-        assert await env.is_completed(messages, state) is True
+        state = _test_state(turn=1, is_complete=True)
+        assert await env.is_completed(state) is True
 
     @pytest.mark.asyncio
     async def test_not_completed(self) -> None:
@@ -340,9 +353,8 @@ class TestAdapterEnvIsCompleted:
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=100)
 
-        messages = [{"role": "user", "content": "x"}]
-        state: dict[str, Any] = {"turn": 1, "is_complete": False}
-        assert await env.is_completed(messages, state) is False
+        state = _test_state(turn=1, is_complete=False)
+        assert await env.is_completed(state) is False
 
 
 # ---------------------------------------------------------------------------

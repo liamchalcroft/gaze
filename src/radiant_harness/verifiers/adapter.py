@@ -199,29 +199,23 @@ class RadiantHarnessAdapter:
                 self,
                 messages: Messages,
                 state: State,
-                info: dict[str, Any] | None = None,
-            ) -> tuple[vf.Messages, vf.State]:
+                **kwargs: Any,
+            ) -> vf.Messages:
                 """Generate response using Radiant Harness."""
+                info = state.get("info") or {}
                 result = await self._adapter.process_verifiers_messages(
-                    messages, info if info is not None else {}
+                    messages, info,
                 )
 
-                new_state = dict(state)
-                new_state["turn"] = state.get("turn", 0) + 1
-                new_state["tool_uses"] = state.get("tool_uses", 0) + len(result["tool_calls"])
-                new_state["is_complete"] = result["is_complete"]
+                state["turn"] = state.get("turn", 0) + 1
+                state["tool_uses"] = state.get("tool_uses", 0) + len(result["tool_calls"])
+                state["is_complete"] = result["is_complete"]
 
-                return result["messages"], new_state
+                return result["messages"]
 
-            async def is_completed(
-                self,
-                messages: Messages,
-                state: State,
-                info: dict[str, Any] | None = None,
-            ) -> bool:
-                """Check if complete using adapter result."""
-                if await super().is_completed(messages, state, info):
-                    return True
+            @vf.stop
+            async def _adapter_complete(self, state: State) -> bool:
+                """Stop when adapter signals completion."""
                 return state.get("is_complete", False)
 
         return AdapterEnv

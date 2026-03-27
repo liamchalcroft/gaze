@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
 from typing import Any
 
 from beartype import beartype
@@ -54,8 +53,7 @@ def _image_file_to_data_url(image_path: str) -> str:
         return encode_image(image).to_data_url()
 
 
-if TYPE_CHECKING:
-    import verifiers as vf
+import verifiers as vf
 
 
 class VerifiableProcessorMixin:
@@ -194,15 +192,12 @@ class VerifiableProcessorMixin:
                 # Text-only case
                 return self._processor.get_user_message(images=[], metadata=case)
 
-            def build_initial_state(
-                self,
-                prompt: vf.Messages,
-                info: dict[str, Any],
-            ) -> vf.State:
-                """Build initial state with image info."""
-                state = super().build_initial_state(prompt, info)
+            async def setup_state(self, state: vf.State) -> vf.State:
+                """Initialize state with image info."""
+                state = await super().setup_state(state)
 
                 # Store image path for tool execution
+                info = state.get("info") or {}
                 image_path = info.get("image_path") or info.get("image")
                 if image_path:
                     if self._image_base_path and not Path(image_path).is_absolute():
@@ -215,10 +210,10 @@ class VerifiableProcessorMixin:
                 self,
                 messages: vf.Messages,
                 state: vf.State,
-                info: dict[str, Any] | None = None,
-            ) -> tuple[vf.Messages, vf.State]:
+                **kwargs: Any,
+            ) -> vf.Messages:
                 """Generate environment response using processor."""
-                info = info if info is not None else {}
+                info = state.get("info") or {}
 
                 # Get image path from state if available
                 image_path = state.get("image_path")
@@ -229,23 +224,16 @@ class VerifiableProcessorMixin:
                     info={**info, "image_path": image_path},
                 )
 
-                # Update state
-                new_state = dict(state)
-                new_state["turn"] = state.get("turn", 0) + 1
-                new_state["tool_uses"] = state.get("tool_uses", 0) + len(result["tool_calls"])
-                new_state["is_complete"] = result["is_complete"]
+                # Update state in-place
+                state["turn"] = state.get("turn", 0) + 1
+                state["tool_uses"] = state.get("tool_uses", 0) + len(result["tool_calls"])
+                state["is_complete"] = result["is_complete"]
 
-                return result["messages"], new_state
+                return result["messages"]
 
-            async def is_completed(
-                self,
-                messages: vf.Messages,
-                state: vf.State,
-                info: dict[str, Any] | None = None,
-            ) -> bool:
-                """Check completion using both base and processor logic."""
-                if await super().is_completed(messages, state, info):
-                    return True
+            @vf.stop
+            async def _processor_complete(self, state: vf.State) -> bool:
+                """Stop when processor signals completion."""
                 return state.get("is_complete", False)
 
             def get_reward_function(self) -> BaseRewardFunction:
