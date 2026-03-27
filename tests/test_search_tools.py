@@ -54,7 +54,8 @@ async def test_search_web_tool_formats_results() -> None:
 
     assert result.success
     assert result.metadata["results_count"] == 1
-    assert result.formatted_results is not None
+    assert isinstance(result.formatted_results, str)
+    assert len(result.formatted_results) > 50
     assert "## PubMed Search Results" in result.formatted_results
     assert "Glioblastoma MRI" in result.formatted_results
     assert "Content:" in result.formatted_results
@@ -70,7 +71,7 @@ async def test_search_web_tool_error_propagates() -> None:
     result = await registry.execute("search_web", query="glioblastoma MRI", search_type="diagnosis")
 
     assert not result.success
-    assert result.error is not None
+    assert isinstance(result.error, str)
     assert "PubMed" in result.error
     assert result.metadata["query"] == "glioblastoma MRI"
     assert result.metadata["search_type"] == "diagnosis"
@@ -101,7 +102,8 @@ async def test_search_images_tool_formats_results() -> None:
 
     assert result.success
     assert result.metadata["results_count"] == 1
-    assert result.formatted_results is not None
+    assert isinstance(result.formatted_results, str)
+    assert len(result.formatted_results) > 30
     assert "## Reference Medical Images" in result.formatted_results
     assert "Reference MRI" in result.formatted_results
 
@@ -117,7 +119,7 @@ async def test_search_images_tool_error_propagates() -> None:
     )
 
     assert not result.success
-    assert result.error is not None
+    assert isinstance(result.error, str)
     assert "Open-i" in result.error
     assert result.metadata["query"] == "meningioma"
     assert result.metadata["modality"] == "MRI"
@@ -245,7 +247,7 @@ class TestValueErrorHandling:
         result = await registry.execute("search_web", query="test", search_type="invalid")
 
         assert not result.success
-        assert result.error is not None
+        assert isinstance(result.error, str)
         assert "search_type" in result.error
 
     @pytest.mark.asyncio
@@ -257,7 +259,7 @@ class TestValueErrorHandling:
         result = await registry.execute("search_web", query="")
 
         assert not result.success
-        assert result.error is not None
+        assert isinstance(result.error, str)
         assert "query" in result.error
 
     @pytest.mark.asyncio
@@ -269,7 +271,7 @@ class TestValueErrorHandling:
         result = await registry.execute("search_images", query="")
 
         assert not result.success
-        assert result.error is not None
+        assert isinstance(result.error, str)
         assert "query" in result.error
 
 
@@ -303,7 +305,7 @@ class TestFormattedOutputSizeLimit:
             result = await registry.execute("search_web", query="test")
 
         assert result.success
-        assert result.formatted_results is not None
+        assert isinstance(result.formatted_results, str)
         assert "results truncated]" in result.formatted_results
 
     @pytest.mark.asyncio
@@ -330,7 +332,7 @@ class TestFormattedOutputSizeLimit:
             result = await registry.execute("search_images", query="test")
 
         assert result.success
-        assert result.formatted_results is not None
+        assert isinstance(result.formatted_results, str)
         assert "results truncated]" in result.formatted_results
 
     @pytest.mark.asyncio
@@ -356,7 +358,7 @@ class TestFormattedOutputSizeLimit:
             result = await registry.execute("search_web", query="test")
 
         assert result.success
-        assert result.formatted_results is not None
+        assert isinstance(result.formatted_results, str)
         # Content should be truncated to 50 chars + "..."
         assert "..." in result.formatted_results
         # The full 200-char content should NOT appear
