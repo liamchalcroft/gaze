@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
 import aiohttp
+import pytest
 
 from radiant_harness.retrieval.base import BaseSearchEngine
 from radiant_harness.retrieval.base import SearchEngineError

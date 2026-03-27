@@ -12,9 +12,6 @@ from beartype import beartype
 if TYPE_CHECKING:
     from radiant_harness.types import ToolResult
 
-# Type alias for tool execute functions
-ToolExecutor = Callable[..., Awaitable["ToolResult"]]
-
 
 @beartype
 class Tool:
@@ -25,7 +22,7 @@ class Tool:
         name: str,
         description: str,
         parameters: dict[str, Any],
-        execute: ToolExecutor,
+        execute: Callable[..., Awaitable[ToolResult]],
         requires_image: bool = False,
         category: str | None = None,
         prompt_documentation: str | None = None,
@@ -71,4 +68,4 @@ class Tool:
         return doc
 
 
-__all__ = ["Tool", "ToolExecutor"]
+__all__ = ["Tool"]

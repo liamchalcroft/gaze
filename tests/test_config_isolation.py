@@ -172,7 +172,9 @@ class TestImageProcessingConfigValidation:
             ImageProcessingConfig(default_jpeg_quality=101)
 
     def test_min_brightness_ge_max_brightness_raises(self) -> None:
-        with pytest.raises(ValueError, match="min_brightness_factor.*must be < max_brightness_factor"):
+        with pytest.raises(
+            ValueError, match="min_brightness_factor.*must be < max_brightness_factor"
+        ):
             ImageProcessingConfig(min_brightness_factor=3.0, max_brightness_factor=0.5)
 
     def test_min_sharpness_negative_raises(self) -> None:
@@ -180,7 +182,9 @@ class TestImageProcessingConfigValidation:
             ImageProcessingConfig(min_sharpness_factor=-1.0)
 
     def test_min_sharpness_ge_max_sharpness_raises(self) -> None:
-        with pytest.raises(ValueError, match="min_sharpness_factor.*must be < max_sharpness_factor"):
+        with pytest.raises(
+            ValueError, match="min_sharpness_factor.*must be < max_sharpness_factor"
+        ):
             ImageProcessingConfig(min_sharpness_factor=5.0, max_sharpness_factor=1.0)
 
     def test_grid_divisions_below_two_raises(self) -> None:
@@ -200,15 +204,21 @@ class TestImageProcessingConfigValidation:
             ImageProcessingConfig(min_gaussian_sigma=6.0, max_gaussian_sigma=1.0)
 
     def test_morphological_iterations_zero_raises(self) -> None:
-        with pytest.raises(ValueError, match="max_morphological_iterations must be between 1 and 20"):
+        with pytest.raises(
+            ValueError, match="max_morphological_iterations must be between 1 and 20"
+        ):
             ImageProcessingConfig(max_morphological_iterations=0)
 
     def test_morphological_iterations_above_twenty_raises(self) -> None:
-        with pytest.raises(ValueError, match="max_morphological_iterations must be between 1 and 20"):
+        with pytest.raises(
+            ValueError, match="max_morphological_iterations must be between 1 and 20"
+        ):
             ImageProcessingConfig(max_morphological_iterations=21)
 
     def test_clahe_clip_min_ge_max_raises(self) -> None:
-        with pytest.raises(ValueError, match="min_clahe_clip_limit.*must be < max_clahe_clip_limit"):
+        with pytest.raises(
+            ValueError, match="min_clahe_clip_limit.*must be < max_clahe_clip_limit"
+        ):
             ImageProcessingConfig(min_clahe_clip_limit=10.0, max_clahe_clip_limit=1.0)
 
 

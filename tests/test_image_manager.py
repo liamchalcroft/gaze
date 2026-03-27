@@ -222,7 +222,9 @@ class TestImageManagerCopyIsolation:
 class TestImageManagerOSErrors:
     """Cover set_image generic OSError (lines 126-127)."""
 
-    def test_set_image_generic_oserror_is_wrapped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_set_image_generic_oserror_is_wrapped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         path = _create_image(tmp_path)
         mgr = ImageManager()
 
@@ -257,7 +259,9 @@ class TestEnsureLoadedErrorPaths:
             await mgr.ensure_loaded()
 
     @pytest.mark.asyncio
-    async def test_ensure_loaded_generic_oserror(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_ensure_loaded_generic_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Generic OSError from async load is wrapped (lines 168-169)."""
         path = _create_image(tmp_path)
         mgr = ImageManager()

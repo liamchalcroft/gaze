@@ -246,7 +246,8 @@ class TestAdapterEnvResponse:
 
         # Monkey-patch process_verifiers_messages to avoid real model call
         async def fake_process(
-            messages: Any, info: Any  # noqa: ARG001
+            messages: Any,
+            info: Any,  # noqa: ARG001
         ) -> dict[str, Any]:
             return {
                 "response": {"answer": "tumor"},
@@ -278,7 +279,8 @@ class TestAdapterEnvResponse:
         env = env_cls(cases=[])
 
         async def fake_process(
-            messages: Any, info: Any  # noqa: ARG001
+            messages: Any,
+            info: Any,  # noqa: ARG001
         ) -> dict[str, Any]:
             return {
                 "response": {"answer": "normal"},
@@ -369,10 +371,10 @@ class TestProcessWithPathImagePath:
         adapter.processor.analyze = fake_analyze  # type: ignore[assignment]
 
         messages = [{"role": "user", "content": "test"}]
-        info: dict[str, Any] = {"image_path": Path("/tmp/test.png")}
+        info: dict[str, Any] = {"image_path": Path("/test_data/test.png")}
 
         result = await adapter.process_verifiers_messages(messages, info)
 
         assert isinstance(captured["images"], Path)
-        assert captured["images"] == Path("/tmp/test.png")
+        assert captured["images"] == Path("/test_data/test.png")
         assert result["is_complete"] is True
