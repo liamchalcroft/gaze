@@ -231,7 +231,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                             }
                         )
 
-                sample_payload = {
+                sample_payload: dict[str, Any] = {
                     "sample_id": idx,
                     "response": result.final_response,
                     "num_turns": result.num_turns,
@@ -240,6 +240,15 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "confidence": result.confidence,
                     "total_tokens": result.total_tokens,
                 }
+                if result.run_config is not None:
+                    rc = result.run_config
+                    sample_payload["run_config"] = {
+                        "model_name": rc.model_name,
+                        "temperature": rc.temperature,
+                        "seed": rc.seed,
+                        "max_tokens": rc.max_tokens,
+                        "max_turns": rc.max_turns,
+                    }
                 result_file = config.output_dir / f"sample_{idx}.json"
                 await asyncio.to_thread(_write_json_file, result_file, sample_payload, _SafeEncoder)
 
@@ -285,7 +294,9 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         if results:
             logger.info("Computing evaluation metrics...")
             eval_set = set(config.eval_tasks) if config.eval_tasks else None
-            metrics = await compute_metrics(results, ground_truth, config.task, eval_set)
+            metrics = await compute_metrics(
+                results, ground_truth, config.task, eval_set, seed=config.seed,
+            )
         else:
             logger.warning("All samples failed — skipping metric computation")
 
@@ -316,11 +327,27 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
             )
 
         # Save summary (always, even if all samples failed)
+        import platform
+        import sys
+        from importlib.metadata import version as _pkg_version
+        try:
+            harness_version = _pkg_version("radiant-harness")
+        except Exception:
+            harness_version = "unknown"
+
+        dep_versions: dict[str, str] = {"python": sys.version, "platform": platform.platform()}
+        for pkg in ("torch", "sacrebleu", "bert-score", "nltk", "torchmetrics"):
+            try:
+                dep_versions[pkg] = _pkg_version(pkg)
+            except Exception:
+                dep_versions[pkg] = "not installed"
+
         await asyncio.to_thread(
             _write_json_file,
             config.output_dir / "summary.json",
             {
                 "config": {
+                    "harness_version": harness_version,
                     "model": config.model_name,
                     "mode": config.mode,
                     "task": config.task.value,
@@ -334,6 +361,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "base_url": config.base_url,
                     "lmstudio_models": loaded_models,
                     "diagnosis_judge_model": DEFAULT_SEMANTIC_MATCH_MODEL,
+                    "dependency_versions": dep_versions,
                 },
                 "num_samples": len(results),
                 "failed_samples": [{"sample_id": idx, "error": err} for idx, err in failed_samples],
@@ -358,6 +386,7 @@ async def compute_metrics(
     ground_truth: list[dict[str, Any]],
     task: TaskType,
     eval_tasks: set[str] | None = None,
+    seed: int | None = None,
 ) -> dict[str, object]:
     """Compute evaluation metrics for results.
 
@@ -367,6 +396,7 @@ async def compute_metrics(
         task: Task type to evaluate
         eval_tasks: If provided, only compute metrics for these tasks
             (e.g. {"caption", "localization"}). Overrides *task* filtering.
+        seed: Random seed for LLM-based evaluation calls (reproducibility).
 
     Returns:
         Dictionary of metrics
@@ -437,14 +467,28 @@ async def compute_metrics(
                     ranked.append(dd)
             pred_diagnoses.append(ranked)
 
+        # Sentinel values that indicate missing ground truth in the NOVA dataset.
+        # These are non-empty strings that would otherwise be scored as valid
+        # references, penalising correct predictions unfairly.
+        _MISSING_GT_SENTINELS = frozenset({
+            "final diagnosis not found.",
+            "final diagnosis not found",
+            "not found",
+            "n/a",
+            "na",
+            "none",
+            "",
+        })
+
         gt_diagnoses = []
         for i, gt in enumerate(ground_truth):
             diag = gt.get("final_diagnosis", "")
-            if not diag:
-                logger.warning("Sample %d has empty ground truth diagnosis", i)
+            if not diag or diag.strip().lower() in _MISSING_GT_SENTINELS:
+                logger.warning("Sample %d has missing/sentinel ground truth diagnosis: %r", i, diag)
+                diag = ""  # Normalize to empty — evaluate_diagnosis skips these
             gt_diagnoses.append(diag)
         pending_metrics["diagnosis"] = asyncio.create_task(
-            evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses)
+            evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses, seed=seed)
         )
 
     if _should_compute("localization"):
@@ -541,7 +585,7 @@ def parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument(
         "--task",
@@ -645,6 +689,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print resolved configuration and exit without running evaluation",
+    )
 
     return parser.parse_args()
 
@@ -655,6 +704,13 @@ def main() -> None:
 
     if args.seed is not None:
         random.seed(args.seed)
+        import numpy as np
+        np.random.seed(args.seed)
+        try:
+            import torch
+            torch.manual_seed(args.seed)
+        except ImportError:
+            pass
 
     # Configure logging
     if args.verbose:
@@ -696,6 +752,31 @@ def main() -> None:
         max_image_dim=args.max_image_dim,
         seed=args.seed,
     )
+
+    # Dry-run: print resolved config and exit
+    if args.dry_run:
+        dry_config = {
+            "model": config.model_name,
+            "mode": config.mode,
+            "task": config.task.value,
+            "use_tools": config.use_tools,
+            "use_web_search": config.use_web_search,
+            "max_turns": config.max_turns,
+            "max_tokens": config.max_tokens,
+            "max_image_dim": config.max_image_dim,
+            "temperature": 0.0,
+            "seed": config.seed,
+            "base_url": config.base_url,
+            "batch_size": config.batch_size,
+            "max_samples": config.max_samples,
+            "output_dir": str(config.output_dir),
+            "diagnosis_judge_model": os.environ.get(
+                "NOVA_SEMANTIC_MATCH_MODEL", DEFAULT_SEMANTIC_MATCH_MODEL
+            ),
+            "diagnosis_judge_base_url": os.environ.get("NOVA_SEMANTIC_MATCH_BASE_URL", ""),
+        }
+        print(json.dumps(dry_config, indent=2))  # noqa: T201
+        return
 
     # Run evaluation
     try:

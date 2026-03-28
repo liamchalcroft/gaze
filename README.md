@@ -16,8 +16,8 @@ A modular framework for building multi-turn agentic vision-language model system
 ## Installation
 
 ```bash
-git clone https://github.com/liamchalcroft/medical_reasoning_vlm.git
-cd medical_reasoning_vlm
+git clone https://github.com/liamchalcroft/nova_retrieval_vlm.git
+cd nova_retrieval_vlm
 uv sync
 ```
 
@@ -69,26 +69,25 @@ The model returns JSON each turn with `"continue": true` to keep reasoning or `"
 
 ## LM Studio Baseline
 
-The current local baseline endpoint in this workspace is `http://192.168.1.138:1234/v1`.
-Set `LMSTUDIO_BASE_URL` or pass `--base-url` to the example CLIs to override it.
+Set `LMSTUDIO_BASE_URL` or pass `--base-url` to the example CLIs to point at your LM Studio instance (e.g. `http://localhost:1234/v1`).
 
 ```bash
 uv run python -m examples.pubmedqa.src.cli \
   --model qwen3.5-a3b \
-  --base-url http://192.168.1.138:1234/v1 \
+  --base-url http://localhost:1234/v1 \
   --mode single_turn \
   --max-samples 1
 
 uv run python -m examples.vqa_rad.src.cli \
   --model qwen3.5-a3b \
-  --base-url http://192.168.1.138:1234/v1 \
+  --base-url http://localhost:1234/v1 \
   --mode agentic \
   --use-tools \
   --max-samples 1
 
 uv run python -m examples.nova.src.cli \
   --model qwen3.5-a3b \
-  --base-url http://192.168.1.138:1234/v1 \
+  --base-url http://localhost:1234/v1 \
   --mode single_turn \
   --max-turns 1 \
   --max-samples 1
@@ -102,12 +101,14 @@ src/radiant_harness/
     types.py                # ToolCall, ToolResult, Turn, AgenticResult
     config.py               # Configuration dataclasses
     exceptions.py           # Exception hierarchy
+    _frozen.py              # deep_freeze / deep_thaw utilities
     cache.py                # TTLCache
     models/                 # AdapterProtocol, OpenAIAdapter, LMStudioAdapter, HuggingFaceAdapter
     tools/                  # Tool, ToolRegistry, visual tools, search tools
     retrieval/              # PubMed search, Open-i image search
     prompts/                # Jinja2 template loading
     verifiers/              # BaseMultiTurnEnv, reward functions, adapter
+    utils/                  # IoU, JSON extraction, type coercion, confidence clamping
 examples/
     nova/                   # NOVA brain-MRI benchmark (fully implemented)
     gemex_thinkvg/          # GEMeX visual grounding with RL rewards
@@ -119,6 +120,20 @@ environments/
 tests/
 docs/
 ```
+
+## Evaluation Metrics
+
+The NOVA example computes metrics across three tasks. All scores are normalized to **0-1** unless noted:
+
+- **Caption**: BLEU (sacrebleu, exponential smoothing), BERTScore F1 (roberta-large, baseline-rescaled), METEOR, ROUGE-L, RadGraph F1 (optional), modality keyword F1, clinical keyword F1, binary abnormality accuracy/F1
+- **Diagnosis**: Top-1 and Top-5 accuracy via exact match, synonym matching, and LLM semantic matching (configurable judge model with majority vote)
+- **Localization**: mAP@0.3, mAP@0.5, mAP@[50:95] (COCO-style), box-level precision/recall at IoU 0.5
+
+**IoU thresholds**: Localization uses both 0.3 (lenient) and 0.5 (standard). The 0.3 threshold is retained for NOVA protocol compatibility -- for a small brain lesion (~10px box in a 240mm FOV scan), IoU 0.3 tolerates ~15mm spatial error, appropriate for lobe-level screening. IoU 0.5 is recommended for clinical-grade evaluation.
+
+**Dataset splits**: NOVA downloads the full dataset via `huggingface_hub.snapshot_download("c-i-ber/Nova")`. PubMedQA uses the `pqa_labeled` config, `train` split (1,000 expert-annotated samples). VQA-RAD defaults to the `test` split (configurable via `--split`).
+
+**Reproducibility**: All evaluations use temperature=0.0 (greedy decoding). Pass `--seed N` to fix random seeds across Python, NumPy, PyTorch, and model API calls. Summary output captures harness version, model config, and dependency versions. BERTScore is pinned to `roberta-large` with baseline rescaling; sacrebleu uses `13a` tokenizer with exponential smoothing.
 
 ## Tests
 

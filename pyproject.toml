@@ -48,7 +48,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001", "ARG002", "ARG005", "N802", "N811"]
 "scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
-"run_tests.py" = ["T201", "S603", "PLW1510"]
 "src/radiant_harness/__main__.py" = ["T201"]
 
 [tool.ruff.lint.isort]
@@ -145,7 +144,7 @@ version = "0.1.0"
 description = "Radiant Harness: standalone agentic tool harness for VLMs (radiology-focused)"
 readme = "README.md"
 authors = [
-    {name = "Research Team", email = "research@example.com"},
+    {name = "Liam Chalcroft"},
 ]
 license = {text = "MIT"}
 requires-python = ">=3.10,<4.0"
@@ -167,6 +166,7 @@ nova = [
     "torch",
     "torchvision",
     "torchmetrics",
+    "pycocotools",
     "pandas",
     "datasets",
     "sacrebleu",

@@ -25,13 +25,18 @@ def _ensure_nltk_data() -> bool:
     Uses lru_cache for thread-safe one-time initialization without global mutable state.
     The cache ensures this runs exactly once per process.
 
+    In air-gapped/offline environments, downloads will silently fail if data is
+    already installed locally. Pre-install with:
+        python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); nltk.download('wordnet'); nltk.download('omw-1.4')"
+
     Returns:
         True when initialization is complete (value unused, just for caching).
     """
-    nltk.download("punkt", quiet=True)
-    nltk.download("punkt_tab", quiet=True)
-    nltk.download("wordnet", quiet=True)
-    nltk.download("omw-1.4", quiet=True)
+    for resource in ("punkt", "punkt_tab", "wordnet", "omw-1.4"):
+        try:
+            nltk.download(resource, quiet=True)
+        except Exception:
+            pass  # Already installed or offline — NLTK will error later if truly missing
     return True
 
 
@@ -106,8 +111,35 @@ def _rouge_l_sentence(pred_tokens: list[str], ref_tokens: list[str]) -> float:
     return (2 * precision * recall) / (precision + recall)
 
 
+_NEGATION_WORDS = frozenset({
+    "no", "not", "without", "absent", "negative", "none", "nor",
+    "unremarkable", "normal", "deny", "denies", "denied",
+})
+
+_NEGATION_WINDOW = 3  # max tokens before a clinical term to check for negation
+
+# Clause-boundary tokens that stop the following-window negation search.
+# Prevents "tumor with no edema" from incorrectly negating "tumor" —
+# the "no" belongs to the next clause (after "with").
+_SCOPE_TERMINATORS = frozenset({
+    "with", "and", "but", "or", "while", "although", "however",
+    ",", ";", ".", ":", "—",
+})
+
+
 def _has_clinical_terms(text: str) -> bool:
-    """Check if text contains any clinical abnormality terms."""
+    """Check if text contains non-negated clinical abnormality terms.
+
+    A clinical term is considered negated if a negation word (e.g. "no",
+    "not", "without", "absent", "normal") appears within
+    ``_NEGATION_WINDOW`` tokens **before or after** it.  This handles
+    both pre-negation ("no evidence of tumor") and post-negation
+    ("tumor is not seen", "lesion absent").
+
+    The following-window search stops at clause-boundary tokens (commas,
+    conjunctions like "with", "and", "but") to prevent negation words
+    from one clause leaking into a neighbouring clinical term.
+    """
     clinical_terms = {
         "lesion",
         "tumor",
@@ -127,12 +159,37 @@ def _has_clinical_terms(text: str) -> bool:
         "abnormal",
         "abnormality",
     }
-    words = _extract_keyword_tokens(text)
-    return bool(words & clinical_terms)
+    tokens = text.lower().split()
+    for i, token in enumerate(tokens):
+        # Strip punctuation for matching but keep position
+        clean = token.strip(".,;:!?()[]\"'")
+        if clean not in clinical_terms:
+            continue
+        # Check preceding window for negation
+        window_start = max(0, i - _NEGATION_WINDOW)
+        preceding = tokens[window_start:i]
+        if any(w.strip(".,;:!?()[]\"'") in _NEGATION_WORDS for w in preceding):
+            continue  # negated — skip this term
+        # Check following window for post-negation ("tumor not seen")
+        # Stop at clause-boundary tokens to prevent cross-clause negation.
+        window_end = min(len(tokens), i + 1 + _NEGATION_WINDOW)
+        following = tokens[i + 1 : window_end]
+        negated_following = False
+        for w in following:
+            stripped = w.strip(".,;:!?()[]\"'")
+            if stripped in _SCOPE_TERMINATORS or w in _SCOPE_TERMINATORS:
+                break  # clause boundary — stop searching
+            if stripped in _NEGATION_WORDS:
+                negated_following = True
+                break
+        if negated_following:
+            continue  # negated — skip this term
+        return True
+    return False
 
 
 @beartype
-def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, float | None]:
+def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, float | str | None]:
     """Evaluate generated captions using multiple metrics.
 
     Args:
@@ -156,9 +213,13 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         raise ValueError("Cannot evaluate empty references list")
     if len(preds) != len(refs):
         raise ValueError(f"preds and refs must have same length, got {len(preds)} vs {len(refs)}")
-    bleu = sacrebleu.corpus_bleu(preds, [refs])
+    # Pin smoothing method and tokenizer explicitly for reproducibility
+    bleu = sacrebleu.corpus_bleu(preds, [refs], smooth_method="exp", tokenize="13a")
 
-    _, _, f1_scores = bert_score_fn(cands=preds, refs=refs, lang="en", rescale_with_baseline=True)
+    _, _, f1_scores, bert_hash = bert_score_fn(
+        cands=preds, refs=refs, model_type="roberta-large",
+        lang="en", rescale_with_baseline=True, return_hash=True,
+    )
     # Baseline-rescaled BERTScore F1 can be negative for very poor candidates.
     # Clamp to [0, 1] before reporting — negative scores are not meaningful
     # and would violate CaptionMetrics(ge=0.0) if validated.
@@ -261,13 +322,15 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
         )
         clin_f1s.append(f1_clin)
 
-        # Binary abnormality classification (normal vs abnormal)
-        pred_abnormal = bool(p_clin)
-        ref_abnormal = bool(r_clin)
+        # Binary abnormality classification (normal vs abnormal).
+        # Use _has_clinical_terms() (negation-aware) so that "no evidence
+        # of tumor" is classified as normal, consistent with abnormal_prevalence.
+        pred_abnormal = _has_clinical_terms(p)
+        ref_abnormal = _has_clinical_terms(r)
         if pred_abnormal == ref_abnormal:
             binary_correct += 1
 
-        # Binary F1 TP/FP/FN calculation (reuse p_clin, r_clin from above)
+        # Binary F1 TP/FP/FN calculation
         if pred_abnormal and ref_abnormal:
             tp += 1
         elif pred_abnormal and not ref_abnormal:
@@ -294,8 +357,10 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     abnormal_prevalence = float(sum(1 for r in refs if _has_clinical_terms(r)) / len(refs))
 
     return {
-        "bleu": float(bleu.score) / 100.0,  # Normalize from 0-100 to 0-1
+        "bleu": float(bleu.score) / 100.0,  # sacrebleu reports 0-100; normalized to 0-1
+        "bleu_raw": float(bleu.score),  # Original sacrebleu scale (0-100) for literature comparison
         "bert_f1": bert_f1_score,  # Already clamped to [0, 1]
+        "bert_model": str(bert_hash),  # Model variant + hash for reproducibility
         "radgraph_f1": radgraph_f1,  # Already in 0-1 range
         "meteor": meteor,  # Already in 0-1 range (NLTK native)
         "rouge_l": rouge_l,  # LCS-based, robust to length differences
