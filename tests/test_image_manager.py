@@ -300,3 +300,169 @@ class TestResetToOriginalNoop:
         mgr.reset_to_original()
         assert mgr.current_image is img
         assert mgr.current_image.size == (30, 30)
+
+
+# ---------------------------------------------------------------------------
+# Original encoding cache
+# ---------------------------------------------------------------------------
+
+
+class TestOriginalEncodingCache:
+    def test_encoding_can_be_set_and_read(self, tmp_path: Path) -> None:
+        from radiant_harness.tools.registry import encode_image
+
+        path = _create_image(tmp_path)
+        mgr = ImageManager()
+        mgr.set_image(path)
+        assert mgr.current_image is not None
+
+        encoded = encode_image(mgr.current_image)
+        mgr.original_encoding = encoded
+        assert mgr.original_encoding is encoded
+
+    def test_close_clears_encoding(self, tmp_path: Path) -> None:
+        from radiant_harness.tools.registry import encode_image
+
+        path = _create_image(tmp_path)
+        mgr = ImageManager()
+        mgr.set_image(path)
+        assert mgr.current_image is not None
+        mgr.original_encoding = encode_image(mgr.current_image)
+
+        mgr.close()
+        assert mgr.original_encoding is None
+
+    def test_set_image_clears_encoding(self, tmp_path: Path) -> None:
+        from radiant_harness.tools.registry import encode_image
+
+        img1 = _create_image(tmp_path, "a.png", (30, 30))
+        img2 = _create_image(tmp_path, "b.png", (60, 60))
+        mgr = ImageManager()
+        mgr.set_image(img1)
+        assert mgr.current_image is not None
+        mgr.original_encoding = encode_image(mgr.current_image)
+
+        mgr.set_image(img2)
+        assert mgr.original_encoding is None
+
+    def test_reset_preserves_encoding(self, tmp_path: Path) -> None:
+        from radiant_harness.tools.registry import encode_image
+
+        path = _create_image(tmp_path, size=(100, 100))
+        mgr = ImageManager()
+        mgr.set_image(path)
+        assert mgr.current_image is not None
+        cached = encode_image(mgr.current_image)
+        mgr.original_encoding = cached
+
+        mgr.transform_image(lambda img: img.resize((10, 10)))
+        mgr.reset_to_original()
+        assert mgr.original_encoding is cached
+
+    def test_set_preloaded_image_clears_encoding(self, tmp_path: Path) -> None:
+        from radiant_harness.tools.registry import encode_image
+
+        path1 = _create_image(tmp_path, "a.png")
+        mgr = ImageManager()
+        mgr.set_image(path1)
+        assert mgr.current_image is not None
+        mgr.original_encoding = encode_image(mgr.current_image)
+
+        new_img = Image.new("RGB", (80, 80), color=(0, 0, 0))
+        path2 = _create_image(tmp_path, "b.png", (80, 80))
+        mgr.set_preloaded_image(new_img, path2)
+        assert mgr.original_encoding is None
+
+
+# ---------------------------------------------------------------------------
+# transfer_ownership in set_preloaded_image
+# ---------------------------------------------------------------------------
+
+
+class TestTransferOwnership:
+    """Verify transfer_ownership=True avoids a redundant PIL copy."""
+
+    def test_transfer_ownership_true_reuses_input(self, tmp_path: Path) -> None:
+        path = _create_image(tmp_path, size=(60, 60))
+        img = Image.new("RGB", (60, 60), color=(255, 0, 0))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(img, path, transfer_ownership=True)
+
+        assert mgr._original_image is img  # noqa: SLF001
+        assert mgr.current_image is not img
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (60, 60)
+
+    def test_transfer_ownership_false_copies_input(self, tmp_path: Path) -> None:
+        path = _create_image(tmp_path, size=(60, 60))
+        img = Image.new("RGB", (60, 60), color=(0, 255, 0))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(img, path, transfer_ownership=False)
+
+        assert mgr._original_image is not img  # noqa: SLF001
+
+    def test_transfer_ownership_default_is_false(self, tmp_path: Path) -> None:
+        path = _create_image(tmp_path, size=(40, 40))
+        img = Image.new("RGB", (40, 40), color=(0, 0, 255))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(img, path)
+
+        assert mgr._original_image is not img  # noqa: SLF001
+
+    def test_transfer_ownership_reset_still_works(self, tmp_path: Path) -> None:
+        path = _create_image(tmp_path, size=(80, 80))
+        img = Image.new("RGB", (80, 80), color=(128, 128, 128))
+
+        mgr = ImageManager()
+        mgr.set_preloaded_image(img, path, transfer_ownership=True)
+
+        mgr.transform_image(lambda i: i.resize((20, 20)))
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (20, 20)
+
+        mgr.reset_to_original()
+        assert mgr.current_image is not None
+        assert mgr.current_image.size == (80, 80)
+
+
+# ---------------------------------------------------------------------------
+# Reset skips encode when cached
+# ---------------------------------------------------------------------------
+
+
+class TestResetUsesCache:
+    @pytest.mark.asyncio
+    async def test_reset_skips_encode_when_cached(self, tmp_path: Path) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from radiant_harness.tools.registry import ToolRegistry
+        from radiant_harness.tools.registry import encode_image
+        from radiant_harness.tools.visual import _execute_reset
+
+        path = _create_image(tmp_path, size=(100, 100))
+        registry = ToolRegistry(image_path=path, tools=[])
+
+        mgr = registry.get_image_manager()
+        await mgr.ensure_loaded()
+        assert mgr.current_image is not None
+
+        cached = encode_image(mgr.current_image)
+        mgr.original_encoding = cached
+        mgr.transform_image(lambda img: img.resize((10, 10)))
+
+        encode_call_count = 0
+        _real_encode = encode_image
+
+        def _counting_encode(*args, **kwargs):
+            nonlocal encode_call_count
+            encode_call_count += 1
+            return _real_encode(*args, **kwargs)
+
+        with mock_patch("radiant_harness.tools.visual.encode_image", _counting_encode):
+            result = await _execute_reset(registry)
+
+        assert encode_call_count == 0
+        assert result.image_base64 == cached.data

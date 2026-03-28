@@ -660,3 +660,49 @@ async def test_truncation_salvage_on_last_turn() -> None:
     assert result.final_response["caption"]["text"] == "salvaged caption"
     assert result.final_response["caption"]["score"] == 0.8
     assert result.final_response["continue"] is False
+
+
+# ---------------------------------------------------------------------------
+# ImageInput.from_pil tests (skip disk I/O for in-memory images)
+# ---------------------------------------------------------------------------
+
+
+class TestImageInputFromPil:
+    def test_from_pil_populates_all_fields(self) -> None:
+        img = Image.new("RGB", (64, 48), color=(255, 0, 0))
+        inp = ImageInput.from_pil(img)
+
+        assert inp.width == 64
+        assert inp.height == 48
+        assert inp.encoded is not None
+        assert inp.encoded.mime_type == "image/jpeg"
+        assert len(inp.encoded.data) > 0
+        assert inp.pil_image is img
+        assert inp.path == Path("<in-memory>")
+
+    def test_from_pil_custom_label_and_path(self) -> None:
+        img = Image.new("RGB", (32, 32))
+        custom_path = Path("/fake/test.png")
+        inp = ImageInput.from_pil(img, label="T1-weighted", path=custom_path)
+
+        assert inp.label == "T1-weighted"
+        assert inp.path == custom_path
+
+    def test_load_is_noop_when_already_loaded(self) -> None:
+        img = Image.new("RGB", (32, 32))
+        inp = ImageInput.from_pil(img)
+
+        loaded = inp.load()
+
+        assert loaded is inp
+        assert loaded.encoded is inp.encoded
+        assert loaded.pil_image is img
+
+    def test_from_pil_rejects_oversized_image(self) -> None:
+        from radiant_harness.config import get_config
+
+        max_dim = get_config().image.max_image_dimension
+        oversized = Image.new("RGB", (max_dim + 1, 10))
+
+        with pytest.raises(ValueError, match="exceed"):
+            ImageInput.from_pil(oversized)

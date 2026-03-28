@@ -469,3 +469,25 @@ class TestCustomBaseUrlOptIn:
         monkeypatch.setenv("RADIANT_ALLOW_CUSTOM_BASE_URL", "1")
         with pytest.raises(ModelError, match="HTTPS"):
             OpenAIAdapter(model_name="gpt-4o", base_url="http://custom.example.com/v1")
+
+
+# ---------------------------------------------------------------------------
+# Structured timeout configuration
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAIAdapterTimeout:
+    def test_client_uses_structured_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+        timeout = adapter.client.timeout
+
+        assert isinstance(timeout, httpx.Timeout)
+        assert timeout.connect == 10.0
+        assert timeout.read == 90.0
+        assert timeout.write == 10.0
+        assert timeout.pool == 30.0

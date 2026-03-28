@@ -1,4 +1,4 @@
-"""Tests for Patch Set 2: Code correctness fixes.
+"""Tests for bbox extraction, coordinate normalization, and diagnosis abbreviation expansion.
 
 Covers:
 1. IoUReward._extract_bbox searches all JSON objects (not just first)

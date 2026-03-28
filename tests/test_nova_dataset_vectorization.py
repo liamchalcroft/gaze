@@ -1,4 +1,4 @@
-"""Tests for Patch Set #1 performance fixes.
+"""Tests for NOVA dataset metadata, CLI deferred loading, and vectorized intensity profiles.
 
 Covers:
 1. NovaDataset.get_sample_metadata() — header-only image reads
@@ -358,7 +358,7 @@ class TestNovaCliAsyncOffload:
             assert refs == ["reference caption"]
             return {"bleu": 1.0}
 
-        async def _fake_diagnosis(preds, refs):
+        async def _fake_diagnosis(preds, refs, **kwargs):
             assert preds == [["glioma"]]
             assert refs == ["glioma"]
             return {

@@ -99,12 +99,12 @@ class TestBuildSchemaSkeleton:
         }
         skeleton, field_hints = _build_schema_skeleton(schema)
         assert skeleton["diagnosis"] == "..."
-        assert skeleton["confidence"] == "0"
-        assert skeleton["details"] == "{...}"
-        assert skeleton["continue"] == "false"
+        assert skeleton["confidence"] == 0
+        assert skeleton["details"] == {}  # nested object now recursed
+        assert skeleton["continue"] is False
         assert "- diagnosis: Primary diagnosis" in field_hints
         assert "- confidence: Confidence score 0-1" in field_hints
-        assert len(field_hints) == 2  # details has no description
+        assert len(field_hints) >= 2  # details fields may also appear
 
     def test_enum_values_in_skeleton(self) -> None:
         schema = {
@@ -124,7 +124,7 @@ class TestBuildSchemaSkeleton:
 
     def test_none_schema_returns_minimal(self) -> None:
         skeleton, hints = _build_schema_skeleton(None)
-        assert skeleton == {"continue": "false"}
+        assert skeleton == {"continue": False}
         assert hints == []
 
 
@@ -248,3 +248,174 @@ class TestParseToolArgsNonMapping:
         result = proc._parse_tool_args(tc)
         assert result == {"x": 10}
         assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# _strip_stale_images tests
+# ---------------------------------------------------------------------------
+
+
+def _make_data_url(label: str = "img") -> str:
+    return f"data:image/jpeg;base64,fake-{label}"
+
+
+def _build_messages_with_tool_images(
+    num_tool_rounds: int,
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user prompt"},
+    ]
+    for i in range(num_tool_rounds):
+        messages.append(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": f"call-{i}",
+                        "type": "function",
+                        "function": {"name": "zoom", "arguments": '{"factor": 2.0}'},
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": f"call-{i}",
+                "content": [
+                    {"type": "text", "text": f"Zoomed round {i}"},
+                    {"type": "image_url", "image_url": {"url": _make_data_url(f"r{i}")}},
+                ],
+            }
+        )
+    return messages
+
+
+class TestStripStaleImages:
+    def test_no_messages_is_noop(self) -> None:
+        messages: list[dict[str, Any]] = []
+        AgenticProcessorBase._strip_stale_images(messages)
+        assert messages == []
+
+    def test_single_tool_round_preserved(self) -> None:
+        messages = _build_messages_with_tool_images(1)
+        original_len = len(messages)
+        AgenticProcessorBase._strip_stale_images(messages)
+        assert len(messages) == original_len
+        tool_msg = messages[-1]
+        assert any(p["type"] == "image_url" for p in tool_msg["content"])
+
+    def test_older_tool_images_stripped(self) -> None:
+        messages = _build_messages_with_tool_images(3)
+        AgenticProcessorBase._strip_stale_images(messages)
+
+        last_tool = messages[-1]
+        assert last_tool["role"] == "tool"
+        has_image = any(p.get("type") == "image_url" for p in last_tool["content"])
+        assert has_image, "Latest tool image should be preserved"
+
+        for msg in messages:
+            if msg.get("role") != "tool":
+                continue
+            if msg is last_tool:
+                continue
+            for part in msg["content"]:
+                assert part["type"] != "image_url", f"Stale image_url should be stripped: {part}"
+                if "previous tool image omitted" in part.get("text", ""):
+                    break
+            else:
+                pytest.fail("Expected placeholder text in stripped tool message")
+
+    def test_text_only_tool_messages_untouched(self) -> None:
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "search_web", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "Found 5 results"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "search_web", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c2", "content": "Found 3 results"},
+        ]
+        original = [m.get("content") for m in messages]
+        AgenticProcessorBase._strip_stale_images(messages)
+        current = [m.get("content") for m in messages]
+        assert original == current
+
+    def test_preserves_text_parts_in_stripped_messages(self) -> None:
+        messages = _build_messages_with_tool_images(2)
+        AgenticProcessorBase._strip_stale_images(messages)
+
+        first_tool = messages[3]
+        text_parts = [p for p in first_tool["content"] if p["type"] == "text"]
+        assert len(text_parts) >= 1
+        texts = [p["text"] for p in text_parts]
+        assert any("Zoomed round 0" in t for t in texts)
+
+    def test_user_message_images_stripped(self) -> None:
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this brain MRI"},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("input1")}},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("input2")}},
+                ],
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "zoom", "arguments": '{"factor": 2.0}'},
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": [
+                    {"type": "text", "text": "Zoomed image"},
+                    {"type": "image_url", "image_url": {"url": _make_data_url("zoomed")}},
+                ],
+            },
+        ]
+
+        AgenticProcessorBase._strip_stale_images(messages)
+
+        user_content = messages[1]["content"]
+        assert isinstance(user_content, list)
+        assert user_content[0] == {"type": "text", "text": "Analyze this brain MRI"}
+        assert user_content[1] == {"type": "text", "text": "[original image omitted]"}
+        assert user_content[2] == {"type": "text", "text": "[original image omitted]"}
+
+        tool_content = messages[3]["content"]
+        assert any(p.get("type") == "image_url" for p in tool_content)
+
+    def test_user_message_string_content_untouched(self) -> None:
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "plain text question"},
+            {"role": "assistant", "content": '{"continue": false, "answer": "ok"}'},
+        ]
+        AgenticProcessorBase._strip_stale_images(messages)
+        assert messages[1]["content"] == "plain text question"

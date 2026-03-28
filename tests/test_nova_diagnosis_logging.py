@@ -1,18 +1,12 @@
-"""Tests for Patch Set 4: LLM diagnosis judgment logging,
-evidence-tier reliability, path traversal."""
+"""Tests for NOVA LLM diagnosis judgment logging and majority vote."""
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
-
-from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
-from radiant_harness.retrieval.web_search import PubMedSearchEngine
-from radiant_harness.verifiers.mixin import _safe_resolve_image_path
 
 # Guard imports that chain through evaluation/__init__.py → detection.py → torch
 try:
@@ -310,140 +304,5 @@ class TestEvaluateDiagnosisJudgmentLog:
         assert len(results["judgment_log"]) == 3
 
 
-# ---------------------------------------------------------------------------
-# 4. Evidence-tier reliability adjustments
-# ---------------------------------------------------------------------------
-
-
-class TestEvidenceTierAdjustments:
-    """Verify that content_type affects reliability_score for PubMed articles."""
-
-    def test_tier_constants_defined(self) -> None:
-        """All expected content types must have a tier adjustment."""
-        assert "guidelines" in EVIDENCE_TIER_ADJUSTMENTS
-        assert "review" in EVIDENCE_TIER_ADJUSTMENTS
-        assert "article" in EVIDENCE_TIER_ADJUSTMENTS
-        assert "case_report" in EVIDENCE_TIER_ADJUSTMENTS
-
-    def test_guidelines_highest(self) -> None:
-        """Guidelines must have the highest tier adjustment."""
-        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["review"]
-        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["article"]
-        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["case_report"]
-
-    def test_review_above_article(self) -> None:
-        """Systematic reviews must rank above standard articles."""
-        assert EVIDENCE_TIER_ADJUSTMENTS["review"] > EVIDENCE_TIER_ADJUSTMENTS["article"]
-
-    def test_case_report_lowest(self) -> None:
-        """Case reports must have the lowest (negative) adjustment."""
-        assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < EVIDENCE_TIER_ADJUSTMENTS["article"]
-        assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < 0
-
-    def test_article_is_baseline(self) -> None:
-        """Standard articles should have zero adjustment (baseline)."""
-        assert EVIDENCE_TIER_ADJUSTMENTS["article"] == 0.0
-
-    def test_adjustments_are_small(self) -> None:
-        """Adjustments should be modest — not dominate domain-based reliability."""
-        for adj in EVIDENCE_TIER_ADJUSTMENTS.values():
-            assert abs(adj) <= 0.10, f"Tier adjustment {adj} is too large"
-
-
-class TestPubMedReliabilityWithTier:
-    """Integration: PubMed reliability_score incorporates evidence tier."""
-
-    def test_guideline_higher_than_case_report(self) -> None:
-        """A guideline article should have higher reliability than a case report."""
-        engine = PubMedSearchEngine()
-        base = engine._calculate_reliability("https://pubmed.ncbi.nlm.nih.gov/12345/")
-
-        guideline_score = base + EVIDENCE_TIER_ADJUSTMENTS["guidelines"]
-        case_report_score = base + EVIDENCE_TIER_ADJUSTMENTS["case_report"]
-
-        assert guideline_score > case_report_score
-
-    def test_reliability_clamped_to_unit_interval(self) -> None:
-        """Adjusted reliability must stay in [0.0, 1.0]."""
-        engine = PubMedSearchEngine()
-        base = engine._calculate_reliability("https://pubmed.ncbi.nlm.nih.gov/12345/")
-
-        for tier, adj in EVIDENCE_TIER_ADJUSTMENTS.items():
-            score = max(0.0, min(1.0, base + adj))
-            assert 0.0 <= score <= 1.0, f"tier={tier}, score={score}"
-
-    def test_classify_content_type_still_works(self) -> None:
-        """_classify_content_type should return valid tier keys."""
-        engine = PubMedSearchEngine()
-        for pt_list, expected in [
-            (["Practice Guideline"], "guidelines"),
-            (["Systematic Review"], "review"),
-            (["Case Reports"], "case_report"),
-            (["Journal Article"], "article"),
-        ]:
-            ct = engine._classify_content_type(pt_list)
-            assert ct == expected
-            assert ct in EVIDENCE_TIER_ADJUSTMENTS
-
-
-# ---------------------------------------------------------------------------
-# 5. Path traversal protection in mixin
-# ---------------------------------------------------------------------------
-
-
-class TestSafeResolveImagePath:
-    """Verify _safe_resolve_image_path blocks traversal attacks."""
-
-    def test_simple_relative_path(self, tmp_path: Path) -> None:
-        """Normal relative path within base should resolve."""
-        (tmp_path / "images").mkdir()
-        (tmp_path / "images" / "scan.png").touch()
-        result = _safe_resolve_image_path(tmp_path / "images", "scan.png")
-        assert result == str((tmp_path / "images" / "scan.png").resolve())
-
-    def test_subdirectory_path(self, tmp_path: Path) -> None:
-        """Subdirectory relative path within base should resolve."""
-        (tmp_path / "images" / "brain").mkdir(parents=True)
-        (tmp_path / "images" / "brain" / "mri.png").touch()
-        result = _safe_resolve_image_path(tmp_path / "images", "brain/mri.png")
-        assert result == str((tmp_path / "images" / "brain" / "mri.png").resolve())
-
-    def test_dotdot_escape_blocked(self, tmp_path: Path) -> None:
-        """../../etc/passwd style traversal must be rejected."""
-        (tmp_path / "images").mkdir()
-        with pytest.raises(ValueError, match="traversal blocked"):
-            _safe_resolve_image_path(tmp_path / "images", "../../etc/passwd")
-
-    def test_dotdot_within_base_allowed(self, tmp_path: Path) -> None:
-        """../images/scan.png that resolves within base is still within base."""
-        (tmp_path / "images" / "sub").mkdir(parents=True)
-        (tmp_path / "images" / "scan.png").touch()
-        # base is images/sub, path is ../scan.png which resolves to images/scan.png
-        # This escapes images/sub but NOT images — should be blocked since base is images/sub
-        with pytest.raises(ValueError, match="traversal blocked"):
-            _safe_resolve_image_path(tmp_path / "images" / "sub", "../scan.png")
-
-    def test_base_itself_allowed(self, tmp_path: Path) -> None:
-        """Edge case: path that resolves to base directory itself is allowed."""
-        (tmp_path / "images").mkdir()
-        # "." resolves to the base itself
-        result = _safe_resolve_image_path(tmp_path / "images", ".")
-        assert result == str((tmp_path / "images").resolve())
-
-    def test_prefix_confusion_blocked(self, tmp_path: Path) -> None:
-        """A path resolving to /data/images_evil should not pass for base /data/images."""
-        (tmp_path / "images").mkdir()
-        (tmp_path / "images_evil").mkdir()
-        (tmp_path / "images_evil" / "payload.png").touch()
-        with pytest.raises(ValueError, match="traversal blocked"):
-            _safe_resolve_image_path(tmp_path / "images", "../images_evil/payload.png")
-
-    def test_symlink_escape_blocked(self, tmp_path: Path) -> None:
-        """Symlink that resolves outside base must be rejected."""
-        (tmp_path / "images").mkdir()
-        (tmp_path / "outside").mkdir()
-        (tmp_path / "outside" / "secret.png").touch()
-        # Create symlink inside images/ that points outside
-        (tmp_path / "images" / "link.png").symlink_to(tmp_path / "outside" / "secret.png")
-        with pytest.raises(ValueError, match="traversal blocked"):
-            _safe_resolve_image_path(tmp_path / "images", "link.png")
+# NOTE: Evidence-tier tests are in test_web_search.py
+# NOTE: Path traversal tests are in test_security.py

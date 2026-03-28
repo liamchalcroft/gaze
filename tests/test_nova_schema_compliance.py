@@ -1,12 +1,11 @@
-"""Regression tests for NOVA audit Patch Set #1 fixes.
+"""Tests for NOVA schema strict-mode compliance and evaluation correctness.
 
 Tests cover:
 1. Schema strict mode compliance (additionalProperties, all props required)
 2. evaluate() async/sync correctness
 3. diagnosis.py import path (no broken imports)
 4. Single-turn prompt includes "continue" field
-5. BERTScore clamping
-6. validate_nova_response with "reasoning" field
+5. validate_nova_response with "reasoning" field
 """
 
 from __future__ import annotations

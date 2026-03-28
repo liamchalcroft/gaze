@@ -1,4 +1,4 @@
-"""Tests for Patch Set 3: Prompt safety, keyword F1 tokenization, and detection metrics."""
+"""Tests for NOVA detection metrics, keyword F1 tokenization, and prompt safety."""
 
 from __future__ import annotations
 

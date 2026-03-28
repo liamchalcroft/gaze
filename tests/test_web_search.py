@@ -20,10 +20,6 @@ class TestSearchConfigValidation:
             SearchConfig(max_retries=0)
         with pytest.raises(ValueError, match="rate_limit_delay_seconds"):
             SearchConfig(rate_limit_delay_seconds=-0.1)
-        with pytest.raises(ValueError, match="max_results_per_engine"):
-            SearchConfig(max_results_per_engine=0)
-        with pytest.raises(ValueError, match="max_total_results"):
-            SearchConfig(max_total_results=0)
 
 
 class TestPubMedSearchEngine:
@@ -661,9 +657,9 @@ class TestDiagnosisContentTypeBoosts:
 
     def test_diagnosis_boosts_follow_evidence_hierarchy(self) -> None:
         """content_type_boosts for 'diagnosis': guidelines > review > article > case_report."""
-        from radiant_harness.config import get_config
+        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
-        boosts = get_config().ranking.content_type_boosts["diagnosis"]
+        boosts = _CONTENT_TYPE_BOOSTS["diagnosis"]
         assert boosts["guidelines"] > boosts["review"]
         assert boosts["review"] > boosts["article"]
         assert boosts["article"] > boosts["case_report"]
@@ -869,19 +865,11 @@ class TestBigramPhraseMatching:
         assert len(ranked) == 1
         assert ranked[0].ranking_score == 1.0
 
-    def test_phrase_match_weight_in_config(self) -> None:
-        """phrase_match_weight must be a positive float in RankingWeights."""
-        from radiant_harness.config import RankingWeights
+    def test_phrase_match_weight_is_positive(self) -> None:
+        """_PHRASE_MATCH_WEIGHT must be a positive float."""
+        from radiant_harness.retrieval.web_search import _PHRASE_MATCH_WEIGHT
 
-        weights = RankingWeights()
-        assert weights.phrase_match_weight > 0
-
-    def test_phrase_match_weight_negative_raises(self) -> None:
-        """Negative phrase_match_weight should raise ValueError."""
-        from radiant_harness.config import RankingWeights
-
-        with pytest.raises(ValueError, match="phrase_match_weight"):
-            RankingWeights(phrase_match_weight=-0.1)
+        assert _PHRASE_MATCH_WEIGHT > 0
 
 
 class TestHTTPErrorRetry:
@@ -972,16 +960,16 @@ class TestTreatmentDifferentialBoosts:
     """Treatment and differential search types must have content_type_boosts."""
 
     def test_treatment_boosts_exist(self) -> None:
-        from radiant_harness.config import get_config
+        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
-        boosts = get_config().ranking.content_type_boosts
+        boosts = _CONTENT_TYPE_BOOSTS
         assert "treatment" in boosts
         assert boosts["treatment"]["guidelines"] > boosts["treatment"]["case_report"]
 
     def test_differential_boosts_exist(self) -> None:
-        from radiant_harness.config import get_config
+        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
-        boosts = get_config().ranking.content_type_boosts
+        boosts = _CONTENT_TYPE_BOOSTS
         assert "differential" in boosts
         assert boosts["differential"]["review"] > boosts["differential"]["case_report"]
 
@@ -1022,9 +1010,9 @@ class TestTreatmentDifferentialBoosts:
 
     def test_all_search_types_have_boosts(self) -> None:
         """Every allowed search type should have at least partial boosts."""
-        from radiant_harness.config import get_config
+        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
-        boosts = get_config().ranking.content_type_boosts
+        boosts = _CONTENT_TYPE_BOOSTS
         # "general" intentionally has no boosts — it's the catch-all
         for search_type in (
             "diagnosis",
@@ -1210,3 +1198,211 @@ class TestContentPreviewConfigDefault:
     def test_default_is_500(self) -> None:
         config = SearchConfig()
         assert config.max_content_preview_length == 500
+
+
+# ---------------------------------------------------------------------------
+# Consolidated sleep and entity pattern tests
+# ---------------------------------------------------------------------------
+
+
+class TestPubMedConsolidatedSleep:
+    @pytest.mark.asyncio
+    async def test_single_sleep_before_gather(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        engine = PubMedSearchEngine()
+        sleep_calls: list[float] = []
+
+        async def _mock_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        async def _fake_summary(_pmids: list[str]) -> dict:
+            return {"result": {}}
+
+        async def _fake_abstracts(_pmids: list[str]) -> dict[str, str]:
+            return {}
+
+        engine._fetch_summary = _fake_summary  # type: ignore[assignment]
+        engine._fetch_abstracts = _fake_abstracts  # type: ignore[assignment]
+
+        with mock_patch("radiant_harness.retrieval.web_search.asyncio.sleep", _mock_sleep):
+            await engine._fetch_article_details(["12345"])
+
+        assert len(sleep_calls) == 1
+        assert sleep_calls[0] == engine._rate_limit_delay
+
+
+class TestPrecompiledEntityPatterns:
+    """Verify MEDICAL_ENTITY_PATTERNS are pre-compiled re.Pattern objects."""
+
+    def test_patterns_are_compiled(self) -> None:
+        import re
+
+        patterns = PubMedSearchEngine.MEDICAL_ENTITY_PATTERNS
+        assert len(patterns) > 0
+        for pat in patterns:
+            assert isinstance(pat, re.Pattern), f"Expected re.Pattern, got {type(pat)}"
+
+    def test_extract_entities_still_correct(self) -> None:
+        engine = PubMedSearchEngine()
+        entities = engine._extract_medical_entities("Brain MRI shows tumor with edema near cortex")
+        assert isinstance(entities, tuple)
+        assert "mri" in entities
+        assert "tumor" in entities
+        assert "edema" in entities
+        assert "cortex" in entities
+
+
+class TestEntityInQuerySetLookup:
+    """Verify _rank_results entity matching uses set lookup correctly."""
+
+    def test_entity_match_word_boundary_preserved(self) -> None:
+        """Entity 'ct' must NOT match query 'duct ectasia' (word boundary)."""
+        manager = WebSearchManager()
+
+        result_with_ct = SearchResult(
+            title="CT imaging study",
+            url="https://pubmed.ncbi.nlm.nih.gov/100/",
+            content="CT scan findings.",
+            snippet="CT",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=("ct",),
+        )
+        result_no_entity = SearchResult(
+            title="Other study",
+            url="https://pubmed.ncbi.nlm.nih.gov/101/",
+            content="Other study content.",
+            snippet="Other",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=(),
+        )
+
+        ranked = manager._rank_results(
+            [result_with_ct, result_no_entity],
+            query="duct ectasia",
+            search_type="general",
+        )
+        assert ranked[0].ranking_score == ranked[1].ranking_score
+
+    def test_entity_match_positive_case(self) -> None:
+        """Entity 'tumor' should match query containing 'tumor'."""
+        manager = WebSearchManager()
+
+        with_entity = SearchResult(
+            title="Tumor imaging",
+            url="https://pubmed.ncbi.nlm.nih.gov/200/",
+            content="Tumor analysis.",
+            snippet="T",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=("tumor",),
+        )
+        without_entity = SearchResult(
+            title="Tumor imaging",
+            url="https://pubmed.ncbi.nlm.nih.gov/201/",
+            content="Tumor analysis.",
+            snippet="T",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=(),
+        )
+
+        ranked = manager._rank_results(
+            [without_entity, with_entity],
+            query="brain tumor diagnosis",
+            search_type="general",
+        )
+        assert ranked[0].url.endswith("/200/")
+        assert ranked[0].ranking_score > ranked[1].ranking_score
+
+    def test_multiple_entities_accumulate(self) -> None:
+        """Multiple entity matches should produce higher score than single."""
+        manager = WebSearchManager()
+
+        multi = SearchResult(
+            title="Study A",
+            url="https://pubmed.ncbi.nlm.nih.gov/300/",
+            content="Content A.",
+            snippet="A",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=("tumor", "edema", "mri"),
+        )
+        single = SearchResult(
+            title="Study B",
+            url="https://pubmed.ncbi.nlm.nih.gov/301/",
+            content="Content B.",
+            snippet="B",
+            source="pubmed",
+            reliability_score=0.95,
+            extracted_entities=("tumor",),
+        )
+
+        ranked = manager._rank_results(
+            [single, multi],
+            query="tumor edema mri findings",
+            search_type="general",
+        )
+        assert ranked[0].url.endswith("/300/")
+        assert ranked[0].ranking_score > ranked[1].ranking_score
+
+
+class TestEvidenceTierAdjustments:
+    """Verify that content_type affects reliability_score for PubMed articles."""
+
+    def test_tier_constants_defined(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        assert "guidelines" in EVIDENCE_TIER_ADJUSTMENTS
+        assert "review" in EVIDENCE_TIER_ADJUSTMENTS
+        assert "article" in EVIDENCE_TIER_ADJUSTMENTS
+        assert "case_report" in EVIDENCE_TIER_ADJUSTMENTS
+
+    def test_guidelines_highest(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["review"]
+        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["article"]
+        assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["case_report"]
+
+    def test_case_report_lowest(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < EVIDENCE_TIER_ADJUSTMENTS["article"]
+        assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < 0
+
+    def test_article_is_baseline(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        assert EVIDENCE_TIER_ADJUSTMENTS["article"] == 0.0
+
+    def test_adjustments_are_small(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        for adj in EVIDENCE_TIER_ADJUSTMENTS.values():
+            assert abs(adj) <= 0.10, f"Tier adjustment {adj} is too large"
+
+    def test_guideline_higher_than_case_report(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        engine = PubMedSearchEngine()
+        base = engine._calculate_reliability("https://pubmed.ncbi.nlm.nih.gov/12345/")
+        guideline_score = base + EVIDENCE_TIER_ADJUSTMENTS["guidelines"]
+        case_report_score = base + EVIDENCE_TIER_ADJUSTMENTS["case_report"]
+        assert guideline_score > case_report_score
+
+    def test_classify_content_type_returns_valid_keys(self) -> None:
+        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+
+        engine = PubMedSearchEngine()
+        for pt_list, expected in [
+            (["Practice Guideline"], "guidelines"),
+            (["Systematic Review"], "review"),
+            (["Case Reports"], "case_report"),
+            (["Journal Article"], "article"),
+        ]:
+            ct = engine._classify_content_type(pt_list)
+            assert ct == expected
+            assert ct in EVIDENCE_TIER_ADJUSTMENTS

@@ -1,10 +1,12 @@
-"""Tests for clinical informatics audit patch sets (PS1–PS4).
+"""Tests for clinical safety regressions.
 
 Validates:
-- PS1: rewards.py fixes (multimodal text, IoU area penalty, bbox regex, CombinedReward warning)
-- PS2: window_level preset safety (stroke width, is_preset exemption removed)
-- PS3: coord_space_modified cleared on reset()
-- PS4: diagnosis.py default model warning, expanded synonyms
+- extract_completion_text multimodal concatenation
+- IoUReward area penalty correctness
+- bbox regex last-match behavior
+- window_level preset safety (stroke width, is_preset exemption removed)
+- coord_space_modified cleared on reset()
+- diagnosis.py default model warning, expanded synonyms
 """
 
 from __future__ import annotations
@@ -28,10 +30,7 @@ from radiant_harness.tools import ToolRegistry
 from radiant_harness.tools.visual import WINDOW_PRESETS
 from radiant_harness.tools.visual import apply_window_level
 from radiant_harness.types import ToolResult
-from radiant_harness.verifiers.rewards import CombinedReward
-from radiant_harness.verifiers.rewards import ExactMatchReward
 from radiant_harness.verifiers.rewards import IoUReward
-from radiant_harness.verifiers.rewards import TokenF1Reward
 from radiant_harness.verifiers.rewards import extract_completion_text
 
 # Import diagnosis module from examples/nova
@@ -142,29 +141,7 @@ class TestBboxRegexLastMatch:
         assert bbox == [0.1, 0.2, 0.3, 0.4]
 
 
-class TestCombinedRewardWeightError:
-    """CombinedReward must raise ValueError when weights don't sum to 1.0."""
-
-    def test_error_on_non_unit_weights(self) -> None:
-        import pytest
-
-        r1 = ExactMatchReward()
-        r2 = TokenF1Reward()
-        with pytest.raises(ValueError, match="weights must sum to 1.0"):
-            CombinedReward(rewards=[r1, r2], weights=[2.0, 3.0])
-
-    def test_no_warning_on_unit_weights(self) -> None:
-        from loguru import logger as loguru_logger
-
-        captured: list[str] = []
-        handler_id = loguru_logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
-        try:
-            r1 = ExactMatchReward()
-            r2 = TokenF1Reward()
-            CombinedReward(rewards=[r1, r2], weights=[0.6, 0.4])
-        finally:
-            loguru_logger.remove(handler_id)
-        assert not any("auto-normalizing" in msg for msg in captured)
+# NOTE: CombinedReward weight tests are in test_rewards_coverage.py
 
 
 # =============================================================================

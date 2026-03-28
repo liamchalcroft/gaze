@@ -380,3 +380,55 @@ class TestVisualToolErrors:
         object.__setattr__(mgr, "_image_path", None)
         with pytest.raises(ToolExecutionError, match="Cannot reset"):
             await registry.execute("reset")
+
+
+# ---------------------------------------------------------------------------
+# _transform_and_encode tests
+# ---------------------------------------------------------------------------
+
+
+class TestTransformAndEncode:
+    @pytest.mark.asyncio
+    async def test_zoom_produces_encoded_image(self, tmp_path: Path) -> None:
+        tools = create_visual_tools()
+        image_path = _save_image(tmp_path)
+        registry = ToolRegistry(image_path=image_path, tools=tools)
+
+        result = await registry.execute("zoom", factor=2.0)
+        assert result.success
+        assert result.image_base64 is not None
+        assert len(result.image_base64) > 0
+        assert result.image_mime_type == "image/jpeg"
+
+    @pytest.mark.asyncio
+    async def test_sequential_transforms_work(self, tmp_path: Path) -> None:
+        tools = create_visual_tools()
+        image_path = _save_image(tmp_path)
+        registry = ToolRegistry(image_path=image_path, tools=tools)
+
+        r1 = await registry.execute("zoom", factor=2.0)
+        assert r1.success
+        assert r1.metadata["new_size"] == (200, 200)
+
+        r2 = await registry.execute("crop", box=[0.0, 0.0, 0.5, 0.5])
+        assert r2.success
+        assert r2.metadata["new_size"] == (100, 100)
+
+    @pytest.mark.asyncio
+    async def test_error_propagation(self, tmp_path: Path) -> None:
+        tools = create_visual_tools()
+        image_path = _save_image(tmp_path)
+        registry = ToolRegistry(image_path=image_path, tools=tools)
+
+        with pytest.raises(ToolExecutionError, match="Invalid zoom factor"):
+            await registry.execute("zoom", factor=99.0)
+
+    @pytest.mark.asyncio
+    async def test_flip_returns_same_size(self, tmp_path: Path) -> None:
+        tools = create_visual_tools()
+        image_path = _save_image(tmp_path, (50, 80))
+        registry = ToolRegistry(image_path=image_path, tools=tools)
+
+        result = await registry.execute("flip_horizontal")
+        assert result.success
+        assert result.metadata["size"] == (50, 80)

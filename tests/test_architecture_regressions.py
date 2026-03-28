@@ -1,15 +1,12 @@
-"""Tests validating the top findings from the architecture audit.
+"""Architecture regression tests for cross-cutting concerns.
 
-Finding 1 (Critical): RadiantHarnessAdapter.process_verifiers_messages crashes
-    on frozen AgenticResult.final_response (MappingProxyType not JSON-serializable).
-Finding 2 (Critical): Example schema validators accept payloads that violate
-    their own declared schemas (missing required fields, wrong types).
-Finding 3 (Important): Tool registry binds only the first image while prompts
-    expose all images — abstraction leak for multi-image inputs.
-Finding 4 (Important): Verifiers adapter drops multimodal image_url content and
-    relies on a side-channel info["image_path"] that may be absent.
-Finding 5 (Important): Standalone NOVA env extract_completion_text diverges from
-    core: returns only the first text item instead of concatenating all.
+Covers:
+1. Frozen response serialization (MappingProxyType → JSON via deep_thaw)
+2. Schema validator strictness for all examples (NOVA, PubMedQA, VQA-RAD, GEMeX)
+3. Multi-image tool registry and system prompt warning
+4. Verifiers adapter multimodal message handling
+5. extract_completion_text parity (core vs standalone env)
+6. IoU computation parity, abbreviation mapping parity, area penalty with reversed coords
 """
 
 from __future__ import annotations
@@ -169,13 +166,27 @@ class TestSchemaValidatorStrictness:
         }
         assert validate_pubmedqa_response(resp) is False
 
-    def test_pubmedqa_rejects_non_numeric_confidence(self) -> None:
-        """Confidence must be a number, not a string."""
+    def test_pubmedqa_accepts_word_label_confidence(self) -> None:
+        """Word-label confidence (e.g. 'high') is mapped to a numeric value."""
         from examples.pubmedqa.src.schemas import validate_pubmedqa_response
 
         resp = {
             "answer": "yes",
             "confidence": "high",
+            "reasoning": "because",
+            "key_evidence": ["fact"],
+            "continue": False,
+        }
+        assert validate_pubmedqa_response(resp) is True
+        assert resp["confidence"] == 0.85
+
+    def test_pubmedqa_rejects_unknown_word_confidence(self) -> None:
+        """Unknown word labels for confidence are rejected."""
+        from examples.pubmedqa.src.schemas import validate_pubmedqa_response
+
+        resp = {
+            "answer": "yes",
+            "confidence": "absolutely",
             "reasoning": "because",
             "key_evidence": ["fact"],
             "continue": False,
@@ -275,7 +286,7 @@ class TestSchemaValidatorStrictness:
         }
         assert validate_gemex_response(resp) is False
 
-    def test_gemex_rejects_non_numeric_confidence(self) -> None:
+    def test_gemex_accepts_word_label_confidence(self) -> None:
         from examples.gemex_thinkvg.src.schemas import validate_gemex_response
 
         resp = {
@@ -283,6 +294,20 @@ class TestSchemaValidatorStrictness:
             "answer": "effusion",
             "location": {"reference": "lung", "bbox": [0, 0, 100, 100]},
             "confidence": "high",
+            "continue": False,
+        }
+        assert validate_gemex_response(resp) is True
+        assert resp["confidence"] == 0.85
+
+    def test_gemex_rejects_unknown_word_confidence(self) -> None:
+        from examples.gemex_thinkvg.src.schemas import validate_gemex_response
+
+        resp = {
+            "reasoning": "I see opacity",
+            "answer": "effusion",
+            "location": {"reference": "lung", "bbox": [0, 0, 100, 100]},
+            "confidence": "certainly",
+            "continue": False,
         }
         assert validate_gemex_response(resp) is False
 
@@ -636,30 +661,7 @@ class TestIoURewardNegativeCoordsFallback:
         assert score > 0.9, f"Negative coord bbox missed: score={score}"
 
 
-class TestCombinedRewardWeightValidation:
-    """CombinedReward must reject weights that don't sum to 1.0."""
-
-    def test_raises_on_bad_weights(self) -> None:
-        from radiant_harness.verifiers.rewards import CombinedReward
-        from radiant_harness.verifiers.rewards import ExactMatchReward
-        from radiant_harness.verifiers.rewards import TokenF1Reward
-
-        with pytest.raises(ValueError, match="weights must sum to 1.0"):
-            CombinedReward(
-                rewards=[ExactMatchReward(), TokenF1Reward()],
-                weights=[0.1, 0.1],
-            )
-
-    def test_accepts_valid_weights(self) -> None:
-        from radiant_harness.verifiers.rewards import CombinedReward
-        from radiant_harness.verifiers.rewards import ExactMatchReward
-        from radiant_harness.verifiers.rewards import TokenF1Reward
-
-        combined = CombinedReward(
-            rewards=[ExactMatchReward(), TokenF1Reward()],
-            weights=[0.6, 0.4],
-        )
-        assert combined.weights == [0.6, 0.4]
+# NOTE: CombinedReward weight tests are in test_rewards_coverage.py
 
 
 # ---------------------------------------------------------------------------

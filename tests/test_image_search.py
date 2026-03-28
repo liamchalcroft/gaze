@@ -109,6 +109,65 @@ class TestOpenIResultParsing:
         # "ct scan" (7 chars) > "mri" (3 chars), so "ct scan" should be checked first
         assert engine._extract_modality("CT scan with MRI comparison") == "CT"
 
+    def test_standalone_ct_detected(self) -> None:
+        """Standalone 'CT' in caption should be detected as CT modality."""
+        engine = OpenISearchEngine()
+        assert engine._extract_modality("CT of the abdomen showing mass") == "CT"
+        assert engine._extract_modality("Axial CT image") == "CT"
+        assert engine._extract_modality("CT-guided biopsy") == "CT"
+
+    def test_pet_no_false_positive(self) -> None:
+        """'pet' must not match 'competent', 'repetitive', etc."""
+        engine = OpenISearchEngine()
+        assert engine._extract_modality("The test was not competitive") is None
+        assert engine._extract_modality("Repetitive measurements taken") is None
+        assert engine._extract_modality("Competent radiologist reviewed") is None
+        # But real PET should still match
+        assert engine._extract_modality("PET scan of the brain") == "PET"
+
+    def test_ct_no_false_positive(self) -> None:
+        """'ct' must not match 'infected', 'detected', etc."""
+        engine = OpenISearchEngine()
+        assert engine._extract_modality("Infected tissue was detected") is None
+        assert engine._extract_modality("Protection against disease") is None
+        # But real CT should still match
+        assert engine._extract_modality("CT findings in stroke") == "CT"
+
+    def test_mri_no_false_positive(self) -> None:
+        """'mri' must not match substrings in other words."""
+        engine = OpenISearchEngine()
+        # Real MRI should match
+        assert engine._extract_modality("MRI of the brain") == "MRI"
+        assert engine._extract_modality("Brain mri shows lesion") == "MRI"
+
+    def test_prefix_keywords_match_derived_forms(self) -> None:
+        """Prefix keywords like 'mammograph' should match 'mammography'."""
+        engine = OpenISearchEngine()
+        assert engine._extract_modality("Mammography screening result") == "Mammography"
+        assert engine._extract_modality("Mammographic findings") == "Mammography"
+
+    def test_body_part_hip_no_false_positive(self) -> None:
+        """'hip' must not match 'relationship', 'fellowship', etc."""
+        engine = OpenISearchEngine()
+        assert engine._extract_body_part("The relationship between X and Y") is None
+        assert engine._extract_body_part("Fellowship training program") is None
+        # Real hip should match
+        assert engine._extract_body_part("Hip fracture in elderly") == "pelvis"
+
+    def test_body_part_vertebr_matches_derived_forms(self) -> None:
+        """'vertebr' prefix should match 'vertebral', 'vertebrae', etc."""
+        engine = OpenISearchEngine()
+        assert engine._extract_body_part("Vertebral compression fracture") == "spine"
+        assert engine._extract_body_part("Lumbar vertebrae alignment") == "spine"
+
+    def test_parse_results_non_list_items(self) -> None:
+        """Non-list 'list' field should return empty results, not crash."""
+        engine = OpenISearchEngine()
+        assert engine._parse_results({"list": "error"}) == []
+        assert engine._parse_results({"list": None}) == []
+        assert engine._parse_results({"list": 42}) == []
+        assert engine._parse_results({}) == []
+
 
 class TestAtexitTempDirCleanup:
     """Temp dir tracking must use module-level set, not per-instance atexit."""
@@ -339,34 +398,46 @@ class TestContentLengthMalformed:
             assert filepath.exists()
 
 
-class TestKeywordMapsPreSorted:
-    """Module-level keyword maps must be pre-sorted tuples (not dicts)."""
+class TestKeywordPatternsPreSorted:
+    """Module-level keyword patterns must be pre-sorted tuples."""
 
-    def test_modality_keywords_is_tuple(self) -> None:
-        from radiant_harness.retrieval.image_search import _MODALITY_KEYWORDS
+    def test_modality_patterns_is_tuple(self) -> None:
+        from radiant_harness.retrieval.image_search import _MODALITY_PATTERNS
 
-        assert isinstance(_MODALITY_KEYWORDS, tuple)
-        # Each element should be a (keyword, modality) pair
-        for item in _MODALITY_KEYWORDS:
+        assert isinstance(_MODALITY_PATTERNS, tuple)
+        for item in _MODALITY_PATTERNS:
             assert isinstance(item, tuple) and len(item) == 2
 
-    def test_body_part_keywords_is_tuple(self) -> None:
-        from radiant_harness.retrieval.image_search import _BODY_PART_KEYWORDS
+    def test_body_part_patterns_is_tuple(self) -> None:
+        from radiant_harness.retrieval.image_search import _BODY_PART_PATTERNS
 
-        assert isinstance(_BODY_PART_KEYWORDS, tuple)
-        for item in _BODY_PART_KEYWORDS:
+        assert isinstance(_BODY_PART_PATTERNS, tuple)
+        for item in _BODY_PART_PATTERNS:
             assert isinstance(item, tuple) and len(item) == 2
 
-    def test_modality_keywords_sorted_longest_first(self) -> None:
-        from radiant_harness.retrieval.image_search import _MODALITY_KEYWORDS
+    def test_modality_patterns_sorted_longest_first(self) -> None:
+        import re
 
-        lengths = [len(kw) for kw, _ in _MODALITY_KEYWORDS]
+        from radiant_harness.retrieval.image_search import _MODALITY_PATTERNS
+
+        # Extract effective keyword length from pattern (strip \b and escapes)
+        def keyword_len(pat: re.Pattern[str]) -> int:
+            raw = pat.pattern.replace(r"\b", "").replace("\\", "")
+            return len(raw)
+
+        lengths = [keyword_len(pat) for pat, _ in _MODALITY_PATTERNS]
         assert lengths == sorted(lengths, reverse=True)
 
-    def test_body_part_keywords_sorted_longest_first(self) -> None:
-        from radiant_harness.retrieval.image_search import _BODY_PART_KEYWORDS
+    def test_body_part_patterns_sorted_longest_first(self) -> None:
+        import re
 
-        lengths = [len(kw) for kw, _ in _BODY_PART_KEYWORDS]
+        from radiant_harness.retrieval.image_search import _BODY_PART_PATTERNS
+
+        def keyword_len(pat: re.Pattern[str]) -> int:
+            raw = pat.pattern.replace(r"\b", "").replace("\\", "")
+            return len(raw)
+
+        lengths = [keyword_len(pat) for pat, _ in _BODY_PART_PATTERNS]
         assert lengths == sorted(lengths, reverse=True)
 
 
@@ -790,3 +861,31 @@ class TestMetadataSanitization:
         img_type = results[0].metadata["image_type"]
         assert "\x00" not in img_type
         assert img_type == "photograph"
+
+
+# ---------------------------------------------------------------------------
+# Shared download session lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestSharedDownloadSession:
+    @pytest.mark.asyncio
+    async def test_download_session_reused(self, tmp_path: Path) -> None:
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        session1 = await mgr._get_download_session()
+        session2 = await mgr._get_download_session()
+        assert session1 is session2
+        await mgr.close()
+
+    @pytest.mark.asyncio
+    async def test_download_session_closed_on_cleanup(self, tmp_path: Path) -> None:
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        session = await mgr._get_download_session()
+        assert not session.closed
+        await mgr.close()
+        assert session.closed
+
+    @pytest.mark.asyncio
+    async def test_close_without_session_does_not_raise(self, tmp_path: Path) -> None:
+        mgr = MedicalImageSearchManager(download_dir=tmp_path)
+        await mgr.close()

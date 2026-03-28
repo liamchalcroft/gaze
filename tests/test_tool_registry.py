@@ -509,3 +509,42 @@ def test_openai_adapter_disables_sdk_retries() -> None:
     finally:
         if os.environ.get("OPENAI_API_KEY") == "sk-test-dummy":
             del os.environ["OPENAI_API_KEY"]
+
+
+# ---------------------------------------------------------------------------
+# EncodedImage _data_url pre-computation
+# ---------------------------------------------------------------------------
+
+
+class TestEncodedImageDataUrlCached:
+    """Verify to_data_url() returns the pre-computed string, not a new one."""
+
+    def test_data_url_is_precomputed_in_post_init(self) -> None:
+        from radiant_harness.tools.registry import EncodedImage
+
+        enc = EncodedImage(data="abc123", mime_type="image/jpeg")
+        assert enc._data_url == "data:image/jpeg;base64,abc123"
+
+    def test_to_data_url_returns_same_object(self) -> None:
+        from radiant_harness.tools.registry import EncodedImage
+
+        enc = EncodedImage(data="xyz", mime_type="image/png")
+        url1 = enc.to_data_url()
+        url2 = enc.to_data_url()
+        assert url1 is url2
+
+    def test_encode_image_returns_precomputed_url(self) -> None:
+        img = Image.new("RGB", (8, 8), color=(100, 100, 100))
+        result = encode_image(img)
+        url = result.to_data_url()
+        assert url.startswith("data:image/jpeg;base64,")
+        assert url == f"data:{result.mime_type};base64,{result.data}"
+
+    def test_frozen_dataclass_rejects_mutation(self) -> None:
+        from radiant_harness.tools.registry import EncodedImage
+
+        enc = EncodedImage(data="abc", mime_type="image/jpeg")
+        with pytest.raises(AttributeError):
+            enc.data = "mutated"  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            enc._data_url = "mutated"  # type: ignore[misc]

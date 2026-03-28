@@ -1,10 +1,4 @@
-"""Tests for Patch Set 1: Evaluation integrity fixes.
-
-Covers:
-1. Area penalty for localization reward (NOVA + core IoUReward)
-2. Uniform rescale_and_clamp_box (aspect-ratio preservation)
-3. BERTScore baseline rescaling change is verified via integration
-"""
+"""Tests for NOVA area penalty and core IoUReward area penalty."""
 
 from __future__ import annotations
 
@@ -15,13 +9,6 @@ import pytest
 from examples.nova.src.rewards import _area_penalty
 from examples.nova.src.rewards import compute_localization_reward
 from radiant_harness.verifiers.rewards import IoUReward
-
-try:
-    from examples.nova.src.evaluation.detection import rescale_and_clamp_box
-
-    DETECTION_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
-    DETECTION_AVAILABLE = False
 
 
 # =====================================================================
@@ -219,68 +206,5 @@ class TestIoURewardAreaPenalty:
         assert score == 0.0
 
 
-# =====================================================================
-# 4. rescale_and_clamp_box — per-axis scaling
-# =====================================================================
 
-
-@pytest.mark.skipif(not DETECTION_AVAILABLE, reason="detection module not available")
-class TestRescaleAndClampBoxPerAxis:
-    """Verify rescale_and_clamp_box uses per-axis scaling for spatial accuracy."""
-
-    def test_within_bounds_unchanged(self) -> None:
-        """Box within bounds should pass through unchanged."""
-        box = [10, 20, 100, 200]
-        result = rescale_and_clamp_box(box, 480, 480)
-        assert result == [10.0, 20.0, 100.0, 200.0]
-
-    def test_single_axis_overflow_per_axis_scale(self) -> None:
-        """When only x-axis overflows, y-axis should remain untouched.
-
-        Per-axis scaling preserves spatial accuracy on the non-overflowing
-        axis, which is critical for lesion localization.
-        """
-        # Box: [0, 0, 960, 240] in a 480x480 image
-        # max_x=960 > 480 → scale_x = 480/960 = 0.5
-        # max_y=240 < 480 → scale_y = 1.0
-        # Per-axis: x scaled by 0.5, y unchanged
-        # Expected: [0, 0, 480, 240]  # noqa: ERA001
-        result = rescale_and_clamp_box([0, 0, 960, 240], 480, 480)
-        assert result == [0.0, 0.0, 480.0, 240.0]
-
-    def test_only_y_overflow_x_untouched(self) -> None:
-        """When only y-axis overflows, x-axis should remain untouched."""
-        # Box: [0, 0, 240, 960] in a 480x480 image
-        # max_x=240 < 480 → scale_x = 1.0
-        # max_y=960 > 480 → scale_y = 480/960 = 0.5
-        # Per-axis: x unchanged, y scaled by 0.5
-        # Expected: [0, 0, 240, 480]  # noqa: ERA001
-        result = rescale_and_clamp_box([0, 0, 240, 960], 480, 480)
-        assert result == [0.0, 0.0, 240.0, 480.0]
-
-    def test_both_axes_overflow_independent_scales(self) -> None:
-        """Both axes overflow — each axis scaled independently."""
-        # Box: [0, 0, 960, 720] in 480x480
-        # scale_x = 480/960 = 0.5, scale_y = 480/720 = 0.667
-        # Per-axis: x *= 0.5, y *= 0.667
-        # Expected: [0, 0, 480, 480]  # noqa: ERA001
-        result = rescale_and_clamp_box([0, 0, 960, 720], 480, 480)
-        assert result == [0.0, 0.0, 480.0, 480.0]
-
-    def test_non_square_coord_space_mapping(self) -> None:
-        """Model thinks image is 1000x500 when it is actually 480x480.
-
-        Per-axis scaling correctly maps each axis to the true image space.
-        """
-        # Box in model's 1000x500 space: [100, 50, 800, 400]
-        # scale_x = 480/800 = 0.6, scale_y = 480/400 = 1.2 (but max_y=400 < 480, so 1.0)
-        # Actually max_y=400 < 480 → scale_y = 1.0
-        # Expected: [60, 50, 480, 400]  # noqa: ERA001
-        result = rescale_and_clamp_box([100, 50, 800, 400], 480, 480)
-        assert result == [60.0, 50.0, 480.0, 400.0]
-
-    def test_swapped_coordinates_handled(self) -> None:
-        """Swapped coordinates (x1 > x2) should be fixed before scaling."""
-        result = rescale_and_clamp_box([960, 240, 0, 0], 480, 480)
-        assert result[0] <= result[2]
-        assert result[1] <= result[3]
+# NOTE: rescale_and_clamp_box tests are in test_nova_detection_prompts.py
