@@ -4,7 +4,7 @@
 #   MODEL       required — e.g. qwen3.5-35b-a3b, glm-4.6v-flash
 #   DATASET     required — path to GEMeX JSONL dataset
 #   IMAGE_DIR   required — MIMIC-CXR image root directory
-#   BASE_URL    defaults to http://192.168.1.138:1234/v1
+#   BASE_URL    defaults to http://localhost:1234/v1
 #   NUM_SAMPLES defaults to 50 (-1 = all)
 #
 # NOTE: Only load one model in LM Studio at a time. The health-check probe
@@ -21,7 +21,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MODEL="${1:?Usage: ./run_local.sh MODEL DATASET IMAGE_DIR [BASE_URL] [NUM_SAMPLES]}"
 DATASET="${2:?Usage: ./run_local.sh MODEL DATASET IMAGE_DIR [BASE_URL] [NUM_SAMPLES]}"
 IMAGE_DIR="${3:?Usage: ./run_local.sh MODEL DATASET IMAGE_DIR [BASE_URL] [NUM_SAMPLES]}"
-BASE_URL="${4:-http://192.168.1.138:1234/v1}"
+BASE_URL="${4:-http://localhost:1234/v1}"
 NUM_SAMPLES="${5:-50}"
 RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 

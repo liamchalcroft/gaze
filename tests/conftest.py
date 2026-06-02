@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the radiant_harness test suite."""
+"""Shared pytest fixtures for the gaze test suite."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from radiant_harness.config import reset_config
+from gaze.config import reset_config
 
 
 @pytest.fixture(autouse=True)

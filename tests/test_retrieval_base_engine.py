@@ -5,8 +5,8 @@ from __future__ import annotations
 import aiohttp
 import pytest
 
-from radiant_harness.retrieval.base import BaseSearchEngine
-from radiant_harness.retrieval.base import SearchEngineError
+from gaze.retrieval.base import BaseSearchEngine
+from gaze.retrieval.base import SearchEngineError
 
 
 class _ConcreteEngine(BaseSearchEngine[dict, SearchEngineError]):

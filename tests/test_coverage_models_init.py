@@ -8,7 +8,7 @@ import pytest
 class TestLazyImports:
     def test_huggingface_adapter_lazy_import(self) -> None:
         """Accessing HuggingFaceAdapter triggers lazy import from huggingface_adapter."""
-        from radiant_harness import models
+        from gaze import models
 
         adapter_cls = models.HuggingFaceAdapter
         assert adapter_cls.__name__ == "HuggingFaceAdapter"
@@ -16,7 +16,7 @@ class TestLazyImports:
 
     def test_huggingface_vlm_adapter_lazy_import(self) -> None:
         """Accessing HuggingFaceVLMAdapter triggers lazy import."""
-        from radiant_harness import models
+        from gaze import models
 
         adapter_cls = models.HuggingFaceVLMAdapter
         assert adapter_cls.__name__ == "HuggingFaceVLMAdapter"
@@ -24,14 +24,14 @@ class TestLazyImports:
 
     def test_unknown_attribute_raises_attribute_error(self) -> None:
         """Accessing a non-existent attribute raises AttributeError."""
-        from radiant_harness import models
+        from gaze import models
 
         with pytest.raises(AttributeError, match="has no attribute 'NonExistent'"):
             _ = models.NonExistent
 
     def test_lazy_imports_return_same_class(self) -> None:
         """Multiple accesses return the same class object."""
-        from radiant_harness import models
+        from gaze import models
 
         cls1 = models.HuggingFaceAdapter
         cls2 = models.HuggingFaceAdapter

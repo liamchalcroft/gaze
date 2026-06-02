@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.exceptions import ModelError
-from radiant_harness.models.openai_adapter import OpenAIAdapter
+from gaze.exceptions import ModelError
+from gaze.models.openai_adapter import OpenAIAdapter
 
 # ---------------------------------------------------------------------------
 # Client initialization and base_url routing
@@ -50,7 +50,7 @@ class TestClientBaseUrl:
     ) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-456")
-        monkeypatch.setenv("RADIANT_ALLOW_CUSTOM_BASE_URL", "1")
+        monkeypatch.setenv("GAZE_ALLOW_CUSTOM_BASE_URL", "1")
 
         custom_url = "https://my-proxy.example.com/v1"
         adapter = OpenAIAdapter(model_name="gpt-4o", base_url=custom_url)
@@ -363,7 +363,7 @@ class TestAPIErrorStatusCode:
 
         from openai import APIStatusError
 
-        from radiant_harness.exceptions import APIError
+        from gaze.exceptions import APIError
 
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         adapter = OpenAIAdapter(model_name="gpt-4o")
@@ -445,28 +445,28 @@ class EmptyAsyncIter:
 
 
 class TestCustomBaseUrlOptIn:
-    """Custom base_url must be rejected unless RADIANT_ALLOW_CUSTOM_BASE_URL=1."""
+    """Custom base_url must be rejected unless GAZE_ALLOW_CUSTOM_BASE_URL=1."""
 
     def test_rejects_custom_url_without_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("RADIANT_ALLOW_CUSTOM_BASE_URL", raising=False)
-        with pytest.raises(ModelError, match="RADIANT_ALLOW_CUSTOM_BASE_URL"):
+        monkeypatch.delenv("GAZE_ALLOW_CUSTOM_BASE_URL", raising=False)
+        with pytest.raises(ModelError, match="GAZE_ALLOW_CUSTOM_BASE_URL"):
             OpenAIAdapter(model_name="gpt-4o", base_url="https://custom.example.com/v1")
 
     def test_accepts_custom_url_with_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("RADIANT_ALLOW_CUSTOM_BASE_URL", "1")
+        monkeypatch.setenv("GAZE_ALLOW_CUSTOM_BASE_URL", "1")
         adapter = OpenAIAdapter(model_name="gpt-4o", base_url="https://custom.example.com/v1")
         assert adapter._base_url == "https://custom.example.com/v1"
 
     def test_accepts_allowed_base_url_without_env_var(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("RADIANT_ALLOW_CUSTOM_BASE_URL", raising=False)
+        monkeypatch.delenv("GAZE_ALLOW_CUSTOM_BASE_URL", raising=False)
         # OpenRouter is on the allowlist — should not raise
         adapter = OpenAIAdapter(model_name="gpt-4o", base_url="https://openrouter.ai/api/v1")
         assert adapter._base_url == "https://openrouter.ai/api/v1"
 
     def test_rejects_http_even_with_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("RADIANT_ALLOW_CUSTOM_BASE_URL", "1")
+        monkeypatch.setenv("GAZE_ALLOW_CUSTOM_BASE_URL", "1")
         with pytest.raises(ModelError, match="HTTPS"):
             OpenAIAdapter(model_name="gpt-4o", base_url="http://custom.example.com/v1")
 

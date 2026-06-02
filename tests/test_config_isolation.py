@@ -7,21 +7,21 @@ import threading
 
 import pytest
 
-from radiant_harness.config import CacheConfig
-from radiant_harness.config import HarnessConfig
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.config import _validate_base_url
-from radiant_harness.config import config_context
-from radiant_harness.config import get_config
-from radiant_harness.config import reset_config
-from radiant_harness.config import set_config
+from gaze.config import CacheConfig
+from gaze.config import GazeConfig
+from gaze.config import ImageProcessingConfig
+from gaze.config import _validate_base_url
+from gaze.config import config_context
+from gaze.config import get_config
+from gaze.config import reset_config
+from gaze.config import set_config
 
 
 class TestResetConfig:
     """Tests for reset_config()."""
 
     def test_restores_defaults(self) -> None:
-        custom = HarnessConfig(cache=CacheConfig(max_cache_size=999))
+        custom = GazeConfig(cache=CacheConfig(max_cache_size=999))
         set_config(custom)
         assert get_config().cache.max_cache_size == 999
 
@@ -41,7 +41,7 @@ class TestConfigContext:
 
     def test_applies_temporary_config(self) -> None:
         original_max = get_config().cache.max_cache_size
-        temporary = HarnessConfig(cache=CacheConfig(max_cache_size=42))
+        temporary = GazeConfig(cache=CacheConfig(max_cache_size=42))
 
         with config_context(temporary):
             assert get_config().cache.max_cache_size == 42
@@ -50,7 +50,7 @@ class TestConfigContext:
 
     def test_restores_on_exception(self) -> None:
         original = get_config()
-        temporary = HarnessConfig(cache=CacheConfig(max_cache_size=1))
+        temporary = GazeConfig(cache=CacheConfig(max_cache_size=1))
 
         with pytest.raises(RuntimeError, match="boom"), config_context(temporary):
             assert get_config().cache.max_cache_size == 1
@@ -59,15 +59,15 @@ class TestConfigContext:
         assert get_config() is original
 
     def test_yields_the_temporary_config(self) -> None:
-        temporary = HarnessConfig(image=ImageProcessingConfig(max_image_dimension=256))
+        temporary = GazeConfig(image=ImageProcessingConfig(max_image_dimension=256))
 
         with config_context(temporary) as cfg:
             assert cfg is temporary
             assert cfg.image.max_image_dimension == 256
 
     def test_nesting(self) -> None:
-        outer = HarnessConfig(cache=CacheConfig(max_cache_size=10))
-        inner = HarnessConfig(cache=CacheConfig(max_cache_size=20))
+        outer = GazeConfig(cache=CacheConfig(max_cache_size=10))
+        inner = GazeConfig(cache=CacheConfig(max_cache_size=20))
         original_max = get_config().cache.max_cache_size
 
         with config_context(outer):
@@ -84,12 +84,12 @@ class TestConfigContext:
         entered = threading.Barrier(2)
 
         def first_worker() -> None:
-            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=111))):
+            with config_context(GazeConfig(cache=CacheConfig(max_cache_size=111))):
                 entered.wait()
                 first_seen.append(get_config().cache.max_cache_size)
 
         def second_worker() -> None:
-            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=222))):
+            with config_context(GazeConfig(cache=CacheConfig(max_cache_size=222))):
                 entered.wait()
                 second_seen.append(get_config().cache.max_cache_size)
 
@@ -110,14 +110,14 @@ class TestConfigContext:
         second_ready = asyncio.Event()
 
         async def first_task() -> int:
-            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=111))):
+            with config_context(GazeConfig(cache=CacheConfig(max_cache_size=111))):
                 first_ready.set()
                 await second_ready.wait()
                 return get_config().cache.max_cache_size
 
         async def second_task() -> int:
             await first_ready.wait()
-            with config_context(HarnessConfig(cache=CacheConfig(max_cache_size=222))):
+            with config_context(GazeConfig(cache=CacheConfig(max_cache_size=222))):
                 second_ready.set()
                 return get_config().cache.max_cache_size
 
@@ -136,7 +136,7 @@ class TestAutouseFixture:
 
     def test_a_mutate_config(self) -> None:
         """Mutate the global config — the fixture should clean up after."""
-        set_config(HarnessConfig(cache=CacheConfig(max_cache_size=777)))
+        set_config(GazeConfig(cache=CacheConfig(max_cache_size=777)))
         assert get_config().cache.max_cache_size == 777
 
     def test_b_config_is_default(self) -> None:

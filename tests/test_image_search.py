@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from radiant_harness.exceptions import HarnessError
-from radiant_harness.retrieval.image_search import ImageDownloadError
-from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.image_search import MedicalImageSearchManager
-from radiant_harness.retrieval.image_search import OpenISearchEngine
+from gaze.exceptions import GazeError
+from gaze.retrieval.image_search import ImageDownloadError
+from gaze.retrieval.image_search import ImageSearchError
+from gaze.retrieval.image_search import MedicalImageSearchManager
+from gaze.retrieval.image_search import OpenISearchEngine
 
 
 def test_invalid_image_search_limits_raise(tmp_path: Path) -> None:
@@ -21,15 +21,15 @@ def test_invalid_image_search_limits_raise(tmp_path: Path) -> None:
 
 
 class TestImageSearchErrorHierarchy:
-    """Image search errors must be part of the HarnessError hierarchy."""
+    """Image search errors must be part of the GazeError hierarchy."""
 
     def test_image_search_error_is_harness_error(self) -> None:
         err = ImageSearchError("Open-i", "test error")
-        assert isinstance(err, HarnessError)
+        assert isinstance(err, GazeError)
 
     def test_image_download_error_is_harness_error(self) -> None:
         err = ImageDownloadError("https://example.com/img.png", "timeout")
-        assert isinstance(err, HarnessError)
+        assert isinstance(err, GazeError)
 
     def test_image_search_error_preserves_fields(self) -> None:
         cause = RuntimeError("cause")
@@ -174,7 +174,7 @@ class TestAtexitTempDirCleanup:
 
     def test_temp_dir_tracked_on_creation(self) -> None:
         """Creating a manager without download_dir adds to _temp_dirs."""
-        from radiant_harness.retrieval.image_search import _temp_dirs
+        from gaze.retrieval.image_search import _temp_dirs
 
         mgr = MedicalImageSearchManager()
         assert mgr._created_temp_dir is True
@@ -185,7 +185,7 @@ class TestAtexitTempDirCleanup:
 
     def test_explicit_dir_not_tracked(self, tmp_path: Path) -> None:
         """Creating a manager with explicit download_dir must NOT track it."""
-        from radiant_harness.retrieval.image_search import _temp_dirs
+        from gaze.retrieval.image_search import _temp_dirs
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         assert mgr._created_temp_dir is False
@@ -194,7 +194,7 @@ class TestAtexitTempDirCleanup:
     @pytest.mark.asyncio
     async def test_close_removes_from_tracking(self) -> None:
         """After close(), the temp dir should be removed from _temp_dirs."""
-        from radiant_harness.retrieval.image_search import _temp_dirs
+        from gaze.retrieval.image_search import _temp_dirs
 
         mgr = MedicalImageSearchManager()
         temp_dir = mgr.download_dir
@@ -210,7 +210,7 @@ class TestAtexitTempDirCleanup:
         a bound method reference), and that the atexit function is the
         module-level _atexit_cleanup_temp_dirs, not a bound method.
         """
-        from radiant_harness.retrieval.image_search import _atexit_cleanup_temp_dirs
+        from gaze.retrieval.image_search import _atexit_cleanup_temp_dirs
 
         # The module-level function should be registered (it's registered
         # at module import time). We can verify it exists and is callable.
@@ -223,14 +223,14 @@ class TestAtexitTempDirCleanup:
         assert mgr._created_temp_dir is True
         # Cleanup
         mgr._cleanup_temp_dir()
-        from radiant_harness.retrieval.image_search import _temp_dirs
+        from gaze.retrieval.image_search import _temp_dirs
 
         _temp_dirs.discard(mgr.download_dir)
 
     def test_atexit_handler_cleans_dirs(self, tmp_path: Path) -> None:
         """The module-level atexit handler should clean tracked dirs."""
-        from radiant_harness.retrieval.image_search import _atexit_cleanup_temp_dirs
-        from radiant_harness.retrieval.image_search import _temp_dirs
+        from gaze.retrieval.image_search import _atexit_cleanup_temp_dirs
+        from gaze.retrieval.image_search import _temp_dirs
 
         # Create a temp dir and track it
         test_dir = tmp_path / "atexit_test"
@@ -318,21 +318,21 @@ class TestExtensionFromUrl:
     """_get_extension_from_url must use path suffix, not substring."""
 
     def test_normal_image_url(self) -> None:
-        from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+        from gaze.retrieval.image_search import MedicalImageSearchManager
 
         mgr = MedicalImageSearchManager.__new__(MedicalImageSearchManager)
         assert mgr._get_extension_from_url("https://host.com/img/scan.jpg") == ".jpg"
         assert mgr._get_extension_from_url("https://host.com/img/scan.png") == ".png"
 
     def test_no_extension_returns_none(self) -> None:
-        from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+        from gaze.retrieval.image_search import MedicalImageSearchManager
 
         mgr = MedicalImageSearchManager.__new__(MedicalImageSearchManager)
         assert mgr._get_extension_from_url("https://host.com/img/scan") is None
 
     def test_substring_png_in_path_does_not_match(self) -> None:
         """URL with 'png' as a path segment (not extension) must not match."""
-        from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+        from gaze.retrieval.image_search import MedicalImageSearchManager
 
         mgr = MedicalImageSearchManager.__new__(MedicalImageSearchManager)
         # "pngdata" in path should NOT return .png
@@ -340,7 +340,7 @@ class TestExtensionFromUrl:
 
     def test_query_string_ignored(self) -> None:
         """Extension should come from path, not query string."""
-        from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+        from gaze.retrieval.image_search import MedicalImageSearchManager
 
         mgr = MedicalImageSearchManager.__new__(MedicalImageSearchManager)
         assert mgr._get_extension_from_url("https://host.com/image.jpg?fmt=webp") == ".jpg"
@@ -355,7 +355,7 @@ class TestContentLengthMalformed:
         from unittest.mock import AsyncMock
         from unittest.mock import MagicMock
 
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         result = ImageSearchResult(
@@ -402,14 +402,14 @@ class TestKeywordPatternsPreSorted:
     """Module-level keyword patterns must be pre-sorted tuples."""
 
     def test_modality_patterns_is_tuple(self) -> None:
-        from radiant_harness.retrieval.image_search import _MODALITY_PATTERNS
+        from gaze.retrieval.image_search import _MODALITY_PATTERNS
 
         assert isinstance(_MODALITY_PATTERNS, tuple)
         for item in _MODALITY_PATTERNS:
             assert isinstance(item, tuple) and len(item) == 2
 
     def test_body_part_patterns_is_tuple(self) -> None:
-        from radiant_harness.retrieval.image_search import _BODY_PART_PATTERNS
+        from gaze.retrieval.image_search import _BODY_PART_PATTERNS
 
         assert isinstance(_BODY_PART_PATTERNS, tuple)
         for item in _BODY_PART_PATTERNS:
@@ -418,7 +418,7 @@ class TestKeywordPatternsPreSorted:
     def test_modality_patterns_sorted_longest_first(self) -> None:
         import re
 
-        from radiant_harness.retrieval.image_search import _MODALITY_PATTERNS
+        from gaze.retrieval.image_search import _MODALITY_PATTERNS
 
         # Extract effective keyword length from pattern (strip \b and escapes)
         def keyword_len(pat: re.Pattern[str]) -> int:
@@ -431,7 +431,7 @@ class TestKeywordPatternsPreSorted:
     def test_body_part_patterns_sorted_longest_first(self) -> None:
         import re
 
-        from radiant_harness.retrieval.image_search import _BODY_PART_PATTERNS
+        from gaze.retrieval.image_search import _BODY_PART_PATTERNS
 
         def keyword_len(pat: re.Pattern[str]) -> int:
             raw = pat.pattern.replace(r"\b", "").replace("\\", "")
@@ -508,7 +508,7 @@ class TestOpenIHttpErrorRetry:
 
         import aiohttp
 
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
         engine = OpenISearchEngine(config=config)
@@ -557,7 +557,7 @@ class TestOpeniBaseUrlDerived:
         assert engine.openi_base_url == "https://openi.nlm.nih.gov/"
 
     def test_custom_config_derives_origin(self) -> None:
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         # Use an allowed hostname with a non-default path to verify origin derivation
         config = SearchConfig(openi_base_url="https://openi.nlm.nih.gov/v2/api/search")
@@ -569,25 +569,25 @@ class TestSearchConfigHostnameAllowlist:
     """SearchConfig must reject hostnames not in the allowed set."""
 
     def test_rejects_arbitrary_hostname_ncbi(self) -> None:
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         with pytest.raises(ValueError, match="not in the allowed set"):
             SearchConfig(ncbi_base_url="https://evil.example.com/entrez/eutils/")
 
     def test_rejects_arbitrary_hostname_openi(self) -> None:
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         with pytest.raises(ValueError, match="not in the allowed set"):
             SearchConfig(openi_base_url="https://evil.example.com/api/search")
 
     def test_accepts_allowed_ncbi_hostname(self) -> None:
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         config = SearchConfig(ncbi_base_url="https://eutils.ncbi.nlm.nih.gov/custom/path/")
         assert "eutils.ncbi.nlm.nih.gov" in config.ncbi_base_url
 
     def test_accepts_allowed_openi_hostname(self) -> None:
-        from radiant_harness.config import SearchConfig
+        from gaze.config import SearchConfig
 
         config = SearchConfig(openi_base_url="https://openi.nlm.nih.gov/v2/search")
         assert "openi.nlm.nih.gov" in config.openi_base_url
@@ -597,25 +597,25 @@ class TestDownloadUrlSsrfValidation:
     """_validate_download_url must block SSRF vectors."""
 
     def test_rejects_http_scheme(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="HTTPS"):
             _validate_download_url("http://openi.nlm.nih.gov/img.jpg")
 
     def test_rejects_non_allowed_hostname(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="not in the allowed download set"):
             _validate_download_url("https://evil.example.com/img.jpg")
 
     def test_rejects_localhost(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="loopback"):
             _validate_download_url("https://localhost/img.jpg")
 
     def test_rejects_loopback_ip(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="private/loopback"):
             _validate_download_url(
@@ -624,7 +624,7 @@ class TestDownloadUrlSsrfValidation:
             )
 
     def test_rejects_private_ip(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="private/loopback"):
             _validate_download_url(
@@ -633,13 +633,13 @@ class TestDownloadUrlSsrfValidation:
             )
 
     def test_rejects_no_hostname(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         with pytest.raises(ImageDownloadError, match="no hostname"):
             _validate_download_url("https:///img.jpg")
 
     def test_accepts_allowed_hostname(self) -> None:
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         # Should not raise
         _validate_download_url("https://openi.nlm.nih.gov/images/test.jpg")
@@ -649,7 +649,7 @@ class TestDownloadUrlSsrfValidation:
         import socket
         from unittest.mock import patch
 
-        from radiant_harness.retrieval.image_search import _validate_download_url
+        from gaze.retrieval.image_search import _validate_download_url
 
         # Simulate DNS resolving to a private IP
         fake_addrinfo = [
@@ -666,7 +666,7 @@ class TestSanitizeApiField:
     """_sanitize_api_field must strip control chars and truncate."""
 
     def test_strips_control_characters(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("normal\x00hidden\x01text\x7f")
         assert "\x00" not in result
@@ -675,13 +675,13 @@ class TestSanitizeApiField:
         assert result == "normalhiddentext"
 
     def test_truncates_to_max_length(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("A" * 1000, max_length=100)
         assert len(result) == 100
 
     def test_preserves_normal_text(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("Brain MRI T2-weighted")
         assert result == "Brain MRI T2-weighted"
@@ -708,7 +708,7 @@ class TestSanitizeNewlinesAndTabs:
     """_sanitize_api_field must strip newlines, carriage returns, and tabs."""
 
     def test_strips_newlines(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("line1\nline2\rline3")
         assert "\n" not in result
@@ -716,14 +716,14 @@ class TestSanitizeNewlinesAndTabs:
         assert result == "line1line2line3"
 
     def test_strips_tabs(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("col1\tcol2")
         assert "\t" not in result
         assert result == "col1col2"
 
     def test_strips_crlf(self) -> None:
-        from radiant_harness.retrieval.image_search import _sanitize_api_field
+        from gaze.retrieval.image_search import _sanitize_api_field
 
         result = _sanitize_api_field("Title\r\n## Injected Header")
         assert "\r" not in result
@@ -736,13 +736,13 @@ class TestDownloadSessionUserAgent:
 
     @pytest.mark.asyncio
     async def test_download_session_has_user_agent(self, tmp_path: Path) -> None:
-        import radiant_harness
+        import gaze
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         session = await mgr._get_download_session()
         ua = session._default_headers.get("User-Agent", "")
-        assert "radiant_harness" in ua
-        assert radiant_harness.__version__ in ua
+        assert "gaze" in ua
+        assert gaze.__version__ in ua
         await mgr.close()
 
     @pytest.mark.asyncio

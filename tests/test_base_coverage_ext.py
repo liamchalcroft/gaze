@@ -16,11 +16,11 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import _build_schema_skeleton
-from radiant_harness.base import _try_wrap_inner_schema
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.types import ToolCall
+from gaze.base import AgenticProcessorBase
+from gaze.base import _build_schema_skeleton
+from gaze.base import _try_wrap_inner_schema
+from gaze.exceptions import ToolExecutionError
+from gaze.types import ToolCall
 
 # ---------------------------------------------------------------------------
 # _try_wrap_inner_schema — "object" type default fill (L291)
@@ -240,7 +240,7 @@ class TestParseToolArgsNonMapping:
         assert result == {"x": 10}
 
     def test_valid_frozen_dict_succeeds(self) -> None:
-        from radiant_harness._frozen import deep_freeze
+        from gaze._frozen import deep_freeze
 
         proc = _make_processor()
         frozen = deep_freeze({"x": 10})

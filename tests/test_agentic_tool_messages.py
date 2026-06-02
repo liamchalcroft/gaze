@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import GenerationLog
-from radiant_harness.retrieval.web_search import SearchResult
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.types import ToolResult
+from gaze.base import AgenticProcessorBase
+from gaze.models import AdapterProtocol
+from gaze.models import GenerationLog
+from gaze.retrieval.web_search import SearchResult
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.types import ToolResult
 
 
 class RecordingAdapter(AdapterProtocol):

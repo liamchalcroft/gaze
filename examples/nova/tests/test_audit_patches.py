@@ -11,8 +11,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_ROOT = REPO_ROOT / "examples" / "nova"
+PAPER_ROOT = REPO_ROOT / "examples" / "aiih2026_paper"
 if str(EXAMPLE_ROOT) not in sys.path:
     sys.path.insert(0, str(EXAMPLE_ROOT))
+if str(PAPER_ROOT) not in sys.path:
+    sys.path.insert(0, str(PAPER_ROOT))
 
 
 class TestAreaPenaltyEdgeCases:
@@ -89,22 +92,41 @@ class TestAbbreviationMappingSync:
 
 
 class TestSingleTurnPromptSchemaAlignment:
-    def test_prompt_includes_findings_field(self) -> None:
-        content = (EXAMPLE_ROOT / "src" / "prompts" / "single_turn" / "task.jinja").read_text()
-        assert '"findings"' in content
+    """Verify the NOVA single-turn prompt works with the base.py skeleton injection.
 
-    def test_prompt_includes_anatomical_regions_field(self) -> None:
-        content = (EXAMPLE_ROOT / "src" / "prompts" / "single_turn" / "task.jinja").read_text()
-        assert '"anatomical_regions"' in content
+    Schema field names are communicated via _build_schema_skeleton() in base.py,
+    not via inline JSON examples in the template. These tests verify the skeleton
+    includes all required NOVA schema fields.
+    """
 
-    def test_prompt_json_example_matches_schema(self) -> None:
+    def test_skeleton_includes_caption_fields(self) -> None:
         from src.schemas import NOVA_SCHEMA
 
+        from gaze.base import _build_schema_skeleton
+
+        skeleton, _ = _build_schema_skeleton(NOVA_SCHEMA)
+        assert "caption" in skeleton
+        assert isinstance(skeleton["caption"], dict)
+        caption = skeleton["caption"]
+        for field in ("description", "findings", "anatomical_regions"):
+            assert field in caption, f"Skeleton missing caption.{field}"
+
+    def test_skeleton_includes_all_top_level_schema_keys(self) -> None:
+        from src.schemas import NOVA_SCHEMA
+
+        from gaze.base import _build_schema_skeleton
+
+        skeleton, _ = _build_schema_skeleton(NOVA_SCHEMA)
+        for key in ("caption", "diagnosis", "localization", "continue"):
+            assert key in skeleton, f"Skeleton missing top-level key: {key}"
+
+    def test_prompt_renders_with_essential_content(self) -> None:
         content = (EXAMPLE_ROOT / "src" / "prompts" / "single_turn" / "task.jinja").read_text()
-        schema_root = NOVA_SCHEMA["json_schema"]["schema"]
-        caption_props = schema_root["properties"]["caption"]["properties"]
-        for field_name in caption_props:
-            assert f'"{field_name}"' in content, f"task.jinja missing caption field: {field_name}"
+        # Template must mention key clinical concepts (not JSON field names)
+        assert "caption" in content.lower()
+        assert "diagnosis" in content.lower()
+        assert "localisation" in content.lower() or "localization" in content.lower()
+        assert "bounding box" in content.lower()
 
 
 class TestGTBoxClampingDimensions:
@@ -211,7 +233,10 @@ class TestBertScoreClamping:
 
         # Simulate a very poor BERTScore (negative after baseline rescaling)
         negative_f1 = torch.tensor([-0.1, -0.2, -0.15])
-        fake_result = (torch.zeros(3), torch.zeros(3), negative_f1)
+        fake_result = (
+            (torch.zeros(3), torch.zeros(3), negative_f1),
+            "roberta-large_L17_no-idf_version=mock",
+        )
 
         with patch("src.evaluation.caption.bert_score_fn", return_value=fake_result):
             result = evaluate_caption(["bad", "bad", "bad"], ["good ref", "good ref", "good ref"])
@@ -230,7 +255,10 @@ class TestBertScoreClamping:
         from src.evaluation.caption import evaluate_caption
 
         high_f1 = torch.tensor([1.5, 1.2, 1.3])
-        fake_result = (torch.zeros(3), torch.zeros(3), high_f1)
+        fake_result = (
+            (torch.zeros(3), torch.zeros(3), high_f1),
+            "roberta-large_L17_no-idf_version=mock",
+        )
 
         with patch("src.evaluation.caption.bert_score_fn", return_value=fake_result):
             result = evaluate_caption(["test", "test", "test"], ["ref", "ref", "ref"])
@@ -292,9 +320,7 @@ class TestLocalizationAnalysisLoading:
                 {
                     "sample_id": 0,
                     "response": {
-                        "localization": {
-                            "localizations": [{"bounding_box": [0, 0, 10, 10]}]
-                        }
+                        "localization": {"localizations": [{"bounding_box": [0, 0, 10, 10]}]}
                     },
                 }
             )
@@ -618,7 +644,7 @@ class TestContainmentMatchGuard:
     def test_containment_guard_code_present(self) -> None:
         """Verify the 2-word guard is in the source code."""
         content = (EXAMPLE_ROOT / "src" / "evaluation" / "diagnosis.py").read_text()
-        assert 'len(shorter.split()) >= 2' in content
+        assert "len(shorter.split()) >= 2" in content
 
 
 class TestAreaPenaltySwappedCoordinates:
@@ -661,5 +687,8 @@ class TestSampleStdAggregation:
 
     def test_aggregate_source_uses_n_minus_1(self) -> None:
         """Verify sample_std uses (len(xs) - 1) denominator (Bessel correction)."""
-        content = (EXAMPLE_ROOT / "experiments" / "__init__.py").read_text()
+        paper_experiments = (
+            REPO_ROOT / "examples" / "aiih2026_paper" / "experiments" / "__init__.py"
+        )
+        content = paper_experiments.read_text()
         assert "(len(xs) - 1)" in content, "sample_std must use Bessel correction"

@@ -1,4 +1,4 @@
-"""Tests for radiant_harness.verifiers.base — BaseMultiTurnEnv.
+"""Tests for gaze.verifiers.base — BaseMultiTurnEnv.
 
 Covers __init__, case loading, prompt building, state management,
 turn tracking, debug logging, text extraction, and tool request parsing.
@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 try:
-    from radiant_harness.verifiers.base import BaseMultiTurnEnv
+    from gaze.verifiers.base import BaseMultiTurnEnv
 
     _HAS_VERIFIERS = True
 except ImportError:

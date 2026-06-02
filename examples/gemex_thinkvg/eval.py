@@ -17,8 +17,8 @@ from examples.gemex_thinkvg.src import RewardWeights
 from examples.gemex_thinkvg.src import compute_combined_reward
 from examples.gemex_thinkvg.src.processor import GEMeXProcessor
 from examples.gemex_thinkvg.src.schemas import parse_thinkvg_response
-from radiant_harness._frozen import deep_thaw
-from radiant_harness import require_lmstudio_model
+from gaze import require_lmstudio_model
+from gaze._frozen import deep_thaw
 
 _QUESTION_TYPE_MAP: dict[str, str] = {
     "open_ended_questions": "open_ended",
@@ -29,7 +29,7 @@ _QUESTION_TYPE_MAP: dict[str, str] = {
 
 
 class _SafeEncoder(json.JSONEncoder):
-    """Handle MappingProxyType from radiant_harness frozen containers."""
+    """Handle MappingProxyType from gaze frozen containers."""
 
     def default(self, o: object) -> Any:
         if isinstance(o, (MappingProxyType, Mapping)):  # noqa: UP038
@@ -135,7 +135,7 @@ def _aggregate_metrics(sample_results: list[dict[str, Any]]) -> dict[str, float]
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate GEMeX-ThinkVG with Radiant Harness",
+        description="Evaluate GEMeX-ThinkVG with GAZE",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dataset", type=str, required=True, help="Path to GEMeX JSONL dataset")
@@ -155,7 +155,7 @@ def _parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument(
         "--mode",
@@ -267,7 +267,7 @@ async def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
 
     adapter_factory = None
     if args.base_url is not None:
-        from radiant_harness.models import LMStudioAdapter
+        from gaze.models import LMStudioAdapter
 
         _url = args.base_url
         _model = args.model
@@ -345,18 +345,25 @@ async def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     metrics = _aggregate_metrics(sample_results)
 
     results = {
+        "config": {
+            "model": args.model,
+            "base_url": args.base_url,
+            "lmstudio_models": loaded_models,
+            "mode": args.mode,
+            "max_turns": resolved_turns,
+            "max_tokens": args.max_tokens,
+            "max_image_dim": args.max_image_dim,
+            "temperature": 0.0,
+            "seed": args.seed,
+            "reasoning": args.reasoning,
+            "use_tools": resolved_use_tools,
+            "use_web_search": resolved_use_web_search,
+        },
         "dataset": args.dataset,
         "image_dir": str(args.image_dir) if args.image_dir else None,
-        "model": args.model,
-        "base_url": args.base_url,
-        "lmstudio_models": loaded_models,
-        "mode": args.mode,
         "num_samples_total": len(cases),
         "num_samples_evaluated": len(sample_results),
         "num_failures": len(failures),
-        "max_turns": resolved_turns,
-        "use_tools": resolved_use_tools,
-        "use_web_search": resolved_use_web_search,
         "reward_weights": {
             "answer": reward_weights.answer,
             "location": reward_weights.location,
@@ -379,8 +386,13 @@ async def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     args = _parse_args()
 
+    if args.seed is not None:
+        import random
+
+        random.seed(args.seed)
+
     if args.verbose:
-        logger.enable("radiant_harness")
+        logger.enable("gaze")
         logger.enable("examples.gemex_thinkvg")
     else:
         logger.disable("examples.gemex_thinkvg")

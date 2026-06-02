@@ -3,7 +3,7 @@
 Combines answer, location, and bounding box rewards with configurable
 weights for verifiable reward computation.
 
-Also provides GEMeXVerifiersReward for integration with radiant_harness verifiers.
+Also provides GEMeXVerifiersReward for integration with gaze verifiers.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from typing import Any
 
 from beartype import beartype
 
-from radiant_harness.utils import extract_json_from_text
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import extract_completion_text
+from gaze.utils import extract_json_from_text
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import extract_completion_text
 
 from ..schemas import validate_gemex_response
 from .answer import compute_answer_reward
@@ -265,12 +265,9 @@ class GEMeXRewardFunction:
             "iou_mean": sum(r["iou"] for r in results) / n,
             "iou_50_accuracy": sum(1 for r in results if r["iou_50"]) / n,
             "iou_30_accuracy": sum(1 for r in results if r["iou_30"]) / n,
-            "answer_exact_match_rate": sum(r["answer_exact_match"] for r in results)
-            / n,
-            "location_exact_match_rate": sum(r["location_exact_match"] for r in results)
-            / n,
-            "valid_prediction_rate": sum(1 for r in results if r["valid_prediction"])
-            / n,
+            "answer_exact_match_rate": sum(r["answer_exact_match"] for r in results) / n,
+            "location_exact_match_rate": sum(r["location_exact_match"] for r in results) / n,
+            "valid_prediction_rate": sum(1 for r in results if r["valid_prediction"]) / n,
         }
 
         return metrics
@@ -279,7 +276,7 @@ class GEMeXRewardFunction:
 class GEMeXVerifiersReward(BaseRewardFunction):
     """Verifiers-compatible reward function for GEMeX-ThinkVG.
 
-    Adapts the GEMeXRewardFunction to the radiant_harness BaseRewardFunction
+    Adapts the GEMeXRewardFunction to the gaze BaseRewardFunction
     interface for use with verifiers training and evaluation.
 
     Example:

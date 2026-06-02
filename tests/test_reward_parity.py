@@ -63,7 +63,7 @@ class TestExtractCompletionTextParity:
         ids=["multimodal", "string_content", "no_assistant", "raw_string"],
     )
     def test_core_vs_env_parity(self, completion) -> None:
-        from radiant_harness.verifiers.rewards import extract_completion_text as core_fn
+        from gaze.verifiers.rewards import extract_completion_text as core_fn
 
         env_fn = _env_extract_completion_text()
         assert core_fn(completion) == env_fn(completion)
@@ -89,7 +89,7 @@ class TestComputeIoUParity:
     )
     def test_shared_vs_gemex(self, box_a, box_b) -> None:
         from examples.gemex_thinkvg.src.rewards.bbox import compute_iou as gemex_iou
-        from radiant_harness.utils.iou import compute_iou as shared_iou
+        from gaze.utils.iou import compute_iou as shared_iou
 
         shared = shared_iou([float(x) for x in box_a], [float(x) for x in box_b])
         gemex = gemex_iou(box_a, box_b)
@@ -128,7 +128,6 @@ class TestNormalizeDiagnosisParity:
         sys.path.insert(0, str(ENV_SRC))
         try:
             from nova_brain_mri.rewards import _normalize_diagnosis as env_norm
-
             from src.rewards import _normalize_diagnosis as reward_norm
         finally:
             sys.path.pop(0)
@@ -162,7 +161,6 @@ class TestAbbreviationMappingParity:
         sys.path.insert(0, str(ENV_SRC))
         try:
             from nova_brain_mri.rewards import _ABBREVIATION_MAPPING as env_map
-
             from src.rewards import _ABBREVIATION_MAPPING as reward_map
         finally:
             sys.path.pop(0)
@@ -180,9 +178,9 @@ class TestCombinedRewardNegativeWeights:
     """CombinedReward must reject negative weights."""
 
     def test_raises_on_negative_weight(self) -> None:
-        from radiant_harness.verifiers.rewards import CombinedReward
-        from radiant_harness.verifiers.rewards import ExactMatchReward
-        from radiant_harness.verifiers.rewards import TokenF1Reward
+        from gaze.verifiers.rewards import CombinedReward
+        from gaze.verifiers.rewards import ExactMatchReward
+        from gaze.verifiers.rewards import TokenF1Reward
 
         with pytest.raises(ValueError, match="non-negative"):
             CombinedReward(

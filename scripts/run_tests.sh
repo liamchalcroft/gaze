@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Test runner script for Radiant Harness
+# Test runner script for GAZE
 
 set -euo pipefail
 
-echo "Running Radiant Harness test suite..."
+echo "Running GAZE test suite..."
 
 # Parse arguments
 COVERAGE=false
@@ -36,7 +36,7 @@ if [ "$FAST" = true ]; then
 fi
 
 if [ "$COVERAGE" = true ]; then
-    PYTEST_CMD="$PYTEST_CMD --cov=radiant_harness --cov-report=html --cov-report=term-missing"
+    PYTEST_CMD="$PYTEST_CMD --cov=gaze --cov-report=html --cov-report=term-missing"
     echo "Running with coverage"
 fi
 

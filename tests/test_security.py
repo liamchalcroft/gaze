@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from radiant_harness.base import _sanitize_tool_content
-from radiant_harness.config import SearchConfig
-from radiant_harness.exceptions import APIError
-from radiant_harness.exceptions import ModelError
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.models.openai_adapter import OpenAIAdapter
-from radiant_harness.models.openai_adapter import _safe_error_summary
-from radiant_harness.retrieval.image_search import ImageDownloadError
-from radiant_harness.retrieval.image_search import MedicalImageSearchManager
-from radiant_harness.tools.image_manager import ImageManager
+from gaze.base import _sanitize_tool_content
+from gaze.config import SearchConfig
+from gaze.exceptions import APIError
+from gaze.exceptions import ModelError
+from gaze.exceptions import ToolExecutionError
+from gaze.models.openai_adapter import OpenAIAdapter
+from gaze.models.openai_adapter import _safe_error_summary
+from gaze.retrieval.image_search import ImageDownloadError
+from gaze.retrieval.image_search import MedicalImageSearchManager
+from gaze.tools.image_manager import ImageManager
 
 # ---------------------------------------------------------------------------
 # _safe_error_summary tests
@@ -92,10 +92,10 @@ class TestOpenAIAdapterBaseUrlValidation:
         import os
         from unittest.mock import patch
 
-        env = {k: v for k, v in os.environ.items() if k != "RADIANT_ALLOW_CUSTOM_BASE_URL"}
+        env = {k: v for k, v in os.environ.items() if k != "GAZE_ALLOW_CUSTOM_BASE_URL"}
         with (
             patch.dict(os.environ, env, clear=True),
-            pytest.raises(ModelError, match="RADIANT_ALLOW_CUSTOM_BASE_URL"),
+            pytest.raises(ModelError, match="GAZE_ALLOW_CUSTOM_BASE_URL"),
         ):
             OpenAIAdapter(
                 model_name="test",
@@ -113,7 +113,7 @@ class TestOpenAIAdapterBaseUrlValidation:
         sink = StringIO()
         handler_id = logger.add(sink, format="{message}", level="WARNING")
         try:
-            with patch.dict(os.environ, {"RADIANT_ALLOW_CUSTOM_BASE_URL": "1"}):
+            with patch.dict(os.environ, {"GAZE_ALLOW_CUSTOM_BASE_URL": "1"}):
                 OpenAIAdapter(
                     model_name="test",
                     base_url="https://my-custom-proxy.example.com/v1",

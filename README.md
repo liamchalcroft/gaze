@@ -1,38 +1,59 @@
-# Radiant Harness
+# GAZE
 
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/liamchalcroft/gaze/actions/workflows/ci.yml/badge.svg)](https://github.com/liamchalcroft/gaze/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/gaze-vlm.svg)](https://pypi.org/project/gaze-vlm/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://liamchalcroft.github.io/gaze/)
 
-A modular framework for building multi-turn agentic vision-language model systems. Built for medical image analysis but usable for any visual reasoning task.
+A modular Python framework for building multi-turn agentic vision-language model (VLM) systems. Built for medical image analysis but applicable to any visual reasoning task.
 
 ## Features
 
-- **Tool system** -- extensible registry with visual manipulation (zoom, crop, contrast, threshold, flip, rotate) and search tools (PubMed, Open-i)
-- **Multi-turn agentic loop** -- full tool-calling support with configurable turn limits and JSON-structured output
+- **Multi-turn agentic loop** -- JSON-structured tool-calling with configurable turn limits, schema validation, and automatic error recovery
+- **25 built-in tools** (23 visual + 2 search) -- visual manipulation (zoom, crop, contrast, threshold, flip, rotate, etc.) and literature/image retrieval (PubMed, Open-i)
 - **Task processors** -- abstract base class with dependency injection for prompts, schemas, and validation
-- **Model adapters** -- OpenAI API (including OpenRouter), LM Studio for local models, plus optional HuggingFace adapters
-- **Verifiers integration** -- reward functions and multi-turn environments for RL training
+- **Model adapters** -- OpenAI API (including OpenRouter), LM Studio for local models, HuggingFace Transformers
+- **Verifiers integration** -- reward functions and multi-turn environments for RL training via [verifiers](https://github.com/primeintellect-ai/verifiers)
 
 ## Installation
 
 ```bash
-git clone https://github.com/liamchalcroft/nova_retrieval_vlm.git
-cd nova_retrieval_vlm
+pip install gaze-vlm
+```
+
+With extras for specific examples:
+
+```bash
+pip install gaze-vlm[nova]          # NOVA brain-MRI benchmark
+pip install gaze-vlm[gemex]         # GEMeX visual grounding
+pip install gaze-vlm[agentclinic]   # AgentClinic diagnostic reasoning
+pip install gaze-vlm[pubmedqa]      # PubMedQA text-only QA
+pip install gaze-vlm[vqa-rad]       # VQA-RAD radiology VQA
+pip install gaze-vlm[medmarks]      # MedMarks-compatible NOVA environment
+pip install gaze-vlm[verifiers]     # RL reward functions
+```
+
+For development:
+
+```bash
+git clone https://github.com/liamchalcroft/gaze.git
+cd gaze
 uv sync
 ```
 
-## Usage
+## Quick Start
 
 Subclass `AgenticProcessorBase` and implement four methods:
 
 ```python
+import asyncio
 from pathlib import Path
-
-from radiant_harness import AgenticProcessorBase
+from gaze import AgenticProcessorBase
 
 class MyProcessor(AgenticProcessorBase):
     def get_system_prompt(self, images, metadata):
-        return "You are a medical imaging expert. Analyze the provided images."
+        return "You are a medical imaging expert."
 
     def get_user_message(self, images, metadata):
         return f"Analyze this scan. History: {metadata.get('history', '')}"
@@ -41,131 +62,130 @@ class MyProcessor(AgenticProcessorBase):
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": "analysis_response",
+                "name": "analysis",
                 "strict": True,
                 "schema": {
                     "type": "object",
                     "properties": {
                         "findings": {"type": "string"},
-                        "continue": {"type": "boolean"}
+                        "continue": {"type": "boolean"},
                     },
                     "required": ["findings", "continue"],
                     "additionalProperties": False,
-                }
-            }
+                },
+            },
         }
 
     def validate_response(self, response):
         return "findings" in response
 
-processor = MyProcessor(model_name="openai/gpt-4o", use_tools=True)
-result = await processor.analyze(
-    images=Path("scan.jpg"),
-    metadata={"modality": "MRI", "history": "Patient presents with..."}
-)
+async def main():
+    # `async with` releases shared search/HTTP resources on exit.
+    async with MyProcessor(model_name="openai/gpt-4o", use_tools=True) as processor:
+        result = await processor.analyze(
+            images=Path("scan.jpg"),
+            metadata={"modality": "MRI", "history": "Patient presents with headache"},
+        )
+        print(result.final_response)
+
+asyncio.run(main())
 ```
 
 The model returns JSON each turn with `"continue": true` to keep reasoning or `"continue": false` when done.
 
-## LM Studio Baseline
+## Architecture
 
-Set `LMSTUDIO_BASE_URL` or pass `--base-url` to the example CLIs to point at your LM Studio instance (e.g. `http://localhost:1234/v1`).
+```
+gaze/
+    base.py          AgenticProcessorBase -- subclass this
+    types.py         ToolCall, ToolResult, Turn, AgenticResult (all frozen)
+    config.py        Frozen dataclasses: GazeConfig, SearchConfig, etc.
+    exceptions.py    GazeError hierarchy
+    models/          AdapterProtocol, OpenAIAdapter, LMStudioAdapter, HuggingFaceAdapter
+    tools/           Tool, ToolRegistry, 23 visual tools, 2 search tools
+    retrieval/       PubMed (NCBI E-utilities), Open-i image search
+    prompts/         Jinja2 templates via minijinja
+    verifiers/       RL reward functions and multi-turn environments
+    utils/           IoU, JSON extraction, type coercion, confidence clamping
+```
+
+## Examples
+
+Five complete example applications are included:
+
+| Example | Task | Dataset |
+|---------|------|---------|
+| [`nova/`](examples/nova/) | Brain MRI analysis (caption + diagnosis + localization) | [c-i-ber/Nova](https://huggingface.co/datasets/c-i-ber/Nova) |
+| [`gemex_thinkvg/`](examples/gemex_thinkvg/) | Visual grounding with chain-of-thought | MIMIC-CXR (PhysioNet) |
+| [`agentclinic_nejm/`](examples/agentclinic_nejm/) | Multi-turn diagnostic reasoning | AgentClinic NEJM |
+| [`pubmedqa/`](examples/pubmedqa/) | Medical Q&A (text-only) | [PubMedQA](https://huggingface.co/datasets/qiaojin/PubMedQA) |
+| [`vqa_rad/`](examples/vqa_rad/) | Radiology VQA | [VQA-RAD](https://huggingface.co/datasets/flaviagiammarino/vqa-rad) |
+
+Each example includes a CLI, evaluation metrics, and run scripts for local models.
+
+## Local Models (LM Studio)
+
+All examples support local model inference via LM Studio:
 
 ```bash
-uv run python -m examples.pubmedqa.src.cli \
-  --model qwen3.5-a3b \
-  --base-url http://localhost:1234/v1 \
-  --mode single_turn \
-  --max-samples 1
-
-uv run python -m examples.vqa_rad.src.cli \
-  --model qwen3.5-a3b \
-  --base-url http://localhost:1234/v1 \
-  --mode agentic \
-  --use-tools \
-  --max-samples 1
-
 uv run python -m examples.nova.src.cli \
   --model qwen3.5-a3b \
   --base-url http://localhost:1234/v1 \
   --mode single_turn \
-  --max-turns 1 \
-  --max-samples 1
+  --max-samples 5
 ```
 
-## Project Structure
+## Environment Variables
 
-```
-src/radiant_harness/
-    base.py                 # AgenticProcessorBase abstract class
-    types.py                # ToolCall, ToolResult, Turn, AgenticResult
-    config.py               # Configuration dataclasses
-    exceptions.py           # Exception hierarchy
-    _frozen.py              # deep_freeze / deep_thaw utilities
-    cache.py                # TTLCache
-    models/                 # AdapterProtocol, OpenAIAdapter, LMStudioAdapter, HuggingFaceAdapter
-    tools/                  # Tool, ToolRegistry, visual tools, search tools
-    retrieval/              # PubMed search, Open-i image search
-    prompts/                # Jinja2 template loading
-    verifiers/              # BaseMultiTurnEnv, reward functions, adapter
-    utils/                  # IoU, JSON extraction, type coercion, confidence clamping
-examples/
-    nova/                   # NOVA brain-MRI benchmark (fully implemented)
-    gemex_thinkvg/          # GEMeX visual grounding with RL rewards
-    agentclinic_nejm/       # Multi-turn diagnostic reasoning
-    pubmedqa/               # Medical Q&A (CLI + processor + evaluation)
-    vqa_rad/                # Radiology VQA (CLI + processor + evaluation)
-environments/
-    nova_brain_mri/         # MedMarks-compatible NOVA environment
-tests/
-docs/
-```
-
-## Evaluation Metrics
-
-The NOVA example computes metrics across three tasks. All scores are normalized to **0-1** unless noted:
-
-- **Caption**: BLEU (sacrebleu, exponential smoothing), BERTScore F1 (roberta-large, baseline-rescaled), METEOR, ROUGE-L, RadGraph F1 (optional), modality keyword F1, clinical keyword F1, binary abnormality accuracy/F1
-- **Diagnosis**: Top-1 and Top-5 accuracy via exact match, synonym matching, and LLM semantic matching (configurable judge model with majority vote)
-- **Localization**: mAP@0.3, mAP@0.5, mAP@[50:95] (COCO-style), box-level precision/recall at IoU 0.5
-
-**IoU thresholds**: Localization uses both 0.3 (lenient) and 0.5 (standard). The 0.3 threshold is retained for NOVA protocol compatibility -- for a small brain lesion (~10px box in a 240mm FOV scan), IoU 0.3 tolerates ~15mm spatial error, appropriate for lobe-level screening. IoU 0.5 is recommended for clinical-grade evaluation.
-
-**Dataset splits**: NOVA downloads the full dataset via `huggingface_hub.snapshot_download("c-i-ber/Nova")`. PubMedQA uses the `pqa_labeled` config, `train` split (1,000 expert-annotated samples). VQA-RAD defaults to the `test` split (configurable via `--split`).
-
-**Reproducibility**: All evaluations use temperature=0.0 (greedy decoding). Pass `--seed N` to fix random seeds across Python, NumPy, PyTorch, and model API calls. Summary output captures harness version, model config, and dependency versions. BERTScore is pinned to `roberta-large` with baseline rescaling; sacrebleu uses `13a` tokenizer with exponential smoothing.
-
-## Tests
-
-```bash
-uv run pytest                                    # all tests
-uv run pytest --cov=radiant_harness --cov-report=html  # with coverage
-uv run pytest tests/test_tool_registry.py        # specific file
-```
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` or `OPENAI_API_KEY` | Yes (for cloud models) | Model API access |
+| `NCBI_API_KEY` | No | Higher PubMed rate limits |
+| `NCBI_EMAIL` | No | PubMed API compliance |
 
 ## Development
 
 ```bash
-uv sync                          # install all dependencies (dev included by default)
-uv run ruff check .              # lint
-uv run ruff format --check .     # format check
-uv run pyright src/              # type check
-make check                       # all of the above + lock check + tests
+uv sync                          # Install dependencies
+make check                       # Quality gate: lint + format + typecheck + lockfile + tests
+uv run ruff check .              # Lint
+uv run ruff format .             # Format
+uv run pyright src/              # Type check
+uv run pytest tests/ -x          # Run tests
 ```
 
 ## Documentation
 
+- [API Reference](https://liamchalcroft.github.io/gaze/)
+- [Tool Reference](docs/tools.md)
+- [Configuration](docs/configuration.md)
 - [Verifiers Integration](docs/verifiers_integration.md)
 - [MedMarks Integration](docs/MEDMARKS_INTEGRATION.md)
-- [NOVA Example](examples/nova/README.md)
 - [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-## API Keys
+## Stability & Versioning
 
-- `OPENROUTER_API_KEY` or `OPENAI_API_KEY` -- for model API access
-- `NCBI_API_KEY` (optional) -- for PubMed search
-- `NCBI_EMAIL` (optional) -- for PubMed API compliance
+GAZE follows [Semantic Versioning](https://semver.org). While the project is
+pre-1.0, minor releases may include breaking changes to the public API; each is
+recorded in the [Changelog](CHANGELOG.md). The public API is the set of names
+exported from the top-level `gaze` package (`gaze.__all__`); anything
+underscore-prefixed or imported from a submodule is internal and may change
+without notice. From 1.0 onward, removals will ship with a deprecation warning
+for at least one minor release.
+
+## Citation
+
+If you use GAZE in your research, please cite:
+
+```bibtex
+@inproceedings{chalcroft2026gaze,
+  title={GAZE: A Modular Framework for Agentic Vision-Language Models in Medical Image Analysis},
+  author={Chalcroft, Liam},
+  year={2026}
+}
+```
 
 ## License
 
-MIT License.
+[MIT](LICENSE)

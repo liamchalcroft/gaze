@@ -20,8 +20,8 @@ import logging
 import math
 from typing import Any
 
-from radiant_harness.utils import clamp_confidence
-from radiant_harness.utils import coerce_json_types
+from gaze.utils import clamp_confidence
+from gaze.utils import coerce_json_types
 
 logger = logging.getLogger(__name__)
 
@@ -364,13 +364,16 @@ def validate_nova_response(response: dict[str, Any]) -> bool:
                     logger.warning(
                         "validate_nova_response: clamped out-of-bounds bbox to "
                         "image dimensions %dx%d: %s",
-                        w, h, loc["bounding_box"],
+                        w,
+                        h,
+                        loc["bounding_box"],
                     )
                 elif clamped:
                     logger.warning(
                         "validate_nova_response: bbox degenerate after clamping "
                         "to %dx%d, rejecting",
-                        w, h,
+                        w,
+                        h,
                     )
                     return False
 

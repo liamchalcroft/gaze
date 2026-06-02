@@ -17,18 +17,30 @@ ANATOMICAL_SYNONYMS: dict[str, set[str]] = {
     "bilateral lung": {"both lungs", "bilateral lungs", "lungs bilaterally"},
     "right lung": {"right pulmonary", "r lung"},
     "left lung": {"left pulmonary", "l lung"},
-    "right upper lobe": {"rul", "right upper zone", "right apex", "right apical"},
-    "right middle lobe": {"rml", "right mid zone"},
-    "right lower lobe": {"rll", "right lower zone", "right base", "right basilar"},
-    "left upper lobe": {"lul", "left upper zone", "left apex", "left apical"},
-    "left lower lobe": {"lll", "left lower zone", "left base", "left basilar"},
+    "right upper lobe": {
+        "rul",
+        "right upper zone",
+        "right upper field",
+        "right apex",
+        "right apical",
+    },
+    "right middle lobe": {"rml", "right mid zone", "right middle field", "right mid field"},
+    "right lower lobe": {
+        "rll",
+        "right lower zone",
+        "right lower field",
+        "right base",
+        "right basilar",
+    },
+    "left upper lobe": {"lul", "left upper zone", "left upper field", "left apex", "left apical"},
+    "left lower lobe": {"lll", "left lower zone", "left lower field", "left base", "left basilar"},
     "lingula": {"left middle lobe"},
     # Hilum
     "right hilum": {"right hilar", "right hilar region"},
     "left hilum": {"left hilar", "left hilar region"},
-    "bilateral hilum": {"bilateral hilar", "perihilar", "parahilar"},
+    "bilateral hilum": {"bilateral hilar", "perihilar", "parahilar", "hilar"},
     # Mediastinum
-    "mediastinum": {"mediastinal"},
+    "mediastinum": {"mediastinal", "cardiomediastinal", "retrosternal"},
     "heart": {"cardiac", "cardiac silhouette", "heart shadow"},
     "aorta": {"aortic", "aortic arch", "aortic knob"},
     "trachea": {"tracheal", "paratracheal"},
@@ -49,17 +61,34 @@ ANATOMICAL_SYNONYMS: dict[str, set[str]] = {
     "retrocardiac": {"retrocardiac region", "behind heart"},
     # General lung apex region
     "lung apex": {"apical", "apex", "apices"},
+    # Lung base — standalone "basilar" without laterality
+    "lung base": {"basilar", "basal", "bases"},
+    # Peribronchial / bronchial regions
+    "peribronchial": {"peribronchial region", "bronchial"},
+    # Subcarinal (mediastinal lymph node station)
+    "subcarinal": {"subcarinal region", "subcarinal space"},
+    # Anterior / posterior mediastinum subdivisions
+    "anterior mediastinum": {"anterior mediastinal", "prevascular"},
+    "posterior mediastinum": {"posterior mediastinal", "paravertebral"},
     # Whole chest (top-level hierarchy node)
     "chest": {"thorax", "thoracic", "chest wall"},
 }
 
 # Region hierarchy for partial matching
 REGION_HIERARCHY: dict[str, list[str]] = {
-    "bilateral lung": ["right lung", "left lung", "lung apex"],
+    "bilateral lung": ["right lung", "left lung", "lung apex", "lung base", "peribronchial"],
     "right lung": ["right upper lobe", "right middle lobe", "right lower lobe", "right hilum"],
     "left lung": ["left upper lobe", "lingula", "left lower lobe", "left hilum"],
     "bilateral hilum": ["right hilum", "left hilum"],
-    "mediastinum": ["heart", "aorta", "trachea", "retrocardiac"],
+    "mediastinum": [
+        "heart",
+        "aorta",
+        "trachea",
+        "retrocardiac",
+        "subcarinal",
+        "anterior mediastinum",
+        "posterior mediastinum",
+    ],
     "pleura": ["costophrenic angle", "right costophrenic angle", "left costophrenic angle"],
     "diaphragm": ["right hemidiaphragm", "left hemidiaphragm"],
     "chest": [
@@ -123,15 +152,23 @@ def get_canonical_region(location: str) -> str | None:
         if location in synonyms:
             return canonical
 
-    # 3. Substring match — collect all candidates, prefer longest match
+    # 3. Substring match — collect all candidates, prefer longest match.
+    #    Require the matched term to be at least MIN_SUBSTR_LEN characters
+    #    to prevent very short inputs ("left", "right") from over-matching.
+    MIN_SUBSTR_LEN = 4
     best_canonical: str | None = None
     best_match_len = 0
+
+    # Skip substring fallback entirely for very short inputs — they are
+    # too ambiguous to map reliably.
+    if len(location) < MIN_SUBSTR_LEN:
+        return None
 
     for canonical, synonyms in ANATOMICAL_SYNONYMS.items():
         # Check canonical as substring (either direction)
         if canonical in location or location in canonical:
             match_len = len(canonical)
-            if match_len > best_match_len:
+            if match_len >= MIN_SUBSTR_LEN and match_len > best_match_len:
                 best_match_len = match_len
                 best_canonical = canonical
 
@@ -139,7 +176,7 @@ def get_canonical_region(location: str) -> str | None:
         for syn in synonyms:
             if syn in location or location in syn:
                 match_len = len(syn)
-                if match_len > best_match_len:
+                if match_len >= MIN_SUBSTR_LEN and match_len > best_match_len:
                     best_match_len = match_len
                     best_canonical = canonical
 
@@ -237,6 +274,10 @@ def compute_hierarchy_match(pred: str, ref: str) -> float:
 def compute_token_match(pred: str, ref: str) -> float:
     """Compute token-level overlap for location strings.
 
+    Uses Counter-based (multiset) intersection so that repeating a single
+    matching token dilutes precision, consistent with all other token
+    overlap functions in the codebase.
+
     Args:
         pred: Predicted location
         ref: Reference location
@@ -244,24 +285,27 @@ def compute_token_match(pred: str, ref: str) -> float:
     Returns:
         Token F1 score
     """
-    pred_tokens = set(normalize_location(pred).split())
-    ref_tokens = set(normalize_location(ref).split())
+    from collections import Counter
 
     # Remove common non-informative tokens
     stopwords = {"region", "area", "zone", "side", "aspect"}
-    pred_tokens -= stopwords
-    ref_tokens -= stopwords
 
-    if not pred_tokens or not ref_tokens:
-        return 1.0 if pred_tokens == ref_tokens else 0.0
+    pred_counts = Counter(t for t in normalize_location(pred).split() if t not in stopwords)
+    ref_counts = Counter(t for t in normalize_location(ref).split() if t not in stopwords)
 
-    common = pred_tokens & ref_tokens
+    pred_total = sum(pred_counts.values())
+    ref_total = sum(ref_counts.values())
 
-    if not common:
+    if not pred_total or not ref_total:
+        return 1.0 if pred_total == ref_total else 0.0
+
+    intersection = sum((pred_counts & ref_counts).values())
+
+    if not intersection:
         return 0.0
 
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(ref_tokens)
+    precision = intersection / pred_total
+    recall = intersection / ref_total
 
     return 2 * precision * recall / (precision + recall)
 
@@ -296,11 +340,7 @@ def compute_location_reward(
     # Weighted combination
     weights = {"exact": 0.5, "hierarchy": 0.3, "token": 0.2}
 
-    reward = (
-        weights["exact"] * exact
-        + weights["hierarchy"] * hierarchy
-        + weights["token"] * token
-    )
+    reward = weights["exact"] * exact + weights["hierarchy"] * hierarchy + weights["token"] * token
 
     return {
         "exact_match": exact,

@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from examples.nova.src.rewards import _area_penalty
 from examples.nova.src.rewards import compute_localization_reward
-from radiant_harness.verifiers.rewards import IoUReward
-
+from gaze.verifiers.rewards import IoUReward
 
 # =====================================================================
 # 1. Area penalty helper
@@ -204,7 +201,6 @@ class TestIoURewardAreaPenalty:
         )
         # Step mode gives 1.0, but penalty makes it 0.0
         assert score == 0.0
-
 
 
 # NOTE: rescale_and_clamp_box tests are in test_nova_detection_prompts.py

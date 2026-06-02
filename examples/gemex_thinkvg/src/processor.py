@@ -15,12 +15,12 @@ from typing import Any
 
 from beartype import beartype
 
-from radiant_harness import AgenticProcessorBase
-from radiant_harness import ImageInput
-from radiant_harness import Turn
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import VerifiableProcessorMixin
+from gaze import AgenticProcessorBase
+from gaze import ImageInput
+from gaze import Turn
+from gaze.models import AdapterProtocol
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import VerifiableProcessorMixin
 
 from .rewards import GEMeXVerifiersReward
 from .rewards import RewardWeights

@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.image_search import ImageSearchResult
-from radiant_harness.retrieval.image_search import MedicalImageSearchManager
-from radiant_harness.retrieval.image_search import OpenISearchEngine
+from gaze.retrieval.image_search import ImageSearchError
+from gaze.retrieval.image_search import ImageSearchResult
+from gaze.retrieval.image_search import MedicalImageSearchManager
+from gaze.retrieval.image_search import OpenISearchEngine
 
 # ---------------------------------------------------------------------------
 # ImageSearchResult edge cases

@@ -13,14 +13,14 @@ from typing import Literal
 
 from beartype import beartype
 
-from radiant_harness import AgenticProcessorBase
-from radiant_harness import ImageInput
-from radiant_harness import Turn
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.utils import extract_json_from_text
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import VerifiableProcessorMixin
-from radiant_harness.verifiers import extract_completion_text
+from gaze import AgenticProcessorBase
+from gaze import ImageInput
+from gaze import Turn
+from gaze.models import AdapterProtocol
+from gaze.utils import extract_json_from_text
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import VerifiableProcessorMixin
+from gaze.verifiers import extract_completion_text
 
 from .evaluation import normalize_answer
 from .evaluation import normalize_binary
@@ -188,8 +188,9 @@ class VQARadProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             "Analyze the provided radiology image and answer the question accurately.",
             "",
             "Guidelines:",
-            "- For yes/no questions, answer clearly with 'yes' or 'no'",
-            "- For open-ended questions, provide concise, specific answers",
+            "- For yes/no questions, answer with EXACTLY 'yes' or 'no' (lowercase)",
+            "- For open-ended questions, give a concise, specific answer "
+            "(prefer 1-5 words matching standard medical terminology)",
             "- Base your answer ONLY on what you observe in the image",
             "- Describe the visual evidence supporting your answer",
             "- Identify the anatomical region relevant to the question",

@@ -6,7 +6,8 @@ verifiable rewards (answer, location, bbox).
 
 from __future__ import annotations
 
-from .environment import GEMeXThinkVGToolEnv, load_environment
+from .environment import GEMeXThinkVGToolEnv
+from .environment import load_environment
 
 __all__ = [
     "GEMeXThinkVGToolEnv",

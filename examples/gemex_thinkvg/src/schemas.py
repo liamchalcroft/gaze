@@ -11,8 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from radiant_harness.utils import clamp_confidence
-from radiant_harness.utils import coerce_json_types
+from gaze.utils import clamp_confidence
+from gaze.utils import coerce_json_types
 
 GEMEX_SCHEMA: dict[str, Any] = {
     "type": "json_schema",

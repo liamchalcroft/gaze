@@ -296,7 +296,6 @@ credentials.json
 api_keys.txt
 
 # Docker
-.dockerignore
 docker-compose.override.yml
 *.pid
 
@@ -319,3 +318,18 @@ debug_*
 
 # Agent session data
 .claude/
+.rules
+
+# Browser automation artifacts
+.playwright-mcp/
+
+# Benchmark data
+.benchmarks/
+
+# Generated analysis outputs
+coverage.json
+pyright_output.txt
+texput.log
+
+# Paper project (research artifact, kept out of the public framework repo)
+examples/aiih2026_paper/

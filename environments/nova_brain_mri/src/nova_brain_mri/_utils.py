@@ -1,8 +1,8 @@
 """Inlined utilities for standalone operation.
 
-These are local copies of functions from radiant_harness.utils and
-radiant_harness.verifiers.rewards so that the nova-brain-mri package
-can be installed and evaluated without depending on radiant_harness.
+These are local copies of functions from gaze.utils and
+gaze.verifiers.rewards so that the nova-brain-mri package
+can be installed and evaluated without depending on gaze.
 """
 
 from __future__ import annotations
@@ -153,7 +153,9 @@ def extract_completion_text(completion: Any) -> str:
                     for item in content
                     if isinstance(item, dict) and item.get("type") == "text"
                 ]
-                if texts:
-                    return "\n".join(texts)
+                # Return joined texts, or "" if the assistant message had no
+                # text items (empty multimodal content).  This prevents the
+                # final fallback from stringifying the whole message list.
+                return "\n".join(texts) if texts else ""
 
     return str(completion or "")

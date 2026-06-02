@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.image_search import ImageSearchResult
-from radiant_harness.retrieval.web_search import SearchError
-from radiant_harness.retrieval.web_search import SearchResult
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools import create_search_tools
+from gaze.retrieval.image_search import ImageSearchError
+from gaze.retrieval.image_search import ImageSearchResult
+from gaze.retrieval.web_search import SearchError
+from gaze.retrieval.web_search import SearchResult
+from gaze.tools import ToolRegistry
+from gaze.tools import create_search_tools
 
 
 def _make_registry_with_mock_web(fake_search):
@@ -128,8 +128,8 @@ async def test_search_images_tool_error_propagates() -> None:
 
 def test_search_web_schema_enum_matches_backend() -> None:
     """Schema search_type enum must include all types accepted by WebSearchManager."""
-    from radiant_harness.retrieval.web_search import WebSearchManager
-    from radiant_harness.tools.registry import ToolDocumenter
+    from gaze.retrieval.web_search import WebSearchManager
+    from gaze.tools.registry import ToolDocumenter
 
     tools = create_search_tools()
     doc = ToolDocumenter(tools)
@@ -280,9 +280,9 @@ class TestFormattedOutputSizeLimit:
 
     @pytest.mark.asyncio
     async def test_web_search_output_capped(self) -> None:
-        from radiant_harness.config import HarnessConfig
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.config import config_context
+        from gaze.config import GazeConfig
+        from gaze.config import SearchConfig
+        from gaze.config import config_context
 
         async def fake_search(query, *, search_type="general"):
             return [
@@ -300,7 +300,7 @@ class TestFormattedOutputSizeLimit:
                 for i in range(10)
             ]
 
-        with config_context(HarnessConfig(search=SearchConfig(max_content_for_llm=500))):
+        with config_context(GazeConfig(search=SearchConfig(max_content_for_llm=500))):
             registry = _make_registry_with_mock_web(fake_search)
             result = await registry.execute("search_web", query="test")
 
@@ -310,9 +310,9 @@ class TestFormattedOutputSizeLimit:
 
     @pytest.mark.asyncio
     async def test_image_search_output_capped(self) -> None:
-        from radiant_harness.config import HarnessConfig
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.config import config_context
+        from gaze.config import GazeConfig
+        from gaze.config import SearchConfig
+        from gaze.config import config_context
 
         async def fake_search(query, *, modality=None, body_part=None):
             return [
@@ -327,7 +327,7 @@ class TestFormattedOutputSizeLimit:
                 for i in range(10)
             ]
 
-        with config_context(HarnessConfig(search=SearchConfig(max_content_for_llm=500))):
+        with config_context(GazeConfig(search=SearchConfig(max_content_for_llm=500))):
             registry = _make_registry_with_mock_images(fake_search)
             result = await registry.execute("search_images", query="test")
 
@@ -337,9 +337,9 @@ class TestFormattedOutputSizeLimit:
 
     @pytest.mark.asyncio
     async def test_content_preview_uses_config(self) -> None:
-        from radiant_harness.config import HarnessConfig
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.config import config_context
+        from gaze.config import GazeConfig
+        from gaze.config import SearchConfig
+        from gaze.config import config_context
 
         async def fake_search(query, *, search_type="general"):
             return [
@@ -353,7 +353,7 @@ class TestFormattedOutputSizeLimit:
                 )
             ]
 
-        with config_context(HarnessConfig(search=SearchConfig(max_content_preview_length=50))):
+        with config_context(GazeConfig(search=SearchConfig(max_content_preview_length=50))):
             registry = _make_registry_with_mock_web(fake_search)
             result = await registry.execute("search_web", query="test")
 

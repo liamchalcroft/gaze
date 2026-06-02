@@ -9,12 +9,12 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools import create_visual_tools
-from radiant_harness.tools.registry import ToolDocumenter
-from radiant_harness.types import ToolResult
+from gaze.exceptions import ToolExecutionError
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.tools import create_visual_tools
+from gaze.tools.registry import ToolDocumenter
+from gaze.types import ToolResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,7 +159,7 @@ class TestRegistryLazyManagers:
         mgr1 = registry.get_web_search_manager()
         mgr2 = registry.get_web_search_manager()
         assert mgr1 is mgr2  # cached
-        from radiant_harness.retrieval.web_search import WebSearchManager
+        from gaze.retrieval.web_search import WebSearchManager
 
         assert isinstance(mgr1, WebSearchManager)
 
@@ -168,7 +168,7 @@ class TestRegistryLazyManagers:
         mgr1 = registry.get_image_search_manager()
         mgr2 = registry.get_image_search_manager()
         assert mgr1 is mgr2
-        from radiant_harness.retrieval.image_search import MedicalImageSearchManager
+        from gaze.retrieval.image_search import MedicalImageSearchManager
 
         assert isinstance(mgr1, MedicalImageSearchManager)
 
@@ -237,7 +237,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch("radiant_harness.tools.visual.crop_image", side_effect=ValueError("bad crop")),
+            patch("gaze.tools.visual.crop_image", side_effect=ValueError("bad crop")),
             pytest.raises(ToolExecutionError, match="Invalid crop region"),
         ):
             await registry.execute("crop", box=[0.1, 0.1, 0.9, 0.9])
@@ -246,7 +246,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch("radiant_harness.tools.visual.adjust_contrast", side_effect=ValueError("bad")),
+            patch("gaze.tools.visual.adjust_contrast", side_effect=ValueError("bad")),
             pytest.raises(ToolExecutionError, match="Invalid contrast factor"),
         ):
             await registry.execute("adjust_contrast", factor=1.5)
@@ -256,7 +256,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.apply_intensity_threshold",
+                "gaze.tools.visual.apply_intensity_threshold",
                 side_effect=ValueError("bad"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid threshold"),
@@ -267,7 +267,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch("radiant_harness.tools.visual.adjust_brightness", side_effect=ValueError("bad")),
+            patch("gaze.tools.visual.adjust_brightness", side_effect=ValueError("bad")),
             pytest.raises(ToolExecutionError, match="Invalid brightness factor"),
         ):
             await registry.execute("adjust_brightness", factor=1.5)
@@ -276,7 +276,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch("radiant_harness.tools.visual.adjust_sharpness", side_effect=ValueError("bad")),
+            patch("gaze.tools.visual.adjust_sharpness", side_effect=ValueError("bad")),
             pytest.raises(ToolExecutionError, match="Invalid sharpness factor"),
         ):
             await registry.execute("adjust_sharpness", factor=1.5)
@@ -286,7 +286,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.get_intensity_stats",
+                "gaze.tools.visual.get_intensity_stats",
                 side_effect=ValueError("bad box"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid box"),
@@ -297,9 +297,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch(
-                "radiant_harness.tools.visual.measure_distance", side_effect=ValueError("bad pts")
-            ),
+            patch("gaze.tools.visual.measure_distance", side_effect=ValueError("bad pts")),
             pytest.raises(ToolExecutionError, match="Invalid measurement"),
         ):
             await registry.execute("measure", point1=[0.1, 0.1], point2=[0.9, 0.9])
@@ -309,7 +307,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.draw_grid_overlay",
+                "gaze.tools.visual.draw_grid_overlay",
                 side_effect=ValueError("bad grid"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid grid"),
@@ -320,9 +318,7 @@ class TestVisualToolErrors:
         tools = create_visual_tools()
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
-            patch(
-                "radiant_harness.tools.visual.detect_edges", side_effect=ValueError("bad method")
-            ),
+            patch("gaze.tools.visual.detect_edges", side_effect=ValueError("bad method")),
             pytest.raises(ToolExecutionError, match="Invalid edge detection"),
         ):
             await registry.execute("detect_edges", method="sobel")
@@ -332,7 +328,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.annotate_region",
+                "gaze.tools.visual.annotate_region",
                 side_effect=ValueError("bad annot"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid annotation"),
@@ -344,7 +340,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.compute_intensity_profile",
+                "gaze.tools.visual.compute_intensity_profile",
                 side_effect=ValueError("bad pts"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid profile"),
@@ -356,7 +352,7 @@ class TestVisualToolErrors:
         registry = ToolRegistry(image_path=_save_image(tmp_path), tools=tools)
         with (
             patch(
-                "radiant_harness.tools.visual.denoise_gaussian",
+                "gaze.tools.visual.denoise_gaussian",
                 side_effect=ValueError("bad sigma"),
             ),
             pytest.raises(ToolExecutionError, match="Invalid denoise"),

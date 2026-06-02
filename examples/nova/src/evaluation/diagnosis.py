@@ -44,6 +44,15 @@ def _get_semantic_match_client() -> Any:
 
     custom_base_url = os.getenv("NOVA_SEMANTIC_MATCH_BASE_URL")
     if custom_base_url:
+        # Validate scheme — only http (local inference) and https are safe.
+        from urllib.parse import urlparse as _urlparse
+
+        _scheme = _urlparse(custom_base_url).scheme
+        if _scheme not in ("http", "https"):
+            raise ValueError(
+                f"NOVA_SEMANTIC_MATCH_BASE_URL must use http:// or https://, got {_scheme!r}"
+            )
+
         # Local server — use dummy API key, custom base URL
         api_key = os.getenv("OPENAI_API_KEY", "lm-studio")
         _semantic_match_client = AsyncOpenAI(
@@ -246,6 +255,7 @@ async def llm_semantic_match_async(
     ref: str,
     model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
     num_votes: int = 1,
+    seed: int | None = None,
 ) -> tuple[bool, JudgmentRecord]:
     """
     Use LLM semantic matching between prediction and reference diagnosis (async).
@@ -260,6 +270,7 @@ async def llm_semantic_match_async(
         model_name: Model to use for semantic matching.
         num_votes: Number of LLM calls to make. When >1, uses majority vote
             to mitigate non-determinism. Must be odd for a clear majority.
+        seed: Random seed for API calls (reproducibility).
 
     Returns:
         Tuple of (verdict, JudgmentRecord) for audit logging.
@@ -306,22 +317,27 @@ or "NO" if they refer to different conditions.
     async def _single_call() -> str:
         # Use 1024 tokens — thinking models (Qwen3.5, etc.) need ~400
         # tokens of reasoning before producing the YES/NO answer.
-        response = await client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.0,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": 1024,
+            "temperature": 0.0,
+        }
+        if seed is not None:
+            create_kwargs["seed"] = seed
+        response = await client.chat.completions.create(**create_kwargs)
+        if not response or not response.choices:
+            logger.warning("LLM returned no choices for diagnosis match, retrying once")
+            response = await client.chat.completions.create(**create_kwargs)
+        if not response or not response.choices:
+            return "NO"
         raw = (response.choices[0].message.content or "").strip()
         # Retry once on empty response (common with local LLMs)
         if raw == "":
             logger.warning("LLM returned empty response for diagnosis match, retrying once")
-            response = await client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                max_tokens=1024,
-                temperature=0.0,
-            )
+            response = await client.chat.completions.create(**create_kwargs)
+            if not response or not response.choices:
+                return "NO"
             raw = (response.choices[0].message.content or "").strip()
         # Thinking models may wrap the answer in extra text.
         # Extract the last YES or NO token.
@@ -378,6 +394,7 @@ def llm_semantic_match(
     ref: str,
     model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
     num_votes: int = 1,
+    seed: int | None = None,
 ) -> tuple[bool, JudgmentRecord]:
     """
     Synchronous wrapper for LLM semantic matching.
@@ -404,7 +421,7 @@ def llm_semantic_match(
             "Use llm_semantic_match_async instead."
         )
 
-    return asyncio.run(llm_semantic_match_async(pred, ref, model_name, num_votes))
+    return asyncio.run(llm_semantic_match_async(pred, ref, model_name, num_votes, seed=seed))
 
 
 @beartype
@@ -413,6 +430,7 @@ async def evaluate_diagnosis_nova_official(
     refs: Sequence[Any],
     model_name: str = DEFAULT_SEMANTIC_MATCH_MODEL,
     num_votes: int = 1,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """
     Official NOVA diagnosis evaluation using LLM semantic matching (async).
@@ -427,6 +445,7 @@ async def evaluate_diagnosis_nova_official(
         model_name: Model to use for semantic matching.
         num_votes: Number of LLM calls per judgment. When >1, uses majority
             vote to mitigate non-determinism. Must be odd.
+        seed: Random seed for API calls (reproducibility).
 
     Returns:
         Dictionary with keys 'top1', 'top5', 'coverage', 'entropy', and
@@ -494,7 +513,13 @@ async def evaluate_diagnosis_nova_official(
                 )
                 return True
         async with sem:
-            verdict, record = await llm_semantic_match_async(pred, ref, model_name, num_votes)
+            verdict, record = await llm_semantic_match_async(
+                pred,
+                ref,
+                model_name,
+                num_votes,
+                seed=seed,
+            )
             judgment_log.add(record)
             return verdict
 

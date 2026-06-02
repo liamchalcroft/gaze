@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from radiant_harness.config import SearchConfig
-from radiant_harness.exceptions import HarnessError
-from radiant_harness.retrieval.web_search import PubMedSearchEngine
-from radiant_harness.retrieval.web_search import SearchError
-from radiant_harness.retrieval.web_search import SearchResult
-from radiant_harness.retrieval.web_search import WebSearchManager
+from gaze.config import SearchConfig
+from gaze.exceptions import GazeError
+from gaze.retrieval.web_search import PubMedSearchEngine
+from gaze.retrieval.web_search import SearchError
+from gaze.retrieval.web_search import SearchResult
+from gaze.retrieval.web_search import WebSearchManager
 
 
 class TestSearchConfigValidation:
@@ -169,11 +169,11 @@ class TestWebSearchManager:
 
 
 class TestSearchErrorHierarchy:
-    """SearchError must be part of the HarnessError hierarchy."""
+    """SearchError must be part of the GazeError hierarchy."""
 
     def test_search_error_is_harness_error(self) -> None:
         err = SearchError("PubMed", "test error")
-        assert isinstance(err, HarnessError)
+        assert isinstance(err, GazeError)
 
     def test_search_error_preserves_fields(self) -> None:
         cause = RuntimeError("cause")
@@ -289,7 +289,7 @@ class TestNCBIParamsOnAllRequests:
         assert len(captured_params) >= 2
         for params in captured_params:
             assert "tool" in params, f"Missing 'tool' param in {params}"
-            assert params["tool"] == "radiant_harness"
+            assert params["tool"] == "gaze"
             assert "email" in params, f"Missing 'email' param in {params}"
             assert params["email"] == "test@example.com"
 
@@ -439,18 +439,18 @@ class TestPubMedUserAgent:
     """PubMed must identify itself honestly per NCBI E-utilities guidelines."""
 
     def test_ua_contains_tool_name(self) -> None:
-        """User-Agent header must include 'radiant_harness'."""
+        """User-Agent header must include 'gaze'."""
         engine = PubMedSearchEngine()
         headers = engine._get_headers()
-        assert "radiant_harness" in headers["User-Agent"]
+        assert "gaze" in headers["User-Agent"]
 
     def test_ua_contains_version(self) -> None:
         """User-Agent header must include the package version."""
-        import radiant_harness
+        import gaze
 
         engine = PubMedSearchEngine()
         headers = engine._get_headers()
-        assert radiant_harness.__version__ in headers["User-Agent"]
+        assert gaze.__version__ in headers["User-Agent"]
 
     def test_ua_does_not_impersonate_browser(self) -> None:
         """PubMed UA must not contain browser-impersonation strings."""
@@ -463,7 +463,7 @@ class TestPubMedUserAgent:
 
     def test_ua_includes_email_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """UA should include mailto: when NCBI_EMAIL is configured."""
-        from radiant_harness.retrieval import web_search
+        from gaze.retrieval import web_search
 
         # Clear the lru_cache so the monkeypatched env var takes effect
         web_search._get_ncbi_email.cache_clear()
@@ -477,7 +477,7 @@ class TestPubMedUserAgent:
 
     def test_ua_omits_email_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """UA should not contain 'mailto' when NCBI_EMAIL is not set."""
-        from radiant_harness.retrieval import web_search
+        from gaze.retrieval import web_search
 
         web_search._get_ncbi_email.cache_clear()
         monkeypatch.delenv("NCBI_EMAIL", raising=False)
@@ -657,7 +657,7 @@ class TestDiagnosisContentTypeBoosts:
 
     def test_diagnosis_boosts_follow_evidence_hierarchy(self) -> None:
         """content_type_boosts for 'diagnosis': guidelines > review > article > case_report."""
-        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
+        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
         boosts = _CONTENT_TYPE_BOOSTS["diagnosis"]
         assert boosts["guidelines"] > boosts["review"]
@@ -867,7 +867,7 @@ class TestBigramPhraseMatching:
 
     def test_phrase_match_weight_is_positive(self) -> None:
         """_PHRASE_MATCH_WEIGHT must be a positive float."""
-        from radiant_harness.retrieval.web_search import _PHRASE_MATCH_WEIGHT
+        from gaze.retrieval.web_search import _PHRASE_MATCH_WEIGHT
 
         assert _PHRASE_MATCH_WEIGHT > 0
 
@@ -960,14 +960,14 @@ class TestTreatmentDifferentialBoosts:
     """Treatment and differential search types must have content_type_boosts."""
 
     def test_treatment_boosts_exist(self) -> None:
-        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
+        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
         boosts = _CONTENT_TYPE_BOOSTS
         assert "treatment" in boosts
         assert boosts["treatment"]["guidelines"] > boosts["treatment"]["case_report"]
 
     def test_differential_boosts_exist(self) -> None:
-        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
+        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
         boosts = _CONTENT_TYPE_BOOSTS
         assert "differential" in boosts
@@ -1010,7 +1010,7 @@ class TestTreatmentDifferentialBoosts:
 
     def test_all_search_types_have_boosts(self) -> None:
         """Every allowed search type should have at least partial boosts."""
-        from radiant_harness.retrieval.web_search import _CONTENT_TYPE_BOOSTS
+        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
 
         boosts = _CONTENT_TYPE_BOOSTS
         # "general" intentionally has no boosts — it's the catch-all
@@ -1181,7 +1181,7 @@ class TestEfetchRetry:
 
         with (
             patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
-            patch("radiant_harness.retrieval.web_search.logger") as mock_logger,
+            patch("gaze.retrieval.web_search.logger") as mock_logger,
         ):
             mock_logger.warning = capture_warning
             mock_logger.debug = capture_warning
@@ -1225,7 +1225,7 @@ class TestPubMedConsolidatedSleep:
         engine._fetch_summary = _fake_summary  # type: ignore[assignment]
         engine._fetch_abstracts = _fake_abstracts  # type: ignore[assignment]
 
-        with mock_patch("radiant_harness.retrieval.web_search.asyncio.sleep", _mock_sleep):
+        with mock_patch("gaze.retrieval.web_search.asyncio.sleep", _mock_sleep):
             await engine._fetch_article_details(["12345"])
 
         assert len(sleep_calls) == 1
@@ -1353,7 +1353,7 @@ class TestEvidenceTierAdjustments:
     """Verify that content_type affects reliability_score for PubMed articles."""
 
     def test_tier_constants_defined(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         assert "guidelines" in EVIDENCE_TIER_ADJUSTMENTS
         assert "review" in EVIDENCE_TIER_ADJUSTMENTS
@@ -1361,31 +1361,31 @@ class TestEvidenceTierAdjustments:
         assert "case_report" in EVIDENCE_TIER_ADJUSTMENTS
 
     def test_guidelines_highest(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["review"]
         assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["article"]
         assert EVIDENCE_TIER_ADJUSTMENTS["guidelines"] > EVIDENCE_TIER_ADJUSTMENTS["case_report"]
 
     def test_case_report_lowest(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < EVIDENCE_TIER_ADJUSTMENTS["article"]
         assert EVIDENCE_TIER_ADJUSTMENTS["case_report"] < 0
 
     def test_article_is_baseline(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         assert EVIDENCE_TIER_ADJUSTMENTS["article"] == 0.0
 
     def test_adjustments_are_small(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         for adj in EVIDENCE_TIER_ADJUSTMENTS.values():
             assert abs(adj) <= 0.10, f"Tier adjustment {adj} is too large"
 
     def test_guideline_higher_than_case_report(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         engine = PubMedSearchEngine()
         base = engine._calculate_reliability("https://pubmed.ncbi.nlm.nih.gov/12345/")
@@ -1394,7 +1394,7 @@ class TestEvidenceTierAdjustments:
         assert guideline_score > case_report_score
 
     def test_classify_content_type_returns_valid_keys(self) -> None:
-        from radiant_harness.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
+        from gaze.retrieval.web_search import EVIDENCE_TIER_ADJUSTMENTS
 
         engine = PubMedSearchEngine()
         for pt_list, expected in [

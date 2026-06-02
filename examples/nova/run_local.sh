@@ -2,7 +2,7 @@
 # Run local model evaluation: single-turn then agentic.
 # Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]
 #   MODEL       required — e.g. qwen3.5-35b-a3b, glm-4.6v-flash, medgemma-1.5-4b-it
-#   BASE_URL    defaults to http://192.168.1.138:1234/v1
+#   BASE_URL    defaults to http://localhost:1234/v1
 #   MAX_SAMPLES defaults to 50 (0 = all)
 #
 # NOTE: Only load one model in LM Studio at a time. The health-check probe
@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 MODEL="${1:?Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]}"
-BASE_URL="${2:-http://192.168.1.138:1234/v1}"
+BASE_URL="${2:-http://localhost:1234/v1}"
 MAX_SAMPLES="${3:-50}"
 RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 
@@ -56,7 +56,9 @@ uv run --extra nova python -m examples.nova.src.cli \
 echo ""
 
 # --- Agentic (with tools) ---
-AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__tools__10t__all"
+# max-turns=5: prevents rote tool exhaustion (baseline avg was 18.9/19 turns
+# with every tool called in fixed order — no benefit beyond 3-5 focused tools).
+AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__tools__5t__all"
 echo "--- Agentic run -> ${AGENTIC_DIR} ---"
 uv run --extra nova python -m examples.nova.src.cli \
   --model "${MODEL}" \
@@ -64,7 +66,7 @@ uv run --extra nova python -m examples.nova.src.cli \
   --task all \
   --mode agentic \
   --use-tools \
-  --max-turns 10 \
+  --max-turns 5 \
   --max-samples "${MAX_SAMPLES}" \
   --max-tokens 8192 \
   --max-image-dim 256 \

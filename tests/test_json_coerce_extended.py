@@ -1,4 +1,4 @@
-"""Extended tests for radiant_harness.utils.json_coerce — covering uncovered branches.
+"""Extended tests for gaze.utils.json_coerce — covering uncovered branches.
 
 Targets lines 31-34 (integer from string), 37-39 (boolean from string),
 42 (array from string), 51-54 (array items integer coercion), 58 (non-coercible
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from radiant_harness.utils.json_coerce import _coerce_value
-from radiant_harness.utils.json_coerce import coerce_json_types
+from gaze.utils.json_coerce import _coerce_value
+from gaze.utils.json_coerce import coerce_json_types
 
 # ---------------------------------------------------------------------------
 # _coerce_value: number from string with whitespace

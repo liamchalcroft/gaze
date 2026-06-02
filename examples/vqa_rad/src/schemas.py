@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from radiant_harness.utils import clamp_confidence
-from radiant_harness.utils import coerce_json_types
+from gaze.utils import clamp_confidence
+from gaze.utils import coerce_json_types
 
 VQA_RAD_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
@@ -114,6 +114,11 @@ def validate_vqa_rad_response(response: dict[str, Any]) -> bool:
     roi = response.get("region_of_interest")
     if isinstance(roi, str):
         response["region_of_interest"] = {"description": roi, "location": "unknown"}
+    elif isinstance(roi, list):
+        response["region_of_interest"] = {
+            "description": f"bounding box {roi}",
+            "location": "unknown",
+        }
     elif isinstance(roi, dict):
         if "description" not in roi:
             # Local models often use alternative keys like "anatomical_structure"

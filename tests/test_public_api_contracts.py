@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from radiant_harness.__main__ import main
-from radiant_harness.exceptions import AgenticProcessingError
-from radiant_harness.exceptions import SchemaValidationError
+from gaze.__main__ import main
+from gaze.exceptions import AgenticProcessingError
+from gaze.exceptions import SchemaValidationError
 
 
 def test_schema_validation_error_is_agentic_processing_error() -> None:
@@ -49,31 +49,31 @@ def test_nova_example_lazy_exports_are_listed_in_all() -> None:
 
 def test_lazy_import_huggingface_adapter() -> None:
     """HuggingFaceAdapter is listed in __all__ and accessible via __getattr__."""
-    import radiant_harness
+    import gaze
 
-    assert "HuggingFaceAdapter" in radiant_harness.__all__
+    assert "HuggingFaceAdapter" in gaze.__all__
     import contextlib
 
     with contextlib.suppress(ImportError):
-        _ = radiant_harness.HuggingFaceAdapter
+        _ = gaze.HuggingFaceAdapter
 
 
 def test_lazy_import_huggingface_vlm_adapter() -> None:
     """HuggingFaceVLMAdapter is listed in __all__ and accessible via __getattr__."""
-    import radiant_harness
+    import gaze
 
-    assert "HuggingFaceVLMAdapter" in radiant_harness.__all__
+    assert "HuggingFaceVLMAdapter" in gaze.__all__
     import contextlib
 
     with contextlib.suppress(ImportError):
-        _ = radiant_harness.HuggingFaceVLMAdapter
+        _ = gaze.HuggingFaceVLMAdapter
 
 
 def test_getattr_raises_attribute_error_for_unknown() -> None:
     """Accessing a non-existent attribute should raise AttributeError, not silently return None."""
     import pytest
 
-    import radiant_harness
+    import gaze
 
     with pytest.raises(AttributeError, match="has no attribute"):
-        _ = radiant_harness.NoSuchAdapter
+        _ = gaze.NoSuchAdapter

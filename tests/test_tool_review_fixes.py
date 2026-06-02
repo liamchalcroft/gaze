@@ -10,14 +10,14 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools.registry import ToolDocumenter
-from radiant_harness.tools.visual import WINDOW_PRESETS
-from radiant_harness.tools.visual import adaptive_equalize
-from radiant_harness.tools.visual import apply_window_level
-from radiant_harness.tools.visual import create_visual_tools
+from gaze.config import ImageProcessingConfig
+from gaze.exceptions import ToolExecutionError
+from gaze.tools import ToolRegistry
+from gaze.tools.registry import ToolDocumenter
+from gaze.tools.visual import WINDOW_PRESETS
+from gaze.tools.visual import adaptive_equalize
+from gaze.tools.visual import apply_window_level
+from gaze.tools.visual import create_visual_tools
 
 
 def _create_test_image(tmp_path: Path, size: tuple[int, int] = (64, 64)) -> Path:

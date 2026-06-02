@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from beartype import beartype
 from huggingface_hub import snapshot_download
@@ -51,9 +50,7 @@ class NovaDataset:
             logger.info(f"Using local NOVA data from {self._repo_dir}")
         else:
             logger.info(f"Downloading NOVA dataset from {HF_REPO_ID}...")
-            self._repo_dir = Path(
-                snapshot_download(HF_REPO_ID, repo_type="dataset")
-            )
+            self._repo_dir = Path(snapshot_download(HF_REPO_ID, repo_type="dataset"))
             logger.info(f"NOVA dataset cached at {self._repo_dir}")
 
         # Load the parquet which contains all metadata and ground truth

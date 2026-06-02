@@ -4,7 +4,7 @@ Visual grounding with chain-of-thought reasoning for chest X-ray analysis using 
 
 ## Overview
 
-This example demonstrates reinforcement learning fine-tuning using the Radiant Harness framework with the **verifiers** package for multi-rollout training. The GEMeX-ThinkVG task requires models to:
+This example demonstrates reinforcement learning fine-tuning using the GAZE framework with the **verifiers** package for multi-rollout training. The GEMeX-ThinkVG task requires models to:
 
 1. **Analyze** chest X-ray images with visual reasoning
 2. **Use tools** for zoom, crop, contrast, threshold, and search
@@ -67,7 +67,7 @@ The GEMeX dataset references chest X-rays from MIMIC-CXR-JPG, which requires cre
 The dataset loader automatically handles MIMIC-CXR path resolution:
 
 ```python
-from src.dataset import GEMeXDataset
+from examples.gemex_thinkvg.src import GEMeXDataset
 
 dataset = GEMeXDataset(
     mimic_cxr_root="/path/to/mimic-cxr-jpg",
@@ -108,7 +108,7 @@ uv run python -m examples.gemex_thinkvg.eval \
     --dataset ./data/test.jsonl \
     --image-dir /path/to/mimic-cxr-jpg \
     --model qwen3.5-a3b \
-    --base-url http://192.168.1.138:1234/v1 \
+    --base-url http://localhost:1234/v1 \
     --mode agentic \
     --use-tools \
     --output ./results
@@ -233,10 +233,10 @@ env = load_environment(dataset_path="gemex_train.jsonl")
 ## References
 
 - [GEMeX-ThinkVG Dataset](https://huggingface.co/datasets/BoKelvin/GEMeX-ThinkVG)
-- [MIMIC-CXR-JPG Dataset](https://physionet.org/content/mimic-cxr-jpg/2.0.0/)
+- [MIMIC-CXR-JPG Dataset](https://physionet.org/content/mimic-cxr-jpg/2.1.0/)
 - [Verifiers Documentation](https://docs.primeintellect.ai/verifiers)
-- [Radiant Harness](https://github.com/liamchalcroft/radiant_harness)
+- [GAZE](https://github.com/liamchalcroft/gaze)
 
 ## License
 
-This example follows the license terms of the Radiant Harness framework.
+This example follows the license terms of the GAZE framework.

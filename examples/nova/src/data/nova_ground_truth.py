@@ -21,7 +21,9 @@ HF_REPO_ID = "c-i-ber/Nova"
 class GroundTruthLocalization:
     """Ground truth localization data."""
 
-    bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) - converted from dataset's (x, y, width, height)
+    bbox: tuple[
+        float, float, float, float
+    ]  # (x1, y1, x2, y2) - converted from dataset's (x, y, width, height)
 
 
 @dataclass
@@ -155,9 +157,9 @@ class NovaGroundTruth:
 
                 bbox = GroundTruthLocalization(
                     bbox=(
-                        x,           # x1
-                        y,           # y1
-                        x + width,   # x2
+                        x,  # x1
+                        y,  # y1
+                        x + width,  # x2
                         y + height,  # y2
                     )
                 )

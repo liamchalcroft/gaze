@@ -24,17 +24,81 @@ NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
 # Stopwords that inflate token overlap without carrying semantic content.
 # Must stay in sync with examples/nova/src/rewards.py._CAPTION_STOPWORDS.
-_CAPTION_STOPWORDS: frozenset[str] = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
-    "should", "may", "might", "must", "can", "could",
-    "i", "me", "my", "we", "our", "you", "your",
-    "he", "she", "it", "they", "them", "his", "her", "its", "their",
-    "this", "that", "these", "those",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
-    "into", "about", "between", "through", "during", "before", "after",
-    "and", "or", "but", "nor", "not", "no", "so", "if", "then",
-})
+_CAPTION_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "could",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
+        "his",
+        "her",
+        "its",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "into",
+        "about",
+        "between",
+        "through",
+        "during",
+        "before",
+        "after",
+        "and",
+        "or",
+        "but",
+        "nor",
+        "not",
+        "no",
+        "so",
+        "if",
+        "then",
+    }
+)
 
 # Must stay in sync with examples/nova/src/rewards.py._ABBREVIATION_MAPPING.
 _ABBREVIATION_MAPPING: dict[str, str] = {
@@ -164,12 +228,10 @@ def caption_reward(
         return 0.0
 
     pred_tokens = Counter(
-        t for t in re.findall(r"\b\w+\b", str(pred_caption).lower())
-        if t not in _CAPTION_STOPWORDS
+        t for t in re.findall(r"\b\w+\b", str(pred_caption).lower()) if t not in _CAPTION_STOPWORDS
     )
     ref_tokens = Counter(
-        t for t in re.findall(r"\b\w+\b", str(ref_caption).lower())
-        if t not in _CAPTION_STOPWORDS
+        t for t in re.findall(r"\b\w+\b", str(ref_caption).lower()) if t not in _CAPTION_STOPWORDS
     )
 
     # Both empty after stopword filtering = trivial match (aligned with core TokenF1Reward)

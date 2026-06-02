@@ -15,13 +15,13 @@ from typing import Literal
 
 from beartype import beartype
 
-from radiant_harness import AgenticProcessorBase
-from radiant_harness import ImageInput
-from radiant_harness import Turn
-from radiant_harness import create_prompt
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import VerifiableProcessorMixin
+from gaze import AgenticProcessorBase
+from gaze import ImageInput
+from gaze import Turn
+from gaze import create_prompt
+from gaze.models import AdapterProtocol
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import VerifiableProcessorMixin
 
 from .config import ConfidenceConfig
 from .rewards import NOVAVerifiersReward

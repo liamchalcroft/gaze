@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from radiant_harness.exceptions import HarnessError
-from radiant_harness.retrieval.base import BaseSearchEngine
-from radiant_harness.retrieval.base import SearchEngineError
-from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.web_search import SearchError
+from gaze.exceptions import GazeError
+from gaze.retrieval.base import BaseSearchEngine
+from gaze.retrieval.base import SearchEngineError
+from gaze.retrieval.image_search import ImageSearchError
+from gaze.retrieval.web_search import SearchError
 
 
 # ---------------------------------------------------------------------------
 # SearchEngineError hierarchy
 # ---------------------------------------------------------------------------
 class TestSearchEngineErrorHierarchy:
-    """SearchEngineError must be part of the HarnessError hierarchy."""
+    """SearchEngineError must be part of the GazeError hierarchy."""
 
     def test_base_is_harness_error(self) -> None:
         err = SearchEngineError("engine", "message")
-        assert isinstance(err, HarnessError)
+        assert isinstance(err, GazeError)
 
     def test_search_error_is_search_engine_error(self) -> None:
         err = SearchError("PubMed", "fail")
@@ -61,13 +61,13 @@ class TestConcreteSubclass:
     """A minimal concrete subclass should work."""
 
     def test_concrete_web_engine_can_be_created(self) -> None:
-        from radiant_harness.retrieval.web_search import PubMedSearchEngine
+        from gaze.retrieval.web_search import PubMedSearchEngine
 
         engine = PubMedSearchEngine()
         assert engine.name == "PubMed"
 
     def test_concrete_image_engine_can_be_created(self) -> None:
-        from radiant_harness.retrieval.image_search import OpenISearchEngine
+        from gaze.retrieval.image_search import OpenISearchEngine
 
         engine = OpenISearchEngine()
         assert engine.name == "Open-i"
@@ -81,8 +81,8 @@ class TestRetryUsesConcreteError:
 
     @pytest.mark.asyncio
     async def test_web_engine_raises_search_error(self) -> None:
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.retrieval.web_search import PubMedSearchEngine
+        from gaze.config import SearchConfig
+        from gaze.retrieval.web_search import PubMedSearchEngine
 
         engine = PubMedSearchEngine(config=SearchConfig(max_retries=1, timeout_seconds=1))
 
@@ -100,8 +100,8 @@ class TestRetryUsesConcreteError:
 
     @pytest.mark.asyncio
     async def test_image_engine_raises_image_search_error(self) -> None:
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.retrieval.image_search import OpenISearchEngine
+        from gaze.config import SearchConfig
+        from gaze.retrieval.image_search import OpenISearchEngine
 
         engine = OpenISearchEngine(config=SearchConfig(max_retries=1, timeout_seconds=1))
 

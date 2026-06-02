@@ -1,4 +1,4 @@
-"""Extended tests for radiant_harness.retrieval.web_search — covering uncovered lines.
+"""Extended tests for gaze.retrieval.web_search — covering uncovered lines.
 
 Targets: reliability scoring for .edu/.gov/publisher domains (lines 115, 123),
 _fetch_article_details (lines 265-322), WebSearchManager.search query variant
@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.retrieval.web_search import PubMedSearchEngine
-from radiant_harness.retrieval.web_search import SearchError
-from radiant_harness.retrieval.web_search import SearchResult
-from radiant_harness.retrieval.web_search import WebSearchManager
+from gaze.retrieval.web_search import PubMedSearchEngine
+from gaze.retrieval.web_search import SearchError
+from gaze.retrieval.web_search import SearchResult
+from gaze.retrieval.web_search import WebSearchManager
 
 # ---------------------------------------------------------------------------
 # Reliability scoring — .edu, .gov, publisher domains (lines 112-123)

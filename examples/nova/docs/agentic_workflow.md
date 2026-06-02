@@ -115,7 +115,7 @@ Returns `AgenticResult`.
 | `search_images` | `query, modality, body_part` | Open-i image search |
 
 ```python
-from radiant_harness import ToolRegistry, create_visual_tools, create_search_tools
+from gaze import ToolRegistry, create_visual_tools, create_search_tools
 
 tools = create_visual_tools() + create_search_tools()
 registry = ToolRegistry(image_path=image_path, tools=tools)
@@ -179,7 +179,7 @@ class Turn:
 PubMed search via NCBI E-utilities with reliability scoring. Search is invoked through the tool system:
 
 ```python
-from radiant_harness import ToolRegistry, create_visual_tools, create_search_tools
+from gaze import ToolRegistry, create_visual_tools, create_search_tools
 
 tools = create_visual_tools() + create_search_tools()
 registry = ToolRegistry(image_path=image_path, tools=tools)

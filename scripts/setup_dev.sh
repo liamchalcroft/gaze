@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Development setup script for Radiant Harness
+# Development setup script for GAZE
 
 set -euo pipefail
 
-echo "🚀 Setting up Radiant Harness development environment..."
+echo "🚀 Setting up GAZE development environment..."
 
 # Check if uv is installed
 if ! command -v uv &> /dev/null; then

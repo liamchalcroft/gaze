@@ -39,6 +39,30 @@ def normalize_binary(answer: str) -> str | None:
     return None
 
 
+# Common medical synonyms in VQA-RAD answers — normalize to the most
+# frequent form in the dataset so that semantically equivalent answers
+# are not penalised by exact/token matching.
+_MEDICAL_SYNONYMS: dict[str, str] = {
+    "hemorrhage": "bleeding",
+    "haemorrhage": "bleeding",
+    "carcinoma": "cancer",
+    "neoplasm": "tumor",
+    "tumour": "tumor",
+    "oedema": "edema",
+    "myocardial infarction": "heart attack",
+    "cerebrovascular accident": "stroke",
+    "fracture": "broken bone",
+    "pneumothorax": "collapsed lung",
+    "pulmonary embolism": "pe",
+    "ct scan": "ct",
+    "computed tomography": "ct",
+    "magnetic resonance imaging": "mri",
+    "x ray": "xray",
+    "chest x ray": "chest xray",
+    "abdominal": "abdomen",
+}
+
+
 @beartype
 def normalize_answer(answer: str) -> str:
     """Normalize answer string for comparison.
@@ -47,7 +71,7 @@ def normalize_answer(answer: str) -> str:
         answer: Raw answer string
 
     Returns:
-        Normalized lowercase answer
+        Normalized lowercase answer with medical synonym substitution
     """
     # Lowercase and strip whitespace
     answer = answer.lower().strip()
@@ -60,6 +84,10 @@ def normalize_answer(answer: str) -> str:
 
     # Collapse whitespace
     answer = " ".join(answer.split())
+
+    # Apply medical synonym normalization (longer phrases first)
+    for term, replacement in sorted(_MEDICAL_SYNONYMS.items(), key=lambda x: -len(x[0])):
+        answer = re.sub(r"\b" + re.escape(term) + r"\b", replacement, answer)
 
     return answer
 
@@ -160,9 +188,7 @@ def evaluate_vqa_rad(
         open_matches: list[bool] = []
         open_f1s: list[float] = []
 
-        for i, (pred, ref, t) in enumerate(
-            zip(predictions, references, answer_types, strict=True)
-        ):
+        for i, (pred, ref, t) in enumerate(zip(predictions, references, answer_types, strict=True)):
             if t == "closed":
                 # Use normalize_binary for closed questions (first-token
                 # yes/no extraction) to match the reward function and

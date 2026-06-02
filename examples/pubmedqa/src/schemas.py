@@ -6,26 +6,40 @@ plus canonical answer normalization shared by evaluation and reward code.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from radiant_harness.utils import clamp_confidence
-from radiant_harness.utils import coerce_json_types
+from gaze.utils import clamp_confidence
+from gaze.utils import coerce_json_types
+
+_YES_ALIASES = {"yes", "y", "true", "positive"}
+_NO_ALIASES = {"no", "n", "false", "negative"}
+_MAYBE_ALIASES = {"maybe", "uncertain", "unclear", "unknown"}
 
 
 def normalize_pubmedqa_answer(answer: str) -> str:
     """Normalize a PubmedQA answer to canonical form.
 
-    Maps common variations to yes/no/maybe. This is the single source
-    of truth used by both evaluation metrics and the RL reward function.
+    Maps common variations to yes/no/maybe. Also extracts the answer
+    word from sentence-form responses that local models sometimes produce
+    (e.g. "Yes, based on the evidence..." → "yes").
+
+    This is the single source of truth used by both evaluation metrics
+    and the RL reward function.
     """
-    answer = answer.lower().strip()
-    if answer in {"yes", "y", "true", "positive"}:
+    answer = answer.lower().strip().rstrip(".,;:")
+    if answer in _YES_ALIASES:
         return "yes"
-    if answer in {"no", "n", "false", "negative"}:
+    if answer in _NO_ALIASES:
         return "no"
-    if answer in {"maybe", "uncertain", "unclear", "unknown"}:
+    if answer in _MAYBE_ALIASES:
         return "maybe"
+    # Try extracting a leading yes/no/maybe from longer text
+    m = re.match(r"^(yes|no|maybe)\b", answer)
+    if m:
+        return m.group(1)
     return answer
+
 
 PUBMEDQA_SCHEMA: dict[str, Any] = {
     "type": "json_schema",

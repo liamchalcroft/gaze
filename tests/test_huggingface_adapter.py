@@ -16,13 +16,13 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from radiant_harness.exceptions import ModelError
-from radiant_harness.models import huggingface_adapter as hf_module
-from radiant_harness.models.huggingface_adapter import HuggingFaceAdapter
-from radiant_harness.models.huggingface_adapter import HuggingFaceVLMAdapter
-from radiant_harness.models.huggingface_adapter import _format_tools_for_prompt
-from radiant_harness.models.huggingface_adapter import _inject_json_mode
-from radiant_harness.models.huggingface_adapter import _inject_tool_docs
+from gaze.exceptions import ModelError
+from gaze.models import huggingface_adapter as hf_module
+from gaze.models.huggingface_adapter import HuggingFaceAdapter
+from gaze.models.huggingface_adapter import HuggingFaceVLMAdapter
+from gaze.models.huggingface_adapter import _format_tools_for_prompt
+from gaze.models.huggingface_adapter import _inject_json_mode
+from gaze.models.huggingface_adapter import _inject_tool_docs
 
 # ---------------------------------------------------------------------------
 # Streaming still raises before torch is needed
@@ -376,7 +376,7 @@ class TestProtocolSignatureParity:
         """Both HF adapters should accept the same params as the protocol."""
         import inspect
 
-        from radiant_harness.models.adapter_protocol import AdapterProtocol
+        from gaze.models.adapter_protocol import AdapterProtocol
 
         proto_sig = inspect.signature(AdapterProtocol.generate_chat)
         hf_sig = inspect.signature(HuggingFaceAdapter.generate_chat)
@@ -729,7 +729,7 @@ class TestTrustRemoteCodeWarning:
     def test_warning_emitted_when_true(self) -> None:
         from unittest.mock import patch
 
-        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+        with patch("gaze.models.huggingface_adapter.logger") as mock_logger:
             HuggingFaceAdapter(model_name="dummy", trust_remote_code=True)
             mock_logger.warning.assert_called_once()
             assert "trust_remote_code" in mock_logger.warning.call_args[0][0]
@@ -738,14 +738,14 @@ class TestTrustRemoteCodeWarning:
     def test_no_warning_when_false(self) -> None:
         from unittest.mock import patch
 
-        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+        with patch("gaze.models.huggingface_adapter.logger") as mock_logger:
             HuggingFaceAdapter(model_name="dummy", trust_remote_code=False)
             mock_logger.warning.assert_not_called()
 
     def test_vlm_adapter_inherits_warning(self) -> None:
         from unittest.mock import patch
 
-        with patch("radiant_harness.models.huggingface_adapter.logger") as mock_logger:
+        with patch("gaze.models.huggingface_adapter.logger") as mock_logger:
             HuggingFaceVLMAdapter(model_name="dummy", trust_remote_code=True)
             mock_logger.warning.assert_called_once()
             assert "trust_remote_code" in mock_logger.warning.call_args[0][0]
@@ -824,7 +824,7 @@ class TestReasoningContentParity:
 
     def test_hf_generation_log_has_no_reasoning_content(self) -> None:
         """HF GenerationLog always has reasoning_content=None."""
-        from radiant_harness.models.adapter_protocol import GenerationLog
+        from gaze.models.adapter_protocol import GenerationLog
 
         # Simulate what HF adapters produce
         gen_log = GenerationLog(
@@ -862,14 +862,14 @@ class TestErrorTypeParity:
         import inspect
 
         source = inspect.getsource(hf_module)
-        assert "from radiant_harness.exceptions import APIError" not in source
+        assert "from gaze.exceptions import APIError" not in source
         assert "APIError" not in source
 
     @pytest.mark.asyncio
     async def test_streaming_raises_model_error_not_api_error(self) -> None:
         """Streaming rejection must raise ModelError specifically."""
-        from radiant_harness.exceptions import APIError
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import APIError
+        from gaze.exceptions import ModelError
 
         adapter = HuggingFaceAdapter(model_name="dummy")
         with pytest.raises(ModelError) as exc_info:

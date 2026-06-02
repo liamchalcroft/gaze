@@ -1,9 +1,9 @@
-# Radiant Harness - Makefile
+# GAZE - Makefile
 
-.PHONY: help install test check clean format lint quality dev-setup status lock-check
+.PHONY: help install test test-all check check-nova clean format lint quality dev-setup status lock-check
 
 help: ## Show this help message
-	@echo "Radiant Harness - Available Commands:"
+	@echo "GAZE - Available Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
@@ -15,12 +15,16 @@ help: ## Show this help message
 install: ## Install dependencies
 	uv sync
 
-check: ## Run all quality checks (lint, typecheck, lock, test)
+check: ## Run quality checks (lint, format, typecheck, lock, core tests) -- matches CI
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run pyright src/
 	uv lock --check
-	uv run pytest tests/ examples/nova/tests/ -x --tb=short
+	uv run pytest tests/ -x --tb=short
+
+check-nova: ## Run torch-gated + example tests (installs the nova extra: torch etc.)
+	uv sync --extra nova
+	uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper -x --tb=short
 
 test: ## Run test suite (core tests only)
 	uv run pytest tests/ -x --tb=short
@@ -29,7 +33,7 @@ test-all: ## Run all tests (core + examples + environments)
 	uv run pytest tests/ examples/nova/tests/ -x --tb=short
 
 test-cov: ## Run tests with coverage
-	uv run pytest tests/ --cov=radiant_harness --cov-report=html
+	uv run pytest tests/ --cov=gaze --cov-report=html
 
 format: ## Format code with ruff
 	uv run ruff format .
@@ -53,11 +57,11 @@ clean-all: clean ## Clean everything including outputs
 	@rm -rf runs/ outputs/ paper_results/
 
 dev-setup: ## Setup development environment with pre-commit hooks
-	uv sync
-	pre-commit install
+	uv sync --extra nova
+	uv run pre-commit install
 
 status: ## Show project status
-	@echo "Radiant Harness Status"
+	@echo "GAZE Status"
 	@echo "======================"
 	@echo "Project Directory: $(PWD)"
 	@echo "Python Version: $(shell python --version 2>/dev/null || echo 'Not found')"

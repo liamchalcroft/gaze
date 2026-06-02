@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Research Team", email = "research@example.com"},
+    {name = "Liam Chalcroft", email = "liamchalcroft@gmail.com"},
 ]
 dependencies = [
     "verifiers>=0.1.6,<1",
@@ -19,6 +19,10 @@ dependencies = [
     "pillow>=10.0.0,<12",
     "numpy>=1.24.0,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/liamchalcroft/gaze"
+Repository = "https://github.com/liamchalcroft/gaze"
 
 [project.scripts]
 nova-brain-mri = "nova_brain_mri.cli:main"

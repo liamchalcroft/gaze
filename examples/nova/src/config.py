@@ -26,13 +26,13 @@ class NOVAConfig:
     """Configuration for NOVA benchmark evaluation.
 
     This is the main configuration for running NOVA benchmark evaluations.
-    It configures both the radiant_harness and NOVA-specific settings.
+    It configures both the gaze and NOVA-specific settings.
 
     All parameters must be properly typed - no string coercion is performed.
     Use Path objects and TaskType enum directly.
     """
 
-    # Model settings (passed to radiant_harness)
+    # Model settings (passed to gaze)
     model_name: str = "openai/gpt-4o"
     base_url: str | None = None
     max_turns: int = 10

@@ -14,8 +14,8 @@ from openai import APITimeoutError
 from openai import OpenAIError
 from openai import RateLimitError
 
-from radiant_harness.exceptions import APIError
-from radiant_harness.models.openai_adapter import OpenAIAdapter
+from gaze.exceptions import APIError
+from gaze.models.openai_adapter import OpenAIAdapter
 
 # ---------------------------------------------------------------------------
 # Helpers

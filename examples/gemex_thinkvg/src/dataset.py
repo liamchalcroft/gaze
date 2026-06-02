@@ -84,15 +84,14 @@ class GEMeXDataset:
                 )
             # Filter dataset
             self._dataset = self._dataset.filter(
-                lambda x: self.QUESTION_TYPES.get(x["question_type"], x["question_type"])
-                == normalized
+                lambda x: (
+                    self.QUESTION_TYPES.get(x["question_type"], x["question_type"]) == normalized
+                )
             )
 
         # Limit samples if specified
         if max_samples is not None:
-            self._dataset = self._dataset.select(
-                range(min(max_samples, len(self._dataset)))
-            )
+            self._dataset = self._dataset.select(range(min(max_samples, len(self._dataset))))
 
     def __len__(self) -> int:
         """Return number of samples in dataset."""

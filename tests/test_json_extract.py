@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from radiant_harness.utils import extract_json_from_text
-from radiant_harness.utils.json_extract import _try_repair_truncated
+from gaze.utils import extract_json_from_text
+from gaze.utils.json_extract import _try_repair_truncated
 
 
 class TestExtractJsonFromText:

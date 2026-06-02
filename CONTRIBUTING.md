@@ -1,11 +1,11 @@
-# Contributing to Radiant Harness
+# Contributing to GAZE
 
 ## Setup
 
 1. Fork and clone:
    ```bash
-   git clone https://github.com/your-username/medical_reasoning_vlm.git
-   cd medical_reasoning_vlm
+   git clone https://github.com/liamchalcroft/gaze.git
+   cd gaze
    ```
 
 2. Install:
@@ -44,20 +44,29 @@
 ### New Model Adapters
 Implement `AdapterProtocol`:
 ```python
-# src/radiant_harness/models/your_adapter.py
-from radiant_harness.models import AdapterProtocol, GenerationLog
+# src/gaze/models/your_adapter.py
+from gaze.models import AdapterProtocol, GenerationLog
 
 class YourAdapter:
-    async def generate_chat(self, messages, max_tokens, temperature, tools, response_format, stream):
+    # Whether tool results may include image parts (multipart content).
+    supports_multipart_tool_content: bool = False
+
+    async def generate_chat(self, messages, max_tokens, temperature, tools, response_format, stream, seed):
         # ...
         return content, tool_calls, GenerationLog(prompt_tokens, completion_tokens, finish_reason)
+
+    async def aclose(self) -> None:
+        # Release any held resources (HTTP clients, sessions). May be a no-op.
+        ...
 ```
+
+The protocol requires all three members: `supports_multipart_tool_content`, `generate_chat`, and `aclose`. See `src/gaze/models/adapter_protocol.py`.
 
 ### New Tools
 Create an async execute function and a `Tool` instance:
 ```python
-from radiant_harness.tools import Tool, ToolRegistry
-from radiant_harness.types import ToolResult
+from gaze.tools import Tool, ToolRegistry
+from gaze.types import ToolResult
 
 async def _execute_my_tool(registry: ToolRegistry, **kwargs) -> ToolResult:
     # ...
@@ -78,9 +87,9 @@ Add to the relevant example's `evaluation/` directory. Follow the existing patte
 
 - **Style**: ruff handles formatting (line length 100). Use type hints.
 - **Runtime validation**: `@beartype` decorator on public functions.
-- **Exceptions**: use specific types from `radiant_harness.exceptions`. Never bare `except:`.
+- **Exceptions**: use specific types from `gaze.exceptions`. Never bare `except:`.
 - **Commits**: conventional format (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`).
-- **Tests**: pytest, >60% coverage target, mock external API calls.
+- **Tests**: pytest. The core library is heavily tested; keep new code covered (aim for >90% on changed lines). Mock external API calls -- unit tests must not hit the network.
 
 ## Pull Requests
 

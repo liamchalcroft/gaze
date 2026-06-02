@@ -14,9 +14,9 @@ from PIL import Image
 
 from examples.nova.src.rewards import _normalize_diagnosis
 from examples.nova.src.rewards import compute_diagnosis_reward
-from radiant_harness.tools.visual import _maybe_normalize_box
-from radiant_harness.tools.visual import _maybe_normalize_point
-from radiant_harness.verifiers.rewards import IoUReward
+from gaze.tools.visual import _maybe_normalize_box
+from gaze.tools.visual import _maybe_normalize_point
+from gaze.verifiers.rewards import IoUReward
 
 # =====================================================================
 # 1. IoUReward._extract_bbox — search all JSON objects

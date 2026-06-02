@@ -1,6 +1,6 @@
-"""NOVA Benchmark CLI - demonstrates radiant_harness usage.
+"""NOVA Benchmark CLI - demonstrates gaze usage.
 
-This CLI shows how to use radiant_harness for the NOVA brain-MRI benchmark.
+This CLI shows how to use gaze for the NOVA brain-MRI benchmark.
 It's intentionally minimal to serve as a reference implementation.
 
 Usage:
@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 from collections.abc import Mapping
 from pathlib import Path
@@ -25,17 +26,17 @@ _DICT_LIKE = (dict, MappingProxyType)
 
 from loguru import logger
 
-from radiant_harness._frozen import deep_thaw
-from radiant_harness import AgenticResult
-from radiant_harness import require_lmstudio_model
+from gaze import AgenticResult
+from gaze import require_lmstudio_model
+from gaze._frozen import deep_thaw
 
 from .config import NOVAConfig
 from .config import TaskType
-from .evaluation.diagnosis import DEFAULT_SEMANTIC_MATCH_MODEL
+from .evaluation.diagnosis import DEFAULT_SEMANTIC_MATCH_MODEL as _DEFAULT_JUDGE
 
 
 class _SafeEncoder(json.JSONEncoder):
-    """Handle MappingProxyType and other frozen containers from radiant_harness."""
+    """Handle MappingProxyType and other frozen containers from gaze."""
 
     def default(self, o: object) -> Any:
         if isinstance(o, (MappingProxyType, Mapping)):  # noqa: UP038
@@ -87,7 +88,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
     # Build adapter factory for custom base URLs (e.g. LM Studio)
     adapter_factory = None
     if config.base_url is not None:
-        from radiant_harness.models import LMStudioAdapter
+        from gaze.models import LMStudioAdapter
 
         loaded_models = await require_lmstudio_model(
             model_name=config.model_name,
@@ -111,7 +112,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         data_dir=data_dir_str,
     )
 
-    # Create NOVA processor using radiant_harness
+    # Create NOVA processor using gaze
     processor = NOVAAgenticProcessor(
         model_name=config.model_name,
         use_tools=config.use_tools,
@@ -204,6 +205,37 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     metadata=metadata,
                 )
 
+                def _serialize_turn(turn: Any) -> dict[str, Any]:
+                    """Serialize a Turn to JSON, stripping base64 image data."""
+                    serialized_tool_calls = [
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments
+                            if isinstance(tc.arguments, str)
+                            else deep_thaw(tc.arguments),
+                        }
+                        for tc in turn.tool_calls
+                    ]
+                    serialized_tool_results = [
+                        {
+                            "tool_name": tr.tool_name,
+                            "description": tr.description,
+                            "error": tr.error,
+                            "produced_image": tr.image_base64 is not None,
+                            "image_mime_type": tr.image_mime_type,
+                            "metadata": deep_thaw(tr.metadata),
+                        }
+                        for tr in turn.tool_results
+                    ]
+                    return {
+                        "role": turn.role,
+                        "content": turn.content,
+                        "tool_calls": serialized_tool_calls,
+                        "tool_results": serialized_tool_results,
+                        "has_image": turn.image_base64 is not None,
+                    }
+
                 # Build detailed tool call log for analysis.
                 tool_call_log: list[dict[str, Any]] = []
                 for turn in result.turns:
@@ -234,6 +266,7 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                 sample_payload: dict[str, Any] = {
                     "sample_id": idx,
                     "response": result.final_response,
+                    "turns": [_serialize_turn(t) for t in result.turns],
                     "num_turns": result.num_turns,
                     "tools_used": list(result.get_tools_used()),
                     "tool_call_log": tool_call_log,
@@ -249,6 +282,13 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                         "max_tokens": rc.max_tokens,
                         "max_turns": rc.max_turns,
                     }
+
+                gt = dict(sample["ground_truth"])
+                gt["image_width"] = image.width
+                gt["image_height"] = image.height
+                sample_payload["ground_truth"] = gt
+                sample_payload["metadata"] = metadata
+
                 result_file = config.output_dir / f"sample_{idx}.json"
                 await asyncio.to_thread(_write_json_file, result_file, sample_payload, _SafeEncoder)
 
@@ -258,9 +298,6 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     f"confidence: {result.confidence:.2f}"
                 )
 
-                gt = dict(sample["ground_truth"])
-                gt["image_width"] = image.width
-                gt["image_height"] = image.height
                 return idx, result, gt
 
         failed_samples: list[tuple[int, str]] = []
@@ -294,8 +331,14 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         if results:
             logger.info("Computing evaluation metrics...")
             eval_set = set(config.eval_tasks) if config.eval_tasks else None
+            judge = os.environ.get("NOVA_SEMANTIC_MATCH_MODEL")
             metrics = await compute_metrics(
-                results, ground_truth, config.task, eval_set, seed=config.seed,
+                results,
+                ground_truth,
+                config.task,
+                eval_set,
+                seed=config.seed,
+                judge_model=judge,
             )
         else:
             logger.warning("All samples failed — skipping metric computation")
@@ -330,8 +373,9 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
         import platform
         import sys
         from importlib.metadata import version as _pkg_version
+
         try:
-            harness_version = _pkg_version("radiant-harness")
+            harness_version = _pkg_version("gaze-vlm")
         except Exception:
             harness_version = "unknown"
 
@@ -360,7 +404,9 @@ async def run_evaluation(config: NOVAConfig) -> dict[str, object]:
                     "seed": config.seed,
                     "base_url": config.base_url,
                     "lmstudio_models": loaded_models,
-                    "diagnosis_judge_model": DEFAULT_SEMANTIC_MATCH_MODEL,
+                    "diagnosis_judge_model": os.environ.get(
+                        "NOVA_SEMANTIC_MATCH_MODEL", _DEFAULT_JUDGE
+                    ),
                     "dependency_versions": dep_versions,
                 },
                 "num_samples": len(results),
@@ -387,6 +433,7 @@ async def compute_metrics(
     task: TaskType,
     eval_tasks: set[str] | None = None,
     seed: int | None = None,
+    judge_model: str | None = None,
 ) -> dict[str, object]:
     """Compute evaluation metrics for results.
 
@@ -397,6 +444,7 @@ async def compute_metrics(
         eval_tasks: If provided, only compute metrics for these tasks
             (e.g. {"caption", "localization"}). Overrides *task* filtering.
         seed: Random seed for LLM-based evaluation calls (reproducibility).
+        judge_model: Model for diagnosis semantic matching (overrides default).
 
     Returns:
         Dictionary of metrics
@@ -470,15 +518,17 @@ async def compute_metrics(
         # Sentinel values that indicate missing ground truth in the NOVA dataset.
         # These are non-empty strings that would otherwise be scored as valid
         # references, penalising correct predictions unfairly.
-        _MISSING_GT_SENTINELS = frozenset({
-            "final diagnosis not found.",
-            "final diagnosis not found",
-            "not found",
-            "n/a",
-            "na",
-            "none",
-            "",
-        })
+        _MISSING_GT_SENTINELS = frozenset(
+            {
+                "final diagnosis not found.",
+                "final diagnosis not found",
+                "not found",
+                "n/a",
+                "na",
+                "none",
+                "",
+            }
+        )
 
         gt_diagnoses = []
         for i, gt in enumerate(ground_truth):
@@ -487,8 +537,11 @@ async def compute_metrics(
                 logger.warning("Sample %d has missing/sentinel ground truth diagnosis: %r", i, diag)
                 diag = ""  # Normalize to empty — evaluate_diagnosis skips these
             gt_diagnoses.append(diag)
+        diag_kwargs: dict[str, Any] = {"seed": seed}
+        if judge_model:
+            diag_kwargs["model_name"] = judge_model
         pending_metrics["diagnosis"] = asyncio.create_task(
-            evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses, seed=seed)
+            evaluate_diagnosis_nova_official(pred_diagnoses, gt_diagnoses, **diag_kwargs)
         )
 
     if _should_compute("localization"):
@@ -531,6 +584,12 @@ async def compute_metrics(
                     )
                     continue
                 bbox = list(bbox)
+                # Rescale from predicted coordinate space to actual image size
+                if pred_w > 0 and pred_h > 0 and actual_w > 0 and actual_h > 0:
+                    sx = actual_w / pred_w
+                    sy = actual_h / pred_h
+                    if abs(sx - 1.0) > 0.01 or abs(sy - 1.0) > 0.01:
+                        bbox = [bbox[0] * sx, bbox[1] * sy, bbox[2] * sx, bbox[3] * sy]
                 if actual_w > 0 and actual_h > 0:
                     bbox = rescale_and_clamp_box(bbox, actual_w, actual_h)
                 boxes.append(bbox)
@@ -705,9 +764,11 @@ def main() -> None:
     if args.seed is not None:
         random.seed(args.seed)
         import numpy as np
+
         np.random.seed(args.seed)
         try:
             import torch
+
             torch.manual_seed(args.seed)
         except ImportError:
             pass
@@ -715,7 +776,7 @@ def main() -> None:
     # Configure logging
     if args.verbose:
         logger.enable("src")
-        logger.enable("radiant_harness")
+        logger.enable("gaze")
     else:
         logger.disable("src")
 
@@ -770,9 +831,7 @@ def main() -> None:
             "batch_size": config.batch_size,
             "max_samples": config.max_samples,
             "output_dir": str(config.output_dir),
-            "diagnosis_judge_model": os.environ.get(
-                "NOVA_SEMANTIC_MATCH_MODEL", DEFAULT_SEMANTIC_MATCH_MODEL
-            ),
+            "diagnosis_judge_model": os.environ.get("NOVA_SEMANTIC_MATCH_MODEL", _DEFAULT_JUDGE),
             "diagnosis_judge_base_url": os.environ.get("NOVA_SEMANTIC_MATCH_BASE_URL", ""),
         }
         print(json.dumps(dry_config, indent=2))  # noqa: T201

@@ -111,20 +111,44 @@ def _rouge_l_sentence(pred_tokens: list[str], ref_tokens: list[str]) -> float:
     return (2 * precision * recall) / (precision + recall)
 
 
-_NEGATION_WORDS = frozenset({
-    "no", "not", "without", "absent", "negative", "none", "nor",
-    "unremarkable", "normal", "deny", "denies", "denied",
-})
+_NEGATION_WORDS = frozenset(
+    {
+        "no",
+        "not",
+        "without",
+        "absent",
+        "negative",
+        "none",
+        "nor",
+        "unremarkable",
+        "normal",
+        "deny",
+        "denies",
+        "denied",
+    }
+)
 
 _NEGATION_WINDOW = 3  # max tokens before a clinical term to check for negation
 
 # Clause-boundary tokens that stop the following-window negation search.
 # Prevents "tumor with no edema" from incorrectly negating "tumor" —
 # the "no" belongs to the next clause (after "with").
-_SCOPE_TERMINATORS = frozenset({
-    "with", "and", "but", "or", "while", "although", "however",
-    ",", ";", ".", ":", "—",
-})
+_SCOPE_TERMINATORS = frozenset(
+    {
+        "with",
+        "and",
+        "but",
+        "or",
+        "while",
+        "although",
+        "however",
+        ",",
+        ";",
+        ".",
+        ":",
+        "—",
+    }
+)
 
 
 def _has_clinical_terms(text: str) -> bool:
@@ -216,9 +240,13 @@ def evaluate_caption(preds: Sequence[str], refs: Sequence[str]) -> dict[str, flo
     # Pin smoothing method and tokenizer explicitly for reproducibility
     bleu = sacrebleu.corpus_bleu(preds, [refs], smooth_method="exp", tokenize="13a")
 
-    _, _, f1_scores, bert_hash = bert_score_fn(
-        cands=preds, refs=refs, model_type="roberta-large",
-        lang="en", rescale_with_baseline=True, return_hash=True,
+    (_, _, f1_scores), bert_hash = bert_score_fn(
+        cands=preds,
+        refs=refs,
+        model_type="roberta-large",
+        lang="en",
+        rescale_with_baseline=True,
+        return_hash=True,
     )
     # Baseline-rescaled BERTScore F1 can be negative for very poor candidates.
     # Clamp to [0, 1] before reporting — negative scores are not meaningful

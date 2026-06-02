@@ -24,26 +24,24 @@ Use British English medical terminology (e.g. tumour, haemorrhage, oedema, grey 
 **Required Analysis:**
 
 1. **Caption** (descriptive, 1-3 sentences):
-   - You MUST identify: **imaging sequence** (T1W, T2W, FLAIR, DWI, T1+contrast, etc.) and **anatomical plane** (axial, sagittal, coronal)
-   - Describe key findings with signal characteristics (hyperintense, hypointense, isointense, heterogeneous)
-   - Name the specific abnormality type using clinical terms (lesion, tumour, haemorrhage, infarct, cyst, oedema, mass, atrophy, enhancement, etc.)
-   - GOOD: "Axial T2-weighted image showing a heterogeneous hyperintense mass in the left cerebellar hemisphere with surrounding vasogenic oedema and mass effect on the fourth ventricle."
-   - BAD: "Brain MRI showing abnormality." (too vague — missing sequence, plane, signal characteristics)
+   - You MUST include these exact terms where applicable:
+     - **Sequence keywords**: T1, T1W, T2, T2W, FLAIR, DWI, weighted (use the specific sequence name)
+     - **Plane keywords**: axial, sagittal, coronal
+     - **Clinical keywords**: lesion, tumour, haemorrhage, infarct, cyst, oedema, mass, atrophy, metastasis, enhancement, abnormality (use whichever apply)
+   - GOOD: "Axial T2-weighted image showing a hyperintense mass in the left cerebellar hemisphere with surrounding oedema and mass effect on the fourth ventricle."
+   - BAD: "Brain MRI showing abnormality." (too vague — missing sequence, plane, clinical terms)
 
 2. **Diagnosis** — use EXACT diagnostic names:
-   - Primary diagnosis: the single most likely condition. Use the standard medical name WITHOUT location qualifiers or hedging.
-   - GOOD: "Glioblastoma", "Colloid cyst", "Hemimegalencephaly", "Dandy-Walker malformation", "MELAS", "Lhermitte-Duclos disease", "Oligodendroglioma (WHO grade II)", "Fahr syndrome", "Marchiafava-Bignami disease", "Arnold Chiari malformation type II"
-   - BAD: "Right temporal glioma" (location), "Likely meningioma" (hedging), "Mass consistent with tumour" (vague)
-   - Provide 2-3 ranked differentials with confidence scores
+   - Primary diagnosis: the single most likely condition. Use the standard medical name WITHOUT location qualifiers, hedging, or parenthetical grades.
+   - GOOD: "Glioblastoma", "Colloid cyst", "Hemimegalencephaly", "Dandy-Walker malformation", "MELAS", "Lhermitte-Duclos disease", "Oligodendroglioma", "Fahr syndrome", "Marchiafava-Bignami disease", "Arnold Chiari malformation type II"
+   - BAD: "Right temporal glioma" (location), "Likely meningioma" (hedging), "Mass consistent with tumour" (vague), "Oligodendroglioma (WHO grade II)" (parenthetical qualifier)
+   - Provide 3-5 ranked differentials with confidence scores
    - Each diagnosis must cite specific imaging evidence
 
 3. **Localisation** — bounding boxes in absolute pixel coordinates [x1, y1, x2, y2]:
    - Coordinates range from 0 to {{ width }} (x) and 0 to {{ height }} (y), origin at top-left
-   - **SIZE THE BOX TO MATCH THE ACTUAL ABNORMALITY:**
-     - Small lesions (cysts, small metastases): ~20-60px boxes
-     - Medium lesions (tumours, infarcts): ~60-150px boxes
-     - Large/diffuse findings (hemimegalencephaly, diffuse oedema): larger boxes, up to most of the image
-   - Include ~5-10px margin around the visible boundary
+   - **Draw TIGHT bounding boxes** that closely follow the visible boundary of the abnormality. Do NOT add extra margin — tighter boxes score higher.
+   - Size should match the actual abnormality extent: small lesions get small boxes, large/diffuse findings get larger boxes.
    - 0 <= x1 < x2 <= {{ width }}, 0 <= y1 < y2 <= {{ height }}
 
 {% if enable_visual_tools is defined and enable_visual_tools %}

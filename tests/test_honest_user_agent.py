@@ -1,6 +1,6 @@
 """Tests for honest bot User-Agent across all search engines (PS-3).
 
-All engines must identify themselves as ``radiant_harness/<version>``
+All engines must identify themselves as ``gaze/<version>``
 rather than impersonating a browser.  Impersonation can violate API
 terms of service and masks bot traffic from operators.
 """
@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-import radiant_harness
-from radiant_harness.retrieval.base import BaseSearchEngine
-from radiant_harness.retrieval.base import SearchEngineError
-from radiant_harness.retrieval.image_search import ImageSearchResult
-from radiant_harness.retrieval.image_search import OpenISearchEngine
-from radiant_harness.retrieval.web_search import PubMedSearchEngine
-from radiant_harness.retrieval.web_search import SearchError
-from radiant_harness.retrieval.web_search import SearchResult
+import gaze
+from gaze.retrieval.base import BaseSearchEngine
+from gaze.retrieval.base import SearchEngineError
+from gaze.retrieval.image_search import ImageSearchResult
+from gaze.retrieval.image_search import OpenISearchEngine
+from gaze.retrieval.web_search import PubMedSearchEngine
+from gaze.retrieval.web_search import SearchError
+from gaze.retrieval.web_search import SearchResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,8 +26,8 @@ _BROWSER_STRINGS = ("Mozilla", "Chrome", "Safari", "AppleWebKit", "Gecko")
 
 def _assert_honest_ua(ua: str) -> None:
     """Assert the User-Agent is an honest bot identifier."""
-    assert "radiant_harness" in ua, f"UA must contain 'radiant_harness', got: {ua}"
-    assert radiant_harness.__version__ in ua, f"UA must contain version, got: {ua}"
+    assert "gaze" in ua, f"UA must contain 'gaze', got: {ua}"
+    assert gaze.__version__ in ua, f"UA must contain version, got: {ua}"
     for browser_str in _BROWSER_STRINGS:
         assert browser_str not in ua, f"UA must not contain '{browser_str}', got: {ua}"
 

@@ -12,10 +12,10 @@ from typing import Any
 
 from loguru import logger
 
-from radiant_harness import LMStudioAdapter
-from radiant_harness import OpenAIAdapter
-from radiant_harness import require_lmstudio_model
-from radiant_harness.verifiers import TokenF1Reward
+from gaze import LMStudioAdapter
+from gaze import OpenAIAdapter
+from gaze import require_lmstudio_model
+from gaze.verifiers import TokenF1Reward
 
 from .src.environment import _brace_content
 from .src.environment import accuracy_reward
@@ -25,7 +25,7 @@ from .src.environment import load_environment
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate AgentClinic NEJM with Radiant Harness adapters",
+        description="Evaluate AgentClinic NEJM with GAZE adapters",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dataset", type=str, help="Path to NEJM JSONL dataset file")
@@ -39,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument("--max-turns", type=int, default=10, help="Maximum conversation turns")
     parser.add_argument(
@@ -55,6 +55,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
     parser.add_argument(
         "--reasoning", action="store_true", help="Enable reasoning mode for OpenAI/OpenRouter"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logs")
     return parser.parse_args()
@@ -151,6 +157,7 @@ async def _run_case(
     max_turns: int,
     max_tokens: int,
     temperature: float,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Run one AgentClinic case end-to-end."""
     messages = copy.deepcopy(prompt)
@@ -172,6 +179,7 @@ async def _run_case(
             temperature=temperature,
             tools=None,
             response_format=None,
+            seed=seed,
         )
         total_tokens += generation.tokens
 
@@ -262,6 +270,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     max_turns=args.max_turns,
                     max_tokens=args.max_tokens,
                     temperature=args.temperature,
+                    seed=args.seed,
                 )
                 sample_results.append({"sample_id": idx, **result})
             except Exception as exc:
@@ -278,11 +287,17 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         await adapter.aclose()
 
     results = {
+        "config": {
+            "model": args.model,
+            "base_url": args.base_url,
+            "lmstudio_models": loaded_models,
+            "max_turns": args.max_turns,
+            "max_tokens": args.max_tokens,
+            "temperature": args.temperature,
+            "reasoning": args.reasoning,
+            "seed": args.seed,
+        },
         "dataset": args.dataset,
-        "model": args.model,
-        "base_url": args.base_url,
-        "lmstudio_models": loaded_models,
-        "max_turns": args.max_turns,
         "num_samples_total": len(dataset),
         "num_samples_evaluated": len(sample_results),
         "num_failures": len(failures),
@@ -302,8 +317,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     args = _parse_args()
+
+    if args.seed is not None:
+        import random
+
+        random.seed(args.seed)
+
     if args.verbose:
-        logger.enable("radiant_harness")
+        logger.enable("gaze")
         logger.enable("examples.agentclinic_nejm")
     else:
         logger.disable("examples.agentclinic_nejm")

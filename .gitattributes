@@ -1,0 +1,13 @@
+# Normalise line endings; treat the lockfile and generated assets as such.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+
+uv.lock linguist-generated=true
+*.ipynb linguist-generated=true
+
+# Keep shell scripts LF even on Windows checkouts.
+*.sh text eol=lf

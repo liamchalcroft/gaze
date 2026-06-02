@@ -138,9 +138,10 @@ class TestContainsMatchLengthPenalty:
         score = compute_contains_match("pneumothorax", "effusion")
         assert score == 0.0
 
-    def test_both_empty_full_score(self) -> None:
+    def test_both_empty_zero_score(self) -> None:
+        """Both empty = no content to match → 0.0 (hardened against gaming)."""
         score = compute_contains_match("", "")
-        assert score == pytest.approx(1.0)
+        assert score == pytest.approx(0.0)
 
 
 class TestAnswerRewardIntegration:

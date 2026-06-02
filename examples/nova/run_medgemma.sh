@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run medgemma-1.5-4b-it evaluation: single-turn then agentic.
 # Usage: ./run_medgemma.sh [BASE_URL] [MAX_SAMPLES]
-#   BASE_URL    defaults to http://192.168.1.138:1234/v1
+#   BASE_URL    defaults to http://localhost:1234/v1
 #   MAX_SAMPLES defaults to 20 (0 = all)
 
 set -euo pipefail
@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 MODEL="medgemma-1.5-4b-it"
-BASE_URL="${1:-http://192.168.1.138:1234/v1}"
+BASE_URL="${1:-http://localhost:1234/v1}"
 MAX_SAMPLES="${2:-20}"
 RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 

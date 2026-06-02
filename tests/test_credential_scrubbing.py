@@ -6,7 +6,7 @@ import aiohttp
 import pytest
 from yarl import URL
 
-from radiant_harness.retrieval.base import _sanitize_exception_message
+from gaze.retrieval.base import _sanitize_exception_message
 
 
 class TestSanitizeExceptionMessage:
@@ -85,8 +85,8 @@ class TestSanitizationIntegration:
         """BaseSearchEngine.search() must redact api_key in retry warnings."""
         from loguru import logger
 
-        from radiant_harness.config import SearchConfig
-        from radiant_harness.retrieval.web_search import PubMedSearchEngine
+        from gaze.config import SearchConfig
+        from gaze.retrieval.web_search import PubMedSearchEngine
 
         engine = PubMedSearchEngine(config=SearchConfig(max_retries=1, timeout_seconds=1))
 

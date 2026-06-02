@@ -19,7 +19,7 @@ from loguru import logger
 
 
 class _SafeEncoder(json.JSONEncoder):
-    """Handle MappingProxyType from radiant_harness frozen containers."""
+    """Handle MappingProxyType from gaze frozen containers."""
 
     def default(self, o: object) -> Any:
         if isinstance(o, (MappingProxyType, Mapping)):  # noqa: UP038
@@ -27,8 +27,8 @@ class _SafeEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-from radiant_harness import AgenticResult
-from radiant_harness import require_lmstudio_model
+from gaze import AgenticResult
+from gaze import require_lmstudio_model
 
 from .dataset import VQARadDataset
 from .evaluation import evaluate_closed_only
@@ -106,7 +106,7 @@ async def run_evaluation(
     # Build adapter factory for custom base URLs (e.g. LM Studio)
     adapter_factory = None
     if base_url is not None:
-        from radiant_harness.models import LMStudioAdapter
+        from gaze.models import LMStudioAdapter
 
         _url = base_url
         _model = model_name
@@ -143,7 +143,8 @@ async def run_evaluation(
     failures: list[dict[str, object]] = []
 
     async def _process_sample(
-        i: int, sample: dict[str, Any],
+        i: int,
+        sample: dict[str, Any],
     ) -> tuple[int, AgenticResult, str, str, str]:
         async with semaphore:
             logger.info(f"Processing sample {i + 1}/{len(dataset)}")
@@ -193,11 +194,13 @@ async def run_evaluation(
             if isinstance(item, BaseException):
                 logger.error(f"Failed to process sample {idx}: {item}")
                 num_failures += 1
-                failures.append(_failure_record(
-                    idx,
-                    sample["question"],
-                    item if isinstance(item, Exception) else Exception(str(item)),
-                ))
+                failures.append(
+                    _failure_record(
+                        idx,
+                        sample["question"],
+                        item if isinstance(item, Exception) else Exception(str(item)),
+                    )
+                )
             else:
                 _, result, pred_answer, ref_answer, answer_type = item
                 results.append(result)
@@ -278,7 +281,7 @@ def parse_args() -> argparse.Namespace:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for OpenAI-compatible server (audit endpoint: http://192.168.1.138:1234/v1)",
+        help="Base URL for OpenAI-compatible server (e.g. http://localhost:1234/v1)",
     )
     parser.add_argument(
         "--mode",
@@ -373,7 +376,7 @@ def main() -> None:
     # Configure logging
     if args.verbose:
         logger.enable("examples.vqa_rad")
-        logger.enable("radiant_harness")
+        logger.enable("gaze")
     else:
         logger.disable("examples.vqa_rad")
 

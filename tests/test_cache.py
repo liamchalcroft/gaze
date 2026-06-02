@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from radiant_harness.cache import TTLCache
-from radiant_harness.config import CacheConfig
+from gaze.cache import TTLCache
+from gaze.config import CacheConfig
 
 
 class TestTTLCache:

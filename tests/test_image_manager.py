@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.tools.image_manager import ImageManager
+from gaze.exceptions import ToolExecutionError
+from gaze.tools.image_manager import ImageManager
 
 
 def _create_image(tmp_path: Path, name: str = "test.png", size: tuple[int, int] = (50, 50)) -> Path:
@@ -309,7 +309,7 @@ class TestResetToOriginalNoop:
 
 class TestOriginalEncodingCache:
     def test_encoding_can_be_set_and_read(self, tmp_path: Path) -> None:
-        from radiant_harness.tools.registry import encode_image
+        from gaze.tools.registry import encode_image
 
         path = _create_image(tmp_path)
         mgr = ImageManager()
@@ -321,7 +321,7 @@ class TestOriginalEncodingCache:
         assert mgr.original_encoding is encoded
 
     def test_close_clears_encoding(self, tmp_path: Path) -> None:
-        from radiant_harness.tools.registry import encode_image
+        from gaze.tools.registry import encode_image
 
         path = _create_image(tmp_path)
         mgr = ImageManager()
@@ -333,7 +333,7 @@ class TestOriginalEncodingCache:
         assert mgr.original_encoding is None
 
     def test_set_image_clears_encoding(self, tmp_path: Path) -> None:
-        from radiant_harness.tools.registry import encode_image
+        from gaze.tools.registry import encode_image
 
         img1 = _create_image(tmp_path, "a.png", (30, 30))
         img2 = _create_image(tmp_path, "b.png", (60, 60))
@@ -346,7 +346,7 @@ class TestOriginalEncodingCache:
         assert mgr.original_encoding is None
 
     def test_reset_preserves_encoding(self, tmp_path: Path) -> None:
-        from radiant_harness.tools.registry import encode_image
+        from gaze.tools.registry import encode_image
 
         path = _create_image(tmp_path, size=(100, 100))
         mgr = ImageManager()
@@ -360,7 +360,7 @@ class TestOriginalEncodingCache:
         assert mgr.original_encoding is cached
 
     def test_set_preloaded_image_clears_encoding(self, tmp_path: Path) -> None:
-        from radiant_harness.tools.registry import encode_image
+        from gaze.tools.registry import encode_image
 
         path1 = _create_image(tmp_path, "a.png")
         mgr = ImageManager()
@@ -438,9 +438,9 @@ class TestResetUsesCache:
     async def test_reset_skips_encode_when_cached(self, tmp_path: Path) -> None:
         from unittest.mock import patch as mock_patch
 
-        from radiant_harness.tools.registry import ToolRegistry
-        from radiant_harness.tools.registry import encode_image
-        from radiant_harness.tools.visual import _execute_reset
+        from gaze.tools.registry import ToolRegistry
+        from gaze.tools.registry import encode_image
+        from gaze.tools.visual import _execute_reset
 
         path = _create_image(tmp_path, size=(100, 100))
         registry = ToolRegistry(image_path=path, tools=[])
@@ -461,7 +461,7 @@ class TestResetUsesCache:
             encode_call_count += 1
             return _real_encode(*args, **kwargs)
 
-        with mock_patch("radiant_harness.tools.visual.encode_image", _counting_encode):
+        with mock_patch("gaze.tools.visual.encode_image", _counting_encode):
             result = await _execute_reset(registry)
 
         assert encode_call_count == 0

@@ -12,12 +12,11 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
-from typing import List
 
 import verifiers as vf
 from datasets import Dataset
 
-from radiant_harness.utils import extract_json_from_text
+from gaze.utils import extract_json_from_text
 
 from ..rewards import GEMeXVerifiersReward
 from ..rewards import RewardWeights
@@ -70,7 +69,9 @@ LOG_PATH = os.path.join(LOG_DIR, "debug.log")
 def zoom_tool(x1: int, y1: int, x2: int, y2: int) -> str:
     """Zoom into a rectangular region. Coordinates are pixel indices [0, 336]."""
     coords = [x1, y1, x2, y2]
-    return f"[ZOOM applied to region {coords}] Zoomed region shows enhanced detail. Continue analysis."
+    return (
+        f"[ZOOM applied to region {coords}] Zoomed region shows enhanced detail. Continue analysis."
+    )
 
 
 def crop_tool(x1: int, y1: int, x2: int, y2: int) -> str:
@@ -189,11 +190,13 @@ def _build_prompt(case: dict[str, Any]) -> dict[str, str]:
         for i, opt in enumerate(options):
             user_parts.append(f"  {chr(65 + i)}. {opt}")
 
-    user_parts.extend([
-        "",
-        "You may request ZOOM, CROP, CONTRAST, THRESHOLD, or SEARCH operations via tool calls (do not emit bracketed text as a substitute).",
-        "When ready, provide your reasoning, answer, and visual grounding location as JSON.",
-    ])
+    user_parts.extend(
+        [
+            "",
+            "You may request ZOOM, CROP, CONTRAST, THRESHOLD, or SEARCH operations via tool calls (do not emit bracketed text as a substitute).",
+            "When ready, provide your reasoning, answer, and visual grounding location as JSON.",
+        ]
+    )
 
     return {
         "system": [{"type": "text", "text": SYSTEM_PROMPT}],
@@ -213,10 +216,7 @@ def _make_gemex_reward(weights: RewardWeights | None = None) -> Any:
     def gemex_reward(prompt: str, completion: Any, info: dict[str, Any]) -> float:
         """Compute combined GEMeX reward."""
         reward = verifiers_reward(prompt, completion, info)
-        _log_debug(
-            f"[reward] gold_answer={info.get('gold_answer', '')[:50]} "
-            f"reward={reward:.3f}"
-        )
+        _log_debug(f"[reward] gold_answer={info.get('gold_answer', '')[:50]} reward={reward:.3f}")
         return reward
 
     return gemex_reward
@@ -263,37 +263,43 @@ class GEMeXThinkVGToolEnv(vf.ToolEnv):
             # Add image to user message if available
             user_content: list[dict[str, Any]] = []
             if case.get("image_url"):
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": case["image_url"]},
-                })
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": case["image_url"]},
+                    }
+                )
             user_content.extend(p["user"])
 
             messages.append({"role": "user", "content": user_content})
             prompts.append(messages)
 
-            infos.append({
-                "case_index": idx,
-                "gold_answer": case.get("gold_answer", ""),
-                "gold_location": case.get("gold_location", ""),
-                "gold_bbox": case.get("gold_bbox", [0, 0, 0, 0]),
-                "question_type": case.get("question_type", "open_ended"),
-                "image_path": case.get("image_path", ""),
-                "image_url": case.get("image_url", ""),
-            })
+            infos.append(
+                {
+                    "case_index": idx,
+                    "gold_answer": case.get("gold_answer", ""),
+                    "gold_location": case.get("gold_location", ""),
+                    "gold_bbox": case.get("gold_bbox", [0, 0, 0, 0]),
+                    "question_type": case.get("question_type", "open_ended"),
+                    "image_path": case.get("image_path", ""),
+                    "image_url": case.get("image_url", ""),
+                }
+            )
 
-        dataset = Dataset.from_dict({
-            "id": list(range(len(prepared))),
-            "prompt": prompts,
-            "info": infos,
-        })
+        dataset = Dataset.from_dict(
+            {
+                "id": list(range(len(prepared))),
+                "prompt": prompts,
+                "info": infos,
+            }
+        )
 
         # Set up rubric and tools — capture weights in reward closure
         self.rubric = vf.Rubric(
             funcs=[_make_gemex_reward(reward_weights)],
             weights=[1.0],
         )
-        tools: List[Any] = [zoom_tool, crop_tool, contrast_tool, threshold_tool, search_tool]
+        tools: list[Any] = [zoom_tool, crop_tool, contrast_tool, threshold_tool, search_tool]
 
         super().__init__(
             name=name,

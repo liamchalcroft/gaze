@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from radiant_harness import AgenticProcessorBase
-from radiant_harness.base import ImageInput
+from gaze import AgenticProcessorBase
+from gaze.base import ImageInput
 
 
 @pytest.fixture
@@ -151,11 +151,11 @@ class TestImageInputLoad:
 
     def test_load_rejects_oversized_image(self, tmp_path: Path) -> None:
         """load() raises ValueError when image exceeds max_image_dimension."""
-        from radiant_harness.config import HarnessConfig
-        from radiant_harness.config import ImageProcessingConfig
-        from radiant_harness.config import config_context
+        from gaze.config import GazeConfig
+        from gaze.config import ImageProcessingConfig
+        from gaze.config import config_context
 
-        with config_context(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50))):
+        with config_context(GazeConfig(image=ImageProcessingConfig(max_image_dimension=50))):
             image_path = tmp_path / "large.png"
             img = Image.new("RGB", (100, 100), color="red")
             img.save(image_path)
@@ -229,11 +229,11 @@ class TestImageInputAload:
     @pytest.mark.asyncio
     async def test_aload_rejects_oversized_image(self, tmp_path: Path) -> None:
         """aload() propagates ValueError for oversized images."""
-        from radiant_harness.config import HarnessConfig
-        from radiant_harness.config import ImageProcessingConfig
-        from radiant_harness.config import config_context
+        from gaze.config import GazeConfig
+        from gaze.config import ImageProcessingConfig
+        from gaze.config import config_context
 
-        with config_context(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50))):
+        with config_context(GazeConfig(image=ImageProcessingConfig(max_image_dimension=50))):
             image_path = tmp_path / "big.png"
             Image.new("RGB", (100, 100), color="red").save(image_path)
 

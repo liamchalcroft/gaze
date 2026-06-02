@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.retrieval.image_search import ImageDownloadError
-from radiant_harness.retrieval.image_search import ImageSearchResult
-from radiant_harness.retrieval.image_search import MedicalImageSearchManager
-from radiant_harness.retrieval.image_search import OpenISearchEngine
-from radiant_harness.retrieval.image_search import _validate_download_url
+from gaze.retrieval.image_search import ImageDownloadError
+from gaze.retrieval.image_search import ImageSearchResult
+from gaze.retrieval.image_search import MedicalImageSearchManager
+from gaze.retrieval.image_search import OpenISearchEngine
+from gaze.retrieval.image_search import _validate_download_url
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ class TestDownloadSsrfValidation:
         """URL validation should be offloaded so DNS resolution can't block the loop."""
         from unittest.mock import MagicMock
 
-        import radiant_harness.retrieval.image_search as image_search_module
+        import gaze.retrieval.image_search as image_search_module
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         result = ImageSearchResult(

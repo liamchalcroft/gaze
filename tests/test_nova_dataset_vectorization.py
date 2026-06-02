@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from radiant_harness.tools.visual import compute_intensity_profile
+from gaze.tools.visual import compute_intensity_profile
 
 # ---------------------------------------------------------------------------
 # 1. NovaDataset.get_sample_metadata
@@ -266,7 +266,7 @@ class TestFinalTurnNoReset:
         import inspect
         import textwrap
 
-        from radiant_harness.base import AgenticProcessorBase
+        from gaze.base import AgenticProcessorBase
 
         source = textwrap.dedent(inspect.getsource(AgenticProcessorBase._run_analysis))
         tree = ast.parse(source)
@@ -293,7 +293,7 @@ class TestNovaCliAsyncOffload:
         from examples.nova.src import cli
         from examples.nova.src.config import NOVAConfig
         from examples.nova.src.config import TaskType
-        from radiant_harness import AgenticResult
+        from gaze import AgenticResult
 
         class _FakeDataset:
             def __len__(self) -> int:

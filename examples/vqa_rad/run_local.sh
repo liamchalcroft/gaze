@@ -2,7 +2,7 @@
 # Run local model evaluation: single-turn then agentic.
 # Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]
 #   MODEL       required — e.g. glm-4.6v-flash, medgemma-1.5-4b-it
-#   BASE_URL    defaults to http://192.168.1.138:1234/v1
+#   BASE_URL    defaults to http://localhost:1234/v1
 #   MAX_SAMPLES defaults to 50
 #
 # NOTE: Only load one model in LM Studio at a time. The health-check probe
@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 MODEL="${1:?Usage: ./run_local.sh MODEL [BASE_URL] [MAX_SAMPLES]}"
-BASE_URL="${2:-http://192.168.1.138:1234/v1}"
+BASE_URL="${2:-http://localhost:1234/v1}"
 MAX_SAMPLES="${3:-50}"
 RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 

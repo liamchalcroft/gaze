@@ -55,7 +55,7 @@ print(f"Loaded {len(env.dataset)} clinical cases")
 uv run python -m examples.agentclinic_nejm.eval \
     --dataset ./data/agentclinic_nejm_extended.jsonl \
     --model qwen3.5-a3b \
-    --base-url http://192.168.1.138:1234/v1 \
+    --base-url http://localhost:1234/v1 \
     --num-samples 10 \
     --output ./results
 ```

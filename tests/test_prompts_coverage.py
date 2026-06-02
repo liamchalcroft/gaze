@@ -13,10 +13,10 @@ from unittest.mock import patch
 
 import pytest
 
-from radiant_harness.exceptions import TemplateError
-from radiant_harness.prompts import combine_prompts
-from radiant_harness.prompts import create_prompt
-from radiant_harness.prompts import load_template
+from gaze.exceptions import TemplateError
+from gaze.prompts import combine_prompts
+from gaze.prompts import create_prompt
+from gaze.prompts import load_template
 
 # ---------------------------------------------------------------------------
 # load_template — OSError (L77-78)

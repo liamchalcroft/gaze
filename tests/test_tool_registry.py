@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.exceptions import UnknownToolError
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools import encode_image
-from radiant_harness.types import ToolResult
+from gaze.exceptions import ToolExecutionError
+from gaze.exceptions import UnknownToolError
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.tools import encode_image
+from gaze.types import ToolResult
 
 
 async def _echo_tool(registry: ToolRegistry, value: int) -> ToolResult:  # noqa: ARG001
@@ -324,7 +324,7 @@ async def test_encode_image_runs_off_event_loop(tmp_path: Path) -> None:
     """Visual tool executors must run encode_image via asyncio.to_thread."""
     import asyncio
 
-    from radiant_harness.tools.visual import create_visual_tools
+    from gaze.tools.visual import create_visual_tools
 
     image_path = _create_temp_image(tmp_path)
     tools = create_visual_tools()
@@ -351,7 +351,7 @@ async def test_encode_image_runs_off_event_loop(tmp_path: Path) -> None:
 
 def test_set_preloaded_image_avoids_disk_read(tmp_path: Path) -> None:
     """set_preloaded_image should work without re-reading from disk."""
-    from radiant_harness.tools.image_manager import ImageManager
+    from gaze.tools.image_manager import ImageManager
 
     image_path = _create_temp_image(tmp_path)
     img = Image.open(image_path)
@@ -368,8 +368,8 @@ def test_set_preloaded_image_avoids_disk_read(tmp_path: Path) -> None:
 
 def test_set_preloaded_image_reset_works(tmp_path: Path) -> None:
     """reset_to_original should work after set_preloaded_image."""
-    from radiant_harness.tools.image_manager import ImageManager
-    from radiant_harness.tools.visual import zoom_image
+    from gaze.tools.image_manager import ImageManager
+    from gaze.tools.visual import zoom_image
 
     image_path = _create_temp_image(tmp_path)
     img = Image.open(image_path)
@@ -402,7 +402,7 @@ def _create_large_temp_image(tmp_path: Path) -> Path:
 @pytest.mark.asyncio
 async def test_crop_with_int_coords_from_json(tmp_path: Path) -> None:
     """Crop box with integer elements (common JSON output) must not crash."""
-    from radiant_harness.tools.visual import create_visual_tools
+    from gaze.tools.visual import create_visual_tools
 
     image_path = _create_large_temp_image(tmp_path)
     tools = create_visual_tools()
@@ -417,7 +417,7 @@ async def test_crop_with_int_coords_from_json(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_threshold_with_float_bounds_from_json(tmp_path: Path) -> None:
     """Threshold with float bounds (e.g. 50.0) must coerce to int."""
-    from radiant_harness.tools.visual import create_visual_tools
+    from gaze.tools.visual import create_visual_tools
 
     image_path = _create_large_temp_image(tmp_path)
     tools = create_visual_tools()
@@ -431,7 +431,7 @@ async def test_threshold_with_float_bounds_from_json(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_crop_rejects_bool_coords(tmp_path: Path) -> None:
     """Boolean values must not pass as crop coordinates."""
-    from radiant_harness.tools.visual import create_visual_tools
+    from gaze.tools.visual import create_visual_tools
 
     image_path = _create_large_temp_image(tmp_path)
     tools = create_visual_tools()
@@ -468,8 +468,8 @@ async def test_beartype_violation_wrapped_as_tool_error(tmp_path: Path) -> None:
 
 def test_zoom_rejects_oversized_result() -> None:
     """Zoom that exceeds max_image_dimension must raise ValueError."""
-    from radiant_harness.config import ImageProcessingConfig
-    from radiant_harness.tools.visual import zoom_image
+    from gaze.config import ImageProcessingConfig
+    from gaze.tools.visual import zoom_image
 
     cfg = ImageProcessingConfig(max_image_dimension=1000)
     img = Image.new("RGB", (512, 512))
@@ -480,8 +480,8 @@ def test_zoom_rejects_oversized_result() -> None:
 
 def test_zoom_within_max_dimension_succeeds() -> None:
     """Zoom that stays within max_image_dimension must succeed."""
-    from radiant_harness.config import ImageProcessingConfig
-    from radiant_harness.tools.visual import zoom_image
+    from gaze.config import ImageProcessingConfig
+    from gaze.tools.visual import zoom_image
 
     cfg = ImageProcessingConfig(max_image_dimension=2000)
     img = Image.new("RGB", (512, 512))
@@ -498,7 +498,7 @@ def test_openai_adapter_disables_sdk_retries() -> None:
     """SDK max_retries should be 0 to let tenacity control retry logic."""
     import os
 
-    from radiant_harness.models.openai_adapter import OpenAIAdapter
+    from gaze.models.openai_adapter import OpenAIAdapter
 
     adapter = OpenAIAdapter(model_name="test-model")
     # Set a dummy key to allow client creation
@@ -520,13 +520,13 @@ class TestEncodedImageDataUrlCached:
     """Verify to_data_url() returns the pre-computed string, not a new one."""
 
     def test_data_url_is_precomputed_in_post_init(self) -> None:
-        from radiant_harness.tools.registry import EncodedImage
+        from gaze.tools.registry import EncodedImage
 
         enc = EncodedImage(data="abc123", mime_type="image/jpeg")
         assert enc._data_url == "data:image/jpeg;base64,abc123"
 
     def test_to_data_url_returns_same_object(self) -> None:
-        from radiant_harness.tools.registry import EncodedImage
+        from gaze.tools.registry import EncodedImage
 
         enc = EncodedImage(data="xyz", mime_type="image/png")
         url1 = enc.to_data_url()
@@ -541,7 +541,7 @@ class TestEncodedImageDataUrlCached:
         assert url == f"data:{result.mime_type};base64,{result.data}"
 
     def test_frozen_dataclass_rejects_mutation(self) -> None:
-        from radiant_harness.tools.registry import EncodedImage
+        from gaze.tools.registry import EncodedImage
 
         enc = EncodedImage(data="abc", mime_type="image/jpeg")
         with pytest.raises(AttributeError):

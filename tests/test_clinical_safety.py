@@ -13,8 +13,8 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.tools.visual import apply_intensity_threshold
+from gaze.config import ImageProcessingConfig
+from gaze.tools.visual import apply_intensity_threshold
 
 # Guard imports that chain through evaluation/__init__.py → detection.py → torch
 try:
@@ -275,7 +275,7 @@ class TestIoUAreaPenaltyBypass:
     def test_normalized_mode_pixel_coords_penalized_with_image_area(self) -> None:
         """When normalized=True but model outputs pixel coords,
         the area penalty applies if image_area is provided in info."""
-        from radiant_harness.verifiers.rewards import IoUReward
+        from gaze.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
@@ -292,7 +292,7 @@ class TestIoUAreaPenaltyBypass:
     def test_normalized_mode_pixel_coords_fails_closed_without_image_area(self) -> None:
         """When pixel coords are detected but no image_area in info,
         fail closed (return 0.0) to prevent gaming via coord mismatch."""
-        from radiant_harness.verifiers.rewards import IoUReward
+        from gaze.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
@@ -305,7 +305,7 @@ class TestIoUAreaPenaltyBypass:
 
     def test_normalized_mode_valid_coords_penalized(self) -> None:
         """Full-image box in [0,1] range gets full penalty."""
-        from radiant_harness.verifiers.rewards import IoUReward
+        from gaze.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
@@ -317,7 +317,7 @@ class TestIoUAreaPenaltyBypass:
 
     def test_normalized_mode_small_box_no_penalty(self) -> None:
         """Small boxes below penalty_start should not be penalized."""
-        from radiant_harness.verifiers.rewards import IoUReward
+        from gaze.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
@@ -339,14 +339,14 @@ class TestConfigBoundsDefaults:
     def test_min_threshold_window_default_at_least_50(self) -> None:
         """A 30-unit window (11.8% of 8-bit range) destroys subtle lesion
         contrast. Default must be >= 50 for brain MRI safety."""
-        from radiant_harness.config import get_config
+        from gaze.config import get_config
 
         cfg = get_config()
         assert cfg.image.min_threshold_window >= 50
 
     def test_min_window_width_default_at_least_50(self) -> None:
         """Narrow windows compress 8-bit MRI to few output levels."""
-        from radiant_harness.config import get_config
+        from gaze.config import get_config
 
         cfg = get_config()
         assert cfg.image.min_window_width >= 50

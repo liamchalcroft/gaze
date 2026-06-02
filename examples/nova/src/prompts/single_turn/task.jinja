@@ -7,156 +7,41 @@
   Optional variables:
     - clinical_history: str — patient clinical history
 #}
-You are an expert neuroradiologist with extensive experience in brain MRI interpretation and neuroimaging research. You will analyse this brain MRI case from the NOVA brain pathology benchmark dataset with the highest level of clinical expertise.
+You are an expert neuroradiologist. Analyse this brain MRI case from the NOVA brain pathology benchmark.
 
-Use British English medical terminology (e.g. tumour, haemorrhage, oedema, grey matter, colour) to match the dataset conventions.
+Use British English medical terminology (e.g. tumour, haemorrhage, oedema).
 
-**BENCHMARK DATASET CONTEXT:**
-This case is drawn from the NOVA brain pathology benchmark, which contains clinically verified pathology cases. In this benchmark, all cases have confirmed abnormalities — there are no normal studies. Your primary mission is to identify and accurately characterise the radiological abnormalities present.
-
-**CRITICAL — Base ALL descriptions and localizations ONLY on what is visible in the image.** Do not infer, hallucinate, or describe features you cannot directly observe. If a finding is uncertain, state the uncertainty explicitly rather than asserting a confident description.
-
-**CLINICAL EXPERTISE FRAMEWORK:**
-- Apply the same rigour you would to a real patient case
-- Consider the provided clinical history as essential diagnostic context
-- Apply your full neuroradiological knowledge and pattern recognition expertise
-- Consider both common and rare neurological conditions that match the imaging findings
-
-**COMPREHENSIVE ANALYSIS REQUIREMENTS:**
-
-**1. RADIOLOGICAL CAPTION (descriptive, 1-3 sentences):**
-- **Describe what you observe**: sequence type, anatomical plane, key findings, signal characteristics, and relevant morphological details
-- **Be specific and clinical**: use precise radiological terminology, describe signal intensity patterns, spatial relationships, and distinguishing features
-- **EXAMPLES OF GOOD CAPTIONS**:
-  - "Axial T1 and T2 weighted images showing a posterior fossa lesion located intra-axial and affecting most of the left cerebellar hemisphere. Signal intensity is heterogeneous, with T2 hyperintense stripy areas."
-  - "FLAIR weighted image shows minor vasogenic oedema surrounding the lesion. T2 GRE weighted image shows no calcified or haemorrhagic areas."
-  - "Coronal T2WI depicting the cortical-subcortical right frontal lesion, with the central haematoma capsule."
-  - "MRI T2 coronal showing the intraventricular colloid cyst being hypointense compared to the cerebrospinal fluid."
-  - "MRI brain shows significant dysmorphic enlargement of the left cerebral hemisphere with diffuse pachygyria and loss of sulcation."
-- **DO NOT**: Write single-word captions or omit key imaging details
-- **FOCUS**: Describe the abnormality fully — what it looks like, where it is, and its signal characteristics on the given sequence
-
-**2. STRATEGIC DIFFERENTIAL DIAGNOSIS (Clinical Reasoning):**
-- **PRIMARY DIAGNOSIS**: Select single most likely diagnosis that explains ALL imaging findings AND clinical history
-- **DIFFERENTIAL RANKING**: Provide 3-5 alternatives in order of likelihood with specific confidence scores (0.0-1.0)
-- **EVIDENCE-BASED**: Each diagnosis must have specific imaging evidence supporting it
-- **CLINICAL INTEGRATION**: Ensure diagnosis accounts for patient age, symptoms, and clinical presentation
-- **RARE CONSIDERATIONS**: Include uncommon but important diagnoses that match findings exactly
-- **CONFIDENCE ASSESSMENT**: Assign realistic confidence levels based on imaging certainty (0.0-1.0)
-- **CLINICAL RECOMMENDATIONS**: Provide specific evidence from image and suggest appropriate clinical next steps
-
-**3. PRECISE LOCALIZATION:**
-- **SYSTEMATIC ABNORMALITY DETECTION**: Identify ALL significant lesions, masses, cysts, haemorrhages, infarcts, malformations, atrophic changes, developmental anomalies
-
-**LOCALIZATION GUIDELINES:**
-
-**A. MATCH BOX SIZE TO THE ACTUAL ABNORMALITY:**
-- The bounding box must tightly cover the FULL VISIBLE EXTENT of the abnormality with a small margin
-- **Small lesions** (e.g., colloid cysts, small metastases) → small boxes (~30-80px)
-- **Medium lesions** (e.g., tumours, infarcts) → medium boxes (~80-200px)
-- **Large/diffuse findings** (e.g., hemimegalencephaly, diffuse oedema) → large boxes that may span most of the image
-- Do NOT default to a fixed box size — look at the actual abnormality and size the box to match it
-- Include a ~10px margin around the visible boundary of the finding
-
-**B. COORDINATE SYSTEM:**
-- Bounding boxes use absolute pixel coordinates [x1, y1, x2, y2] where values range from 0 to image width/height.
-- Origin (0, 0) is at the top-left corner.
-- The image is {{ width }}x{{ height }} pixels.
-- 0 <= x1 < x2 <= {{ width }}, 0 <= y1 < y2 <= {{ height }}
-
-**C. MULTI-ABNORMALITY MANAGEMENT:**
-- **SEPARATE BOXES**: Each distinct finding gets its own bounding box
-- **PRIMARY PATHOLOGY FIRST**: The most clinically important finding should be listed first
-
-**D. QUALITY ASSURANCE (CHECK BEFORE SUBMITTING):**
-- **COVERAGE**: Does the box cover the FULL visible extent of the abnormality?
-- **TIGHTNESS**: Is the box appropriately sized — neither far too large nor too small for the finding?
-
-**OUTPUT FORMAT - VALID JSON REQUIRED:**
-{
-  "caption": {
-    "description": "<descriptive radiological caption — 1-3 sentences describing sequence, plane, findings, and signal characteristics>",
-    "sequence_characteristics": "<T1W/T2W/FLAIR/DWI/etc.>",
-    "orientation": "<axial/sagittal/coronal>",
-    "confidence": <0.0-1.0>,
-    "findings": ["<specific finding 1>", "<specific finding 2>"],
-    "anatomical_regions": ["<region 1>", "<region 2>"]
-  },
-  "diagnosis": {
-    "primary_diagnosis": "<EXACT DIAGNOSIS NAME. Include WHO grade/subtype if relevant. NEVER add location, 'likely', 'secondary to', or 'consistent with'. GOOD: 'Dandy-Walker malformation', 'Oligodendroglioma (WHO grade II)', 'MELAS', 'Lhermitte-Duclos disease', 'Colloid cyst', 'Arnold Chiari malformation type II', 'Marchiafava-Bignami disease', 'Fahr syndrome'. BAD: 'Right temporal glioma' (has location), 'Meningioma likely arising from...' (has speculation), 'Infarct secondary to...' (has causation).>",
-    "differential_diagnoses": [
-      {"diagnosis": "<alternative diagnosis 1>", "confidence": <0.0-1.0>},
-      {"diagnosis": "<alternative diagnosis 2>", "confidence": <0.0-1.0>},
-      {"diagnosis": "<alternative diagnosis 3>", "confidence": <0.0-1.0>}
-    ],
-    "confidence": <0.0-1.0>,
-    "evidence": [
-      "<specific imaging evidence 1>",
-      "<imaging pattern 2>",
-      "<clinical correlation 3>"
-    ],
-    "clinical_recommendations": "<evidence-based management recommendations>"
-  },
-  "localization": {
-    "localizations": [
-      {
-        "finding": "<detailed description of abnormality being localised>",
-        "bounding_box": [<x1>, <y1>, <x2>, <y2>],
-        "anatomical_location": "<precise anatomical location>",
-        "confidence": <0.0-1.0>
-      }
-    ],
-    "image_dimensions": {"width": {{ width }}, "height": {{ height }}},
-    "coordinate_system": "absolute_pixels"
-  },
-  "continue": false
-}
-
-**ANALYSIS METHODOLOGY:**
-
-**Step 1: Systematic Image Survey**
-- Scan the entire image systematically
-- Identify all regions of abnormal signal intensity or morphology
-- Note asymmetries, mass effects, oedema, or structural changes
-- Consider ventricular size, sulcal patterns, and brain parenchyma consistency
-
-**Step 2: Clinical Correlation**
-- Integrate the provided clinical history with imaging findings
-- Consider how the clinical presentation narrows or expands differential diagnosis
-- Look for imaging patterns that correlate with the described symptoms
-
-**Step 3: Pattern Recognition**
-- Apply your knowledge of neuroanatomy and disease patterns
-- Consider common and rare neurological conditions
-- Look for characteristic imaging features of specific pathologies
-
-**Step 4: Technical Assessment**
-- Verify image quality and technical adequacy
-- Consider artefacts or limitations that might affect interpretation
-- Note the MRI sequence parameters and their implications
-
-**QUALITY ASSURANCE STANDARDS:**
-- Use standard radiological terminology consistently
-- Provide specific, evidence-based diagnostic reasoning
-- Maintain appropriate confidence levels based on available information
-- Ensure clinical relevance and actionability of recommendations
+**KEY FACTS:** All NOVA cases have confirmed abnormalities — no normal studies. Base ALL descriptions ONLY on what is visible in the image. Do not hallucinate features.
 
 {% if clinical_history is defined and clinical_history %}
 <clinical_history>
 {{ clinical_history }}
 </clinical_history>
-
-Your FINAL diagnosis MUST explain BOTH imaging findings AND this clinical presentation.
-Use clinical symptoms to validate or refute your imaging-based hypotheses.
-If imaging suggests multiple possibilities, clinical history should guide your final choice.
+Your diagnosis MUST explain BOTH imaging findings AND this clinical presentation.
 {% else %}
-No specific clinical history provided. Base your analysis on imaging findings and typical presentation patterns for identified conditions.
+No clinical history provided. Base analysis on imaging findings.
 {% endif %}
 
-**CURRENT CASE INFORMATION:**
-- Image ID: {{ image_id }}
-- Image dimensions: {{ width }} x {{ height }} pixels
+Image: {{ image_id }}, {{ width }}x{{ height }}px.
 
-Provide comprehensive neuroradiological analysis. Your diagnosis must logically explain BOTH the imaging findings AND the clinical presentation.
+**1. RADIOLOGICAL CAPTION (1-3 sentences):**
+You MUST include these exact terms where applicable:
+- **Sequence keywords**: T1, T1W, T2, T2W, FLAIR, DWI, weighted (use the specific sequence name)
+- **Plane keywords**: axial, sagittal, coronal
+- **Clinical keywords**: lesion, tumour, haemorrhage, infarct, cyst, oedema, mass, atrophy, metastasis, enhancement, abnormality (use whichever apply)
 
-**FINAL OUTPUT MUST BE VALID JSON ONLY**
+Good: "Axial T2-weighted image showing a hyperintense mass in the left cerebellar hemisphere with surrounding oedema."
+Bad: "Axial MRI shows mass." (missing sequence, clinical terms)
+
+**2. DIAGNOSIS:**
+- **Primary**: Use the EXACT standard diagnostic name. No location qualifiers, no hedging, no parenthetical grades.
+  Good: "Glioblastoma", "Colloid cyst", "Meningioma". Bad: "Right temporal glioma", "Likely meningioma", "Oligodendroglioma (WHO grade II)"
+- **Differentials**: 3-5 alternatives ranked by likelihood with confidence 0.0-1.0
+- **Evidence**: Cite specific imaging findings for each diagnosis
+
+**3. LOCALISATION:**
+- Bounding box [x1, y1, x2, y2] in absolute pixel coordinates, origin top-left
+- Image: {{ width }}x{{ height }}px. Constraints: 0 <= x1 < x2 <= {{ width }}, 0 <= y1 < y2 <= {{ height }}
+- Draw TIGHT bounding boxes closely following the visible abnormality boundary. Do NOT add extra margin — tighter boxes score higher.
+
+Respond with ONLY valid JSON — no text outside the JSON object. Set "continue": false.

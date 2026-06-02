@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
-from radiant_harness.models.lmstudio_adapter import list_lmstudio_model_ids
-from radiant_harness.models.lmstudio_adapter import require_lmstudio_model
-from radiant_harness.models.openai_adapter import OpenAIAdapter
+from gaze.models.lmstudio_adapter import LMStudioAdapter
+from gaze.models.lmstudio_adapter import list_lmstudio_model_ids
+from gaze.models.lmstudio_adapter import require_lmstudio_model
+from gaze.models.openai_adapter import OpenAIAdapter
 
 
 class TestClientCreation:
@@ -42,12 +42,15 @@ class TestClientCreation:
     def test_custom_timeout(self) -> None:
         adapter = LMStudioAdapter(model_name="test-model", timeout=600.0)
         client = adapter.client
-        assert client.timeout == 600.0
+        # Read timeout carries the custom value; connect is always fast
+        assert client.timeout.read == 600.0
+        assert client.timeout.connect == 10.0
 
     def test_default_timeout_is_300(self) -> None:
         adapter = LMStudioAdapter(model_name="test-model")
         client = adapter.client
-        assert client.timeout == 300.0
+        assert client.timeout.read == 300.0
+        assert client.timeout.connect == 10.0
 
     def test_reasoning_and_caching_disabled(self) -> None:
         adapter = LMStudioAdapter(model_name="test-model")
@@ -135,7 +138,7 @@ class TestInheritance:
 
     def test_parent_validate_base_url_rejects_http(self) -> None:
         """OpenAIAdapter._validate_base_url must reject HTTP (sanity check)."""
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         with pytest.raises(ModelError, match="HTTPS"):
             OpenAIAdapter._validate_base_url("http://localhost:1234/v1")
@@ -145,25 +148,25 @@ class TestURLSchemeValidation:
     """Verify LMStudio rejects dangerous URL schemes."""
 
     def test_file_scheme_rejected(self) -> None:
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         with pytest.raises(ModelError, match="http://.*https://"):
             LMStudioAdapter._validate_base_url("file:///etc/passwd")
 
     def test_ftp_scheme_rejected(self) -> None:
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         with pytest.raises(ModelError, match="http://.*https://"):
             LMStudioAdapter._validate_base_url("ftp://evil.com/model")
 
     def test_empty_scheme_rejected(self) -> None:
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         with pytest.raises(ModelError):
             LMStudioAdapter._validate_base_url("localhost:1234/v1")
 
     def test_constructor_rejects_file_url(self) -> None:
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         with pytest.raises(ModelError, match="http://.*https://"):
             LMStudioAdapter(model_name="test", base_url="file:///etc/passwd")
@@ -258,7 +261,7 @@ class TestProtocolSignatureParity:
     def test_generate_chat_signature_matches_protocol(self) -> None:
         import inspect
 
-        from radiant_harness.models.adapter_protocol import AdapterProtocol
+        from gaze.models.adapter_protocol import AdapterProtocol
 
         proto_sig = inspect.signature(AdapterProtocol.generate_chat)
         lm_sig = inspect.signature(LMStudioAdapter.generate_chat)
@@ -304,7 +307,7 @@ class TestLMStudioPreflight:
     @pytest.mark.asyncio
     async def test_list_lmstudio_model_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda timeout: _MockAsyncClient(  # noqa: ARG005
                 {"data": [{"id": "qwen3.5-a3b"}, {"id": "gemma-3"}]}
             ),
@@ -320,10 +323,10 @@ class TestLMStudioPreflight:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from radiant_harness.exceptions import ModelError
+        from gaze.exceptions import ModelError
 
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda timeout: _MockAsyncClient({"data": [{"id": "gemma-3"}]}),  # noqa: ARG005
         )
 

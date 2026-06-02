@@ -13,7 +13,7 @@ import pytest
 from examples.nova.src.rewards import compute_caption_reward
 
 # IoUReward from the core harness
-from radiant_harness.verifiers.rewards import IoUReward
+from gaze.verifiers.rewards import IoUReward
 
 # Optional torch imports for detection tests
 try:
@@ -35,18 +35,18 @@ class TestCaptionRewardMultiset:
     def test_repeated_tokens_penalized(self) -> None:
         """Repeating a token should not inflate precision.
 
-        'the the the dog' has 4 tokens, 3 of which are 'the'.
-        Against 'the dog', multiset intersection is {'the':1, 'dog':1} = 2.
+        'mass mass mass dog' has 4 content tokens, 3 of which are 'mass'.
+        Against 'mass dog', multiset intersection is {'mass':1, 'dog':1} = 2.
         Precision = 2/4 = 0.5, Recall = 2/2 = 1.0, F1 = 2/3 ≈ 0.667.
         With set-based (old bug), it would be 1.0.
         """
-        score = compute_caption_reward("the the the dog", "the dog")
+        score = compute_caption_reward("mass mass mass dog", "mass dog")
         assert score < 0.9, f"Expected < 0.9 for inflated repetition, got {score}"
         assert abs(score - 2 / 3) < 1e-6
 
     def test_identical_strings(self) -> None:
         """Identical strings should score 1.0."""
-        assert compute_caption_reward("the quick brown fox", "the quick brown fox") == 1.0
+        assert compute_caption_reward("quick brown fox jumps", "quick brown fox jumps") == 1.0
 
     def test_empty_prediction(self) -> None:
         assert compute_caption_reward("", "some reference") == 0.0
@@ -56,6 +56,9 @@ class TestCaptionRewardMultiset:
 
     def test_both_empty(self) -> None:
         assert compute_caption_reward("", "") == 0.0
+
+    # NOTE: Tests below use non-stopword tokens (e.g. "cat", "dog", "fox")
+    # because compute_caption_reward now filters stopwords like "a", "the", "in".
 
     def test_no_overlap(self) -> None:
         assert compute_caption_reward("alpha beta", "gamma delta") == 0.0
@@ -69,22 +72,22 @@ class TestCaptionRewardMultiset:
 
     def test_frequency_matters_both_sides(self) -> None:
         """Both pred and ref have repeated tokens — Counter intersection uses min."""
-        # pred: a a b (counts: a=2, b=1)
-        # ref:  a b b (counts: a=1, b=2)
-        # intersection: min(a)=1, min(b)=1 => 2
+        # pred: cat cat dog (counts: cat=2, dog=1)
+        # ref:  cat dog dog (counts: cat=1, dog=2)
+        # intersection: min(cat)=1, min(dog)=1 => 2
         # P = 2/3, R = 2/3, F1 = 2/3
-        score = compute_caption_reward("a a b", "a b b")
+        score = compute_caption_reward("cat cat dog", "cat dog dog")
         assert abs(score - 2 / 3) < 1e-6
 
     def test_superset_prediction(self) -> None:
         """Prediction has all ref tokens plus extras — recall=1 but precision<1."""
-        score = compute_caption_reward("a b c d", "a b")
+        score = compute_caption_reward("cat dog fox elk", "cat dog")
         # intersection=2, P=2/4=0.5, R=2/2=1.0, F1=2/3
         assert abs(score - 2 / 3) < 1e-6
 
     def test_subset_prediction(self) -> None:
         """Prediction is a subset of reference — precision=1 but recall<1."""
-        score = compute_caption_reward("a b", "a b c d")
+        score = compute_caption_reward("cat dog", "cat dog fox elk")
         # intersection=2, P=2/2=1.0, R=2/4=0.5, F1=2/3
         assert abs(score - 2 / 3) < 1e-6
 

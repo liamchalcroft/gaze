@@ -18,21 +18,21 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools.visual import _PIXEL_COORD_THRESHOLD
-from radiant_harness.tools.visual import WINDOW_PRESETS
-from radiant_harness.tools.visual import _maybe_normalize_box
-from radiant_harness.tools.visual import _maybe_normalize_point
-from radiant_harness.tools.visual import adjust_brightness
-from radiant_harness.tools.visual import adjust_contrast
-from radiant_harness.tools.visual import adjust_sharpness
-from radiant_harness.tools.visual import apply_intensity_threshold
-from radiant_harness.tools.visual import apply_window_level
-from radiant_harness.tools.visual import create_visual_tools
-from radiant_harness.tools.visual import crop_image
-from radiant_harness.tools.visual import zoom_image
+from gaze.config import ImageProcessingConfig
+from gaze.exceptions import ToolExecutionError
+from gaze.tools import ToolRegistry
+from gaze.tools.visual import _PIXEL_COORD_THRESHOLD
+from gaze.tools.visual import WINDOW_PRESETS
+from gaze.tools.visual import _maybe_normalize_box
+from gaze.tools.visual import _maybe_normalize_point
+from gaze.tools.visual import adjust_brightness
+from gaze.tools.visual import adjust_contrast
+from gaze.tools.visual import adjust_sharpness
+from gaze.tools.visual import apply_intensity_threshold
+from gaze.tools.visual import apply_window_level
+from gaze.tools.visual import create_visual_tools
+from gaze.tools.visual import crop_image
+from gaze.tools.visual import zoom_image
 
 
 def _create_test_image(tmp_path: Path, size: tuple[int, int] = (64, 64)) -> Path:

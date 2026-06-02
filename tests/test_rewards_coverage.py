@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from radiant_harness.verifiers.rewards import CombinedReward
-from radiant_harness.verifiers.rewards import ExactMatchReward
-from radiant_harness.verifiers.rewards import IoUReward
-from radiant_harness.verifiers.rewards import TokenF1Reward
+from gaze.verifiers.rewards import CombinedReward
+from gaze.verifiers.rewards import ExactMatchReward
+from gaze.verifiers.rewards import IoUReward
+from gaze.verifiers.rewards import TokenF1Reward
 
 # ---------------------------------------------------------------------------
 # ExactMatchReward._normalize

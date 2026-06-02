@@ -178,7 +178,7 @@ def run_training(
     with open(output_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
-    print(f"\nTraining Configuration:")
+    print("\nTraining Configuration:")
     print(f"  Model: {config['model']}")
     print(f"  Learning Rate: {config['learning_rate']}")
     print(f"  Batch Size: {config['batch_size']}")

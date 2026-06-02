@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from radiant_harness.exceptions import TemplateError
-from radiant_harness.prompts import combine_prompts
-from radiant_harness.prompts import create_prompt
-from radiant_harness.prompts import load_template
+from gaze.exceptions import TemplateError
+from gaze.prompts import combine_prompts
+from gaze.prompts import create_prompt
+from gaze.prompts import load_template
 
 
 def _write_template(dir_path: Path, name: str, content: str) -> None:
@@ -115,14 +115,14 @@ def test_load_template_syntax_error(tmp_path: Path) -> None:
 
 
 def test_load_prompt_rejects_invalid_mode(tmp_path: Path) -> None:
-    from radiant_harness.prompts import load_prompt
+    from gaze.prompts import load_prompt
 
     with pytest.raises(ValueError, match="Unknown mode"):
         load_prompt(tmp_path, "system.jinja", "nonexistent_mode", {})
 
 
 def test_load_prompt_missing_mode_dir(tmp_path: Path) -> None:
-    from radiant_harness.prompts import load_prompt
+    from gaze.prompts import load_prompt
 
     with pytest.raises(ValueError, match="Mode directory not found"):
         load_prompt(tmp_path, "system.jinja", "agentic", {})
@@ -132,7 +132,7 @@ def test_load_prompt_missing_mode_dir(tmp_path: Path) -> None:
 # Base template rendering (smoke tests)
 # ---------------------------------------------------------------------------
 
-BASE_PROMPTS = Path("src/radiant_harness/prompts")
+BASE_PROMPTS = Path("src/gaze/prompts")
 
 
 @pytest.mark.parametrize(
@@ -223,7 +223,7 @@ def test_nova_single_turn_task_renders() -> None:
     result = load_template(NOVA_PROMPTS / "single_turn" / "task.jinja", ctx)
     assert "512" in result
     assert "case_001.png" in result
-    assert "No specific clinical history provided" in result
+    assert "No clinical history provided" in result
 
 
 def test_nova_single_turn_task_with_clinical_history() -> None:
@@ -306,10 +306,10 @@ def test_tool_documenter_generates_nonempty_docs() -> None:
     """ToolDocumenter.generate_prompt_documentation() returns non-empty string
     when tools are registered — this is what _run_analysis() injects.
     """
-    from radiant_harness.tools import create_visual_tools
+    from gaze.tools import create_visual_tools
 
     tools = create_visual_tools()
-    from radiant_harness.tools.registry import ToolDocumenter
+    from gaze.tools.registry import ToolDocumenter
 
     documenter = ToolDocumenter(tools)
     docs = documenter.generate_prompt_documentation()
@@ -322,8 +322,8 @@ def test_tool_documenter_generates_nonempty_docs() -> None:
 
 def test_tool_documenter_covers_all_visual_tools() -> None:
     """Auto-generated tool docs should include ALL registered visual tools."""
-    from radiant_harness.tools import create_visual_tools
-    from radiant_harness.tools.registry import ToolDocumenter
+    from gaze.tools import create_visual_tools
+    from gaze.tools.registry import ToolDocumenter
 
     tools = create_visual_tools()
     documenter = ToolDocumenter(tools)
@@ -376,7 +376,7 @@ def test_nova_agentic_renders_with_processor_context() -> None:
     assert "neuroradiologist" in result
     assert "512" in result
     assert "Progressive headache" in result
-    assert "Coordinate Space Warning" in result
+    assert "COORDINATE SYSTEMS" in result
 
 
 def test_nova_single_turn_renders_with_processor_context() -> None:

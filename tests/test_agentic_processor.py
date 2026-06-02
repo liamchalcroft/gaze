@@ -5,16 +5,16 @@ from typing import Any
 
 import pytest
 
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import ImageInput
-from radiant_harness.exceptions import AgenticProcessingError
-from radiant_harness.exceptions import SchemaValidationError
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import GenerationLog
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.types import AgenticResult
-from radiant_harness.types import ToolResult
+from gaze.base import AgenticProcessorBase
+from gaze.base import ImageInput
+from gaze.exceptions import AgenticProcessingError
+from gaze.exceptions import SchemaValidationError
+from gaze.models import AdapterProtocol
+from gaze.models import GenerationLog
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.types import AgenticResult
+from gaze.types import ToolResult
 
 
 class FakeAdapter(AdapterProtocol):
@@ -1374,8 +1374,8 @@ async def test_unknown_tool_error_lists_available_tools() -> None:
 
 def test_coord_modifying_tools_match_registered_names() -> None:
     """Every name in _COORD_MODIFYING_TOOLS must match an actual registered tool."""
-    from radiant_harness.base import _COORD_MODIFYING_TOOLS
-    from radiant_harness.tools import create_visual_tools
+    from gaze.base import _COORD_MODIFYING_TOOLS
+    from gaze.tools import create_visual_tools
 
     tools = create_visual_tools(disabled_tools=set())
     registered_names = {t.name for t in tools}
@@ -1393,7 +1393,7 @@ def test_flip_tools_in_coord_modifying_set() -> None:
     These tools mirror coordinate axes, so bounding box coordinates from
     a flipped image are invalid in the original coordinate space.
     """
-    from radiant_harness.base import _COORD_MODIFYING_TOOLS
+    from gaze.base import _COORD_MODIFYING_TOOLS
 
     assert "flip_horizontal" in _COORD_MODIFYING_TOOLS
     assert "flip_vertical" in _COORD_MODIFYING_TOOLS
@@ -1640,8 +1640,8 @@ async def test_create_tool_registry_reuses_shared_search_managers(
     fake_web = _FakeSharedManager()
     fake_img = _FakeSharedManager()
 
-    import radiant_harness.retrieval.image_search as image_search_module
-    import radiant_harness.retrieval.web_search as web_search_module
+    import gaze.retrieval.image_search as image_search_module
+    import gaze.retrieval.web_search as web_search_module
 
     monkeypatch.setattr(web_search_module, "WebSearchManager", lambda: fake_web)
     monkeypatch.setattr(image_search_module, "MedicalImageSearchManager", lambda: fake_img)
@@ -2351,7 +2351,7 @@ async def test_central_coerce_json_types_before_validation() -> None:
 @pytest.mark.asyncio
 async def test_confidence_penalizes_nudge_turns() -> None:
     """Fix #6: Confidence decreases when non-tool assistant turns exceed 1."""
-    from radiant_harness.types import Turn
+    from gaze.types import Turn
 
     class PenaltyProcessor(AgenticProcessorBase):
         def __init__(self) -> None:
@@ -2610,7 +2610,7 @@ async def test_int_continue_coerced_to_bool() -> None:
 # AgenticResult confidence bounds validation
 # =====================================================================
 
-from radiant_harness.types import Turn  # noqa: E402
+from gaze.types import Turn  # noqa: E402
 
 
 class TestAgenticResultConfidenceBounds:

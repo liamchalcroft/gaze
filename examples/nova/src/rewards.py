@@ -18,10 +18,10 @@ from typing import Literal
 
 from beartype import beartype
 
-from radiant_harness.utils import compute_iou
-from radiant_harness.utils import extract_json_from_text
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import extract_completion_text
+from gaze.utils import compute_iou
+from gaze.utils import extract_json_from_text
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import extract_completion_text
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
@@ -45,12 +45,91 @@ class NOVARewardWeights:
 DEFAULT_WEIGHTS = NOVARewardWeights()
 
 
+_CAPTION_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "could",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
+        "his",
+        "her",
+        "its",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "into",
+        "about",
+        "between",
+        "through",
+        "during",
+        "before",
+        "after",
+        "and",
+        "or",
+        "but",
+        "nor",
+        "not",
+        "no",
+        "so",
+        "if",
+        "then",
+    }
+)
+
+
 @beartype
 def compute_caption_reward(prediction: str, reference: str) -> float:
     """Compute caption reward using token overlap.
 
     Simple token F1 score without heavy dependencies.
     For full evaluation, use evaluation/caption.py with BLEU, BERT, etc.
+
+    Filters stopwords to prevent gaming via generic filler text.
 
     Args:
         prediction: Predicted caption text
@@ -62,10 +141,17 @@ def compute_caption_reward(prediction: str, reference: str) -> float:
     if not prediction or not reference:
         return 0.0
 
-    pred_tokens = Counter(prediction.lower().split())
-    ref_tokens = Counter(reference.lower().split())
+    pred_tokens = Counter(
+        t for t in re.findall(r"\b\w+\b", prediction.lower()) if t not in _CAPTION_STOPWORDS
+    )
+    ref_tokens = Counter(
+        t for t in re.findall(r"\b\w+\b", reference.lower()) if t not in _CAPTION_STOPWORDS
+    )
 
-    if not ref_tokens:
+    # Both empty after stopword filtering = trivial match (aligned with core TokenF1Reward)
+    if not pred_tokens and not ref_tokens:
+        return 1.0
+    if not pred_tokens or not ref_tokens:
         return 0.0
 
     # Multiset intersection: min count for each shared token preserves frequency
@@ -112,9 +198,14 @@ def compute_diagnosis_reward(
     # Top-1: does first prediction match any reference?
     top1_match = _normalize_diagnosis(pred_list[0]) in ref_normalized
 
-    # Coverage: what fraction of references are matched?
+    # Coverage: F1 over matched diagnoses (penalises false positives)
     matches = pred_normalized & ref_normalized
-    coverage = len(matches) / len(ref_normalized)
+    if not matches:
+        coverage = 0.0
+    else:
+        cov_precision = len(matches) / len(pred_normalized)
+        cov_recall = len(matches) / len(ref_normalized)
+        coverage = 2 * cov_precision * cov_recall / (cov_precision + cov_recall)
 
     # Combined score: top-1 is weighted more
     return 0.6 * float(top1_match) + 0.4 * coverage
@@ -231,7 +322,11 @@ def compute_localization_reward(
         reference: List of ground truth bounding boxes
         iou_threshold: IoU threshold for positive match (default 0.5 per NOVA eval)
         image_area: Total image area (width * height) for area penalty.
-            When 0 (default), no area penalty is applied.
+            When 0 (default), no area penalty is applied — a model can
+            score full IoU with degenerate full-image boxes.  Callers
+            MUST pass image_area > 0 when degenerate-box gaming matters
+            (e.g. RL training).  NOVAVerifiersReward computes this
+            automatically from info["image_width"] / info["image_height"].
         area_penalty_start: Area ratio above which penalty begins (default 0.5).
 
     Returns:
@@ -241,6 +336,16 @@ def compute_localization_reward(
         return 1.0
     if not prediction or not reference:
         return 0.0
+
+    if image_area <= 0 and prediction:
+        import warnings
+
+        warnings.warn(
+            "compute_localization_reward: image_area=0 disables area penalty. "
+            "Full-image boxes will receive full IoU credit. Pass image_area > 0 "
+            "when degenerate-box gaming matters (e.g. RL training).",
+            stacklevel=2,
+        )
 
     matched_refs = set()
     true_positives = 0
@@ -293,7 +398,7 @@ def compute_localization_reward(
 class NOVAVerifiersReward(BaseRewardFunction):
     """Verifiers-compatible reward function for NOVA tasks.
 
-    Adapts NOVA evaluation metrics to the radiant_harness BaseRewardFunction
+    Adapts NOVA evaluation metrics to the gaze BaseRewardFunction
     interface for use with verifiers training and evaluation.
 
     Example:

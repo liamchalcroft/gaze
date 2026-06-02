@@ -14,14 +14,14 @@ from typing import Any
 
 from beartype import beartype
 
-from radiant_harness import AgenticProcessorBase
-from radiant_harness import ImageInput
-from radiant_harness import Turn
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.utils import extract_json_from_text
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import VerifiableProcessorMixin
-from radiant_harness.verifiers import extract_completion_text
+from gaze import AgenticProcessorBase
+from gaze import ImageInput
+from gaze import Turn
+from gaze.models import AdapterProtocol
+from gaze.utils import extract_json_from_text
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import VerifiableProcessorMixin
+from gaze.verifiers import extract_completion_text
 
 from .schemas import PUBMEDQA_SCHEMA
 from .schemas import normalize_pubmedqa_answer
@@ -159,11 +159,12 @@ class PubmedQAProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
             "Your task is to answer yes/no/maybe questions based on scientific evidence.",
             "",
             "Guidelines:",
-            "- Answer 'yes' if the evidence clearly supports an affirmative answer",
+            "- Answer 'yes' ONLY if the evidence clearly and directly supports an affirmative answer",
             "- Answer 'no' if the evidence clearly contradicts or negates the claim",
-            "- Answer 'maybe' if the evidence is inconclusive, mixed, or insufficient",
+            "- Answer 'maybe' if the evidence is inconclusive, mixed, insufficient, "
+            "or if the study has significant limitations",
             "- Base your answer ONLY on the provided context and any search results",
-            "- Provide clear reasoning linking evidence to your conclusion",
+            "- 'maybe' is a valid and common answer — use it when the evidence is not definitive",
             "- Extract key phrases that directly support your answer",
             "",
         ]
@@ -225,8 +226,7 @@ class PubmedQAProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
 
         # Bonus for using search tools (shows thorough analysis)
         search_turns = sum(
-            1 for t in turns
-            if t.tool_calls and any(tc.name == "search_web" for tc in t.tool_calls)
+            1 for t in turns if t.tool_calls and any(tc.name == "search_web" for tc in t.tool_calls)
         )
         search_bonus = min(search_turns * 0.05, 0.1)
 

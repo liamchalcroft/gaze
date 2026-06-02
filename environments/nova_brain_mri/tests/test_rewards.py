@@ -8,22 +8,22 @@ from typing import Any
 import pytest
 
 
-def test_no_radiant_harness_imports():
-    """rewards.py must not import from radiant_harness."""
+def test_no_gaze_imports():
+    """rewards.py must not import from gaze."""
     from pathlib import Path
 
     rewards_path = Path(__file__).parent.parent / "src" / "nova_brain_mri" / "rewards.py"
     source = rewards_path.read_text()
-    assert "from radiant_harness" not in source
-    assert "import radiant_harness" not in source
+    assert "from gaze" not in source
+    assert "import gaze" not in source
 
 
-def test_no_radiant_harness_in_pyproject():
+def test_no_gaze_in_pyproject():
     from pathlib import Path
 
     pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
     source = pyproject_path.read_text()
-    assert "radiant-harness" not in source
+    assert "gaze-vlm" not in source
 
 
 def test_utils_importable():

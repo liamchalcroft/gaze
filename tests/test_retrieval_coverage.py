@@ -10,13 +10,13 @@ from unittest.mock import patch
 import aiohttp
 import pytest
 
-from radiant_harness.retrieval.image_search import ImageDownloadError
-from radiant_harness.retrieval.image_search import ImageSearchError
-from radiant_harness.retrieval.image_search import ImageSearchResult
-from radiant_harness.retrieval.image_search import MedicalImageSearchManager
-from radiant_harness.retrieval.image_search import OpenISearchEngine
-from radiant_harness.retrieval.image_search import _validate_download_url
-from radiant_harness.retrieval.web_search import PubMedSearchEngine
+from gaze.retrieval.image_search import ImageDownloadError
+from gaze.retrieval.image_search import ImageSearchError
+from gaze.retrieval.image_search import ImageSearchResult
+from gaze.retrieval.image_search import MedicalImageSearchManager
+from gaze.retrieval.image_search import OpenISearchEngine
+from gaze.retrieval.image_search import _validate_download_url
+from gaze.retrieval.web_search import PubMedSearchEngine
 
 # ---------------------------------------------------------------------------
 # PubMed: _fetch_article_details  (lines 275-336)
@@ -303,7 +303,7 @@ class TestDoDownload:
             patch.object(
                 mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
             ),
-            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="HTTP 404"),
         ):
             await mgr._do_download(
@@ -334,7 +334,7 @@ class TestDoDownload:
         mock_session.get = MagicMock(return_value=mock_resp)
 
         with (
-            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="not an image"),
         ):
             await mgr._do_download(mock_session, result, "abc", ".jpg")
@@ -363,7 +363,7 @@ class TestDoDownload:
         mock_session.get = MagicMock(return_value=mock_resp)
 
         with (
-            patch("radiant_harness.retrieval.image_search._validate_download_url"),
+            patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="too large"),
         ):
             await mgr._do_download(mock_session, result, "abc", ".jpg")

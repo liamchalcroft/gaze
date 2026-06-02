@@ -8,20 +8,20 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import ImageInput
-from radiant_harness.base import _downscale_image
-from radiant_harness.base import _try_wrap_inner_schema
-from radiant_harness.config import HarnessConfig
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.config import config_context
-from radiant_harness.exceptions import AgenticProcessingError
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import GenerationLog
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools import encode_image
-from radiant_harness.types import ToolResult
+from gaze.base import AgenticProcessorBase
+from gaze.base import ImageInput
+from gaze.base import _downscale_image
+from gaze.base import _try_wrap_inner_schema
+from gaze.config import GazeConfig
+from gaze.config import ImageProcessingConfig
+from gaze.config import config_context
+from gaze.exceptions import AgenticProcessingError
+from gaze.models import AdapterProtocol
+from gaze.models import GenerationLog
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.tools import encode_image
+from gaze.types import ToolResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,7 +122,7 @@ class TestLoadPilOnly:
     def test_oversized_raises(self, tmp_path: Path) -> None:
         p = tmp_path / "big.png"
         Image.new("RGB", (80, 80), "green").save(p)
-        with config_context(HarnessConfig(image=ImageProcessingConfig(max_image_dimension=50))):
+        with config_context(GazeConfig(image=ImageProcessingConfig(max_image_dimension=50))):
             inp = ImageInput(path=p)
             with pytest.raises(ValueError, match="exceed maximum"):
                 inp._load_pil_only()
@@ -699,7 +699,7 @@ class TestImageInputFromPil:
         assert loaded.pil_image is img
 
     def test_from_pil_rejects_oversized_image(self) -> None:
-        from radiant_harness.config import get_config
+        from gaze.config import get_config
 
         max_dim = get_config().image.max_image_dimension
         oversized = Image.new("RGB", (max_dim + 1, 10))

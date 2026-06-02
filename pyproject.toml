@@ -3,12 +3,26 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/radiant_harness"]
+packages = ["src/gaze"]
+
+[tool.hatch.version]
+path = "src/gaze/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/gaze",
+    "/tests",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-extend-exclude = ["examples/"]
+# aiih2026_paper is no longer tracked in git; keep it out of the lint surface.
+extend-exclude = ["examples/aiih2026_paper/"]
 
 [tool.ruff.lint]
 select = [
@@ -48,10 +62,51 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001", "ARG002", "ARG005", "N802", "N811"]
 "scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
-"src/radiant_harness/__main__.py" = ["T201"]
+"src/gaze/__main__.py" = ["T201"]
+# Examples are demo/research code: linted for real pyflakes correctness and
+# bug-prone constructs (F401/F811/F841/F821/F541, B023 loop-binding, I001
+# import sorting), but tolerant of CLI prints, naming, and pathlib pedantry.
+"examples/**/*.py" = [
+    "S101",    # assert usage (common in tests/demos)
+    "T201",    # print (CLIs print to stdout)
+    "B905",    # zip without strict=
+    "B007",    # unused loop variable
+    "C408",    # dict() instead of literal
+    "E701",    # multiple statements on one line (colon)
+    "E702",    # multiple statements on one line (semicolon)
+    "E741",    # ambiguous variable name
+    "E402",    # module import not at top (after sys.path tweaks)
+    "N802",    # function name should be lowercase
+    "N803",    # argument name should be lowercase
+    "N806",    # variable in function should be lowercase
+    "S110",    # try-except-pass
+    "S603",    # subprocess call
+    "S607",    # subprocess partial executable path
+    "PLR2004", # magic value in comparison
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
+    "PLC0415", # import not at top level
+    "ARG001",  # unused function argument
+    "ARG002",  # unused method argument
+    "ARG005",  # unused lambda argument
+    "PTH103",  # os.makedirs over Path.mkdir
+    "PTH118",  # os.path.join over Path
+    "PTH120",  # os.path.dirname over Path
+    "PTH123",  # open() over Path.open
+    "SIM103",  # return condition directly
+    "SIM105",  # contextlib.suppress
+    "SIM108",  # ternary over if-else
+    "SIM114",  # combine if branches with or
+    "PERF401", # list comprehension over loop
+    "PERF403", # dict comprehension over loop
+    "PLW2901", # loop variable overwritten
+    "PLW3301", # nested min/max
+]
 
 [tool.ruff.lint.isort]
-known-first-party = ["radiant_harness"]
+known-first-party = ["gaze"]
 force-single-line = true
 
 [tool.pyright]
@@ -82,9 +137,12 @@ reportCallIssue = "warning"
 reportReturnType = "warning"
 reportArgumentType = "warning"
 exclude = [
-    "src/radiant_harness/models/huggingface_adapter.py",
-    "src/radiant_harness/models/openai_adapter.py",
-    "src/radiant_harness/verifiers",
+    # transformers/torch type stubs are incomplete (Optional tokenizer,
+    # Tensor.__call__), which produces false positives here.
+    "src/gaze/models/huggingface_adapter.py",
+    # vf.MultiTurnEnv is a dynamically-typed base class that pyright cannot
+    # resolve ("base class type is unknown").
+    "src/gaze/verifiers",
 ]
 
 [tool.pyright.diagnosticSeverityOverrides]
@@ -118,10 +176,12 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.coverage.run]
-source = ["radiant_harness"]
+source = ["gaze"]
 omit = [
     "*/tests/*",
     "*/scripts/*",
+    # torch-gated: exercised by test_huggingface_adapter.py in the integration
+    # job (uv sync --extra nova), not by the default core coverage job.
     "*/huggingface_adapter.py",
     "*/__main__.py",
 ]
@@ -139,27 +199,62 @@ exclude_lines = [
 ]
 
 [project]
-name = "radiant-harness"
-version = "0.1.0"
-description = "Radiant Harness: standalone agentic tool harness for VLMs (radiology-focused)"
+name = "gaze-vlm"
+dynamic = ["version"]
+description = "Grounded agentic framework for medical vision-language models: viewer-level image tools, multi-turn tool use, and PubMed/Open-i literature retrieval"
 readme = "README.md"
 authors = [
-    {name = "Liam Chalcroft"},
+    {name = "Liam Chalcroft", email = "liamchalcroft@gmail.com"},
 ]
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10,<4.0"
+keywords = [
+    "vlm",
+    "vision-language-model",
+    "agentic",
+    "tool-use",
+    "medical-imaging",
+    "radiology",
+    "multi-turn",
+    "openai",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Typing :: Typed",
+]
 dependencies = [
     "loguru>=0.7,<1",
     "beartype>=0.18,<1",
-    "pillow>=10,<12",
+    "pillow>=11.3,<12",
     "numpy>=1.24,<3",
     "openai>=1.0,<3",
     "httpx>=0.25,<1",
-    "aiohttp>=3.9,<4",
+    "aiohttp>=3.13.4,<4",
     "minijinja>=2.12.0,<3",
     "tenacity>=9.1.2,<10",
     "defusedxml>=0.7,<1",
+    "typing-extensions>=4.5,<5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/liamchalcroft/gaze"
+Repository = "https://github.com/liamchalcroft/gaze"
+Documentation = "https://liamchalcroft.github.io/gaze/"
+Issues = "https://github.com/liamchalcroft/gaze/issues"
+Changelog = "https://github.com/liamchalcroft/gaze/blob/main/CHANGELOG.md"
+
+[project.scripts]
+gaze = "gaze.__main__:main"
 
 [project.optional-dependencies]
 nova = [
@@ -168,32 +263,54 @@ nova = [
     "torchmetrics",
     "pycocotools",
     "pandas",
-    "datasets",
+    "datasets>=2.0.0",
     "sacrebleu",
     "bert-score",
     "nltk",
     "huggingface-hub",
+    "scipy>=1.15.3",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn",
+]
+gemex = [
+    "datasets>=2.0.0",
+    "verifiers>=0.1.6,<1",
+]
+agentclinic = [
+    "datasets>=2.0.0",
+    "verifiers>=0.1.6,<1",
+]
+pubmedqa = [
+    "datasets>=2.0.0",
+]
+vqa-rad = [
+    "datasets>=2.0.0",
 ]
 medmarks = [
     "verifiers>=0.1.6,<1",
     "datasets>=2.0.0",
 ]
 verifiers = [
-    "verifiers>=0.1,<1",
+    "verifiers>=0.1.6,<1",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest",
+    "pytest>=8,<9",
     "pytest-cov",
     "pytest-asyncio",
-    "ruff",
-    "pyright",
+    "ruff==0.15.15",
+    "pyright==1.1.410",
     "pre-commit",
-    "verifiers>=0.1,<1",
+    "verifiers>=0.1.6,<1",
 ]
 rl = [
-    "datasets",
+    "datasets>=2.0.0",
     "transformers",
     "torch",
+]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
 ]

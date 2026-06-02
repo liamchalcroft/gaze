@@ -1,4 +1,4 @@
-"""PubmedQA example implementation using Radiant Harness.
+"""PubmedQA example implementation using GAZE.
 
 Demonstrates text-only (no images) agentic analysis with web search support.
 """

@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from radiant_harness.exceptions import ModelError
-from radiant_harness.models.lmstudio_adapter import LMStudioAdapter
-from radiant_harness.models.lmstudio_adapter import list_lmstudio_model_ids
-from radiant_harness.models.lmstudio_adapter import require_lmstudio_model
+from gaze.exceptions import ModelError
+from gaze.models.lmstudio_adapter import LMStudioAdapter
+from gaze.models.lmstudio_adapter import list_lmstudio_model_ids
+from gaze.models.lmstudio_adapter import require_lmstudio_model
 
 # ---------------------------------------------------------------------------
 # _create_completion_with_retry — context overflow detection (lines 112-130)
@@ -171,7 +171,7 @@ class TestListModelIdsEdgeCases:
     @pytest.mark.asyncio
     async def test_non_list_data_raises_model_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _MockAsyncClient({"data": "not-a-list"}),
         )
         with pytest.raises(ModelError, match="did not contain a 'data' list"):
@@ -180,7 +180,7 @@ class TestListModelIdsEdgeCases:
     @pytest.mark.asyncio
     async def test_non_dict_items_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _MockAsyncClient(
                 {"data": [42, "string", {"id": "real"}, {"id": ""}, {"no_id": True}]}
             ),
@@ -193,7 +193,7 @@ class TestListModelIdsEdgeCases:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _MockAsyncClient({"models": []}),
         )
         with pytest.raises(ModelError, match="did not contain a 'data' list"):
@@ -251,7 +251,7 @@ class TestRequireHealthCheck:
     ) -> None:
         resp = _HealthCheckResponse(400, {"error": {"message": "Insufficient VRAM to load model"}})
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(["big-model"], health_resp=resp),
         )
         with pytest.raises(ModelError, match="cannot be loaded.*insufficient memory"):
@@ -263,7 +263,7 @@ class TestRequireHealthCheck:
     ) -> None:
         resp = _HealthCheckResponse(400, {"error": {"message": "Failed to load model weights"}})
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(["bad-model"], health_resp=resp),
         )
         with pytest.raises(ModelError, match="cannot be loaded"):
@@ -279,7 +279,7 @@ class TestRequireHealthCheck:
             raise_on_status=True,
         )
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(["my-model"], health_resp=resp),
         )
         with pytest.raises(ModelError, match="Health check failed.*HTTP 400"):
@@ -289,7 +289,7 @@ class TestRequireHealthCheck:
     async def test_500_http_error_raises_model_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resp = _HealthCheckResponse(500, {}, raise_on_status=True)
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(["my-model"], health_resp=resp),
         )
         with pytest.raises(ModelError, match="Health check failed.*HTTP 500"):
@@ -298,7 +298,7 @@ class TestRequireHealthCheck:
     @pytest.mark.asyncio
     async def test_timeout_logs_warning_returns_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(
                 ["slow-model"], post_raises=httpx.ReadTimeout("timed out")
             ),
@@ -310,7 +310,7 @@ class TestRequireHealthCheck:
     async def test_successful_health_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resp = _HealthCheckResponse(200, {"choices": [{"message": {"content": "h"}}]})
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _HealthCheckClient(["good-model"], health_resp=resp),
         )
         result = await require_lmstudio_model("good-model", "http://localhost:1234/v1")
@@ -319,7 +319,7 @@ class TestRequireHealthCheck:
     @pytest.mark.asyncio
     async def test_skip_health_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "radiant_harness.models.lmstudio_adapter.httpx.AsyncClient",
+            "gaze.models.lmstudio_adapter.httpx.AsyncClient",
             lambda **kw: _MockAsyncClient({"data": [{"id": "fast-model"}]}),
         )
         result = await require_lmstudio_model(

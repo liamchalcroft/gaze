@@ -6,10 +6,9 @@ from typing import Any
 
 import torch
 from beartype import beartype
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 # Import shared IoU utility
-from radiant_harness.utils.iou import compute_iou
+from gaze.utils.iou import compute_iou
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +100,14 @@ def rescale_and_clamp_box(
         logger.debug(
             "rescale_and_clamp_box: box [%.1f,%.1f,%.1f,%.1f] exceeds %dx%d, "
             "rescaling x=%.3f y=%.3f",
-            x1, y1, x2, y2, int(w), int(h), scale_x, scale_y,
+            x1,
+            y1,
+            x2,
+            y2,
+            int(w),
+            int(h),
+            scale_x,
+            scale_y,
         )
         x1 *= scale_x
         x2 *= scale_x
@@ -253,6 +259,86 @@ def _compute_acc_and_counts(
     return accuracy, tp, fp, fn
 
 
+def _per_image_ap(
+    pred_boxes: torch.Tensor,
+    pred_scores: torch.Tensor,
+    gt_boxes: torch.Tensor,
+    iou_threshold: float,
+) -> float:
+    """Compute Average Precision for a single image at a given IoU threshold.
+
+    Uses 11-point interpolation (PASCAL VOC style), which is the standard
+    in medical imaging benchmarks including NOVA.
+
+    Args:
+        pred_boxes: (N, 4) predicted boxes
+        pred_scores: (N,) confidence scores
+        gt_boxes: (M, 4) ground truth boxes
+        iou_threshold: IoU threshold for matching
+
+    Returns:
+        AP value in [0, 1].
+    """
+    n_gt = len(gt_boxes)
+    if n_gt == 0:
+        return 1.0 if len(pred_boxes) == 0 else 0.0
+    if len(pred_boxes) == 0:
+        return 0.0
+
+    # Sort predictions by confidence descending
+    sorted_indices = pred_scores.argsort(descending=True)
+    matched_gt: set[int] = set()
+    tp_list: list[int] = []
+
+    for si in sorted_indices:
+        pred_box = pred_boxes[si]
+        best_iou = 0.0
+        best_gt_idx = -1
+        for gi in range(n_gt):
+            if gi in matched_gt:
+                continue
+            iou = _compute_iou(pred_box, gt_boxes[gi])
+            if iou > best_iou:
+                best_iou = iou
+                best_gt_idx = gi
+        if best_iou >= iou_threshold and best_gt_idx >= 0:
+            tp_list.append(1)
+            matched_gt.add(best_gt_idx)
+        else:
+            tp_list.append(0)
+
+    # Compute precision-recall curve and 11-point interpolated AP
+    tp_cumsum = torch.tensor(tp_list).cumsum(0).float()
+    fp_cumsum = torch.arange(1, len(tp_list) + 1).float() - tp_cumsum
+    precision = tp_cumsum / (tp_cumsum + fp_cumsum)
+    recall = tp_cumsum / n_gt
+
+    ap = 0.0
+    for t in [i / 10.0 for i in range(11)]:
+        mask = recall >= t
+        if mask.any():
+            ap += float(precision[mask].max()) / 11.0
+    return ap
+
+
+def _mean_per_image_ap(
+    preds_tensors: list[dict[str, torch.Tensor]],
+    refs_tensors: list[dict[str, torch.Tensor]],
+    iou_threshold: float,
+) -> float:
+    """Compute mean AP across all images at a given IoU threshold."""
+    aps = []
+    for pred, ref in zip(preds_tensors, refs_tensors, strict=True):
+        ap = _per_image_ap(
+            pred["boxes"],
+            pred["scores"],
+            ref["boxes"],
+            iou_threshold,
+        )
+        aps.append(ap)
+    return sum(aps) / len(aps) if aps else 0.0
+
+
 @beartype
 def evaluate_detection(
     preds: Sequence[dict[str, Any] | list[list[int | float]]],
@@ -260,6 +346,9 @@ def evaluate_detection(
 ) -> dict[str, float | int]:
     """
     Compute detection metrics following NOVA benchmark protocol.
+
+    mAP is computed as the mean of per-image AP values (11-point interpolation),
+    matching the NOVA paper's evaluation methodology.
 
     Metrics:
     - mAP@0.3: Mean Average Precision at IoU threshold 0.3
@@ -305,19 +394,12 @@ def evaluate_detection(
     # TP30/FP30 at loose threshold (per NOVA protocol)
     _, tp30, fp30, _ = _compute_acc_and_counts(preds_tensors, refs_tensors, IOU_THRESHOLD_LOOSE)
 
-    # mAP at loose threshold
-    m30 = MeanAveragePrecision(iou_thresholds=[IOU_THRESHOLD_LOOSE])
-    m30.update(preds_tensors, refs_tensors)
-    res30 = m30.compute()
-    map30 = float(res30["map"])
-
-    # mAP@[50:95] per NOVA protocol. torchmetrics also exposes map_50 from
-    # the same pass, so we avoid a redundant full traversal for mAP@0.5.
-    m5095 = MeanAveragePrecision(iou_thresholds=_MAP_RANGE_IOU_THRESHOLDS)
-    m5095.update(preds_tensors, refs_tensors)
-    res5095 = m5095.compute()
-    map50 = float(res5095["map_50"])
-    map50_95 = float(res5095["map"])
+    # Per-image mean AP (NOVA paper methodology: 11-point interpolation)
+    map30 = _mean_per_image_ap(preds_tensors, refs_tensors, IOU_THRESHOLD_LOOSE)
+    map50 = _mean_per_image_ap(preds_tensors, refs_tensors, IOU_THRESHOLD_STANDARD)
+    map50_95 = sum(
+        _mean_per_image_ap(preds_tensors, refs_tensors, t) for t in _MAP_RANGE_IOU_THRESHOLDS
+    ) / len(_MAP_RANGE_IOU_THRESHOLDS)
 
     return {
         "map30": map30,

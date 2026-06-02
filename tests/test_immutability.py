@@ -11,11 +11,11 @@ from types import MappingProxyType
 
 import pytest
 
-from radiant_harness.models.adapter_protocol import GenerationLog
-from radiant_harness.types import AgenticResult
-from radiant_harness.types import ToolCall
-from radiant_harness.types import ToolResult
-from radiant_harness.types import Turn
+from gaze.models.adapter_protocol import GenerationLog
+from gaze.types import AgenticResult
+from gaze.types import ToolCall
+from gaze.types import ToolResult
+from gaze.types import Turn
 
 
 class TestGenerationLogFrozen:
@@ -201,7 +201,7 @@ class TestSearchResultFrozen:
     """SearchResult must be frozen with immutable extracted_entities."""
 
     def test_cannot_reassign_title(self) -> None:
-        from radiant_harness.retrieval.web_search import SearchResult
+        from gaze.retrieval.web_search import SearchResult
 
         sr = SearchResult(
             title="Test",
@@ -215,7 +215,7 @@ class TestSearchResultFrozen:
             sr.title = "hacked"  # type: ignore[misc]
 
     def test_cannot_reassign_ranking_score(self) -> None:
-        from radiant_harness.retrieval.web_search import SearchResult
+        from gaze.retrieval.web_search import SearchResult
 
         sr = SearchResult(
             title="Test",
@@ -230,7 +230,7 @@ class TestSearchResultFrozen:
             sr.ranking_score = 1.0  # type: ignore[misc]
 
     def test_extracted_entities_is_tuple(self) -> None:
-        from radiant_harness.retrieval.web_search import SearchResult
+        from gaze.retrieval.web_search import SearchResult
 
         sr = SearchResult(
             title="Test",
@@ -245,7 +245,7 @@ class TestSearchResultFrozen:
         assert sr.extracted_entities == ("a", "b")
 
     def test_extracted_entities_cannot_be_mutated(self) -> None:
-        from radiant_harness.retrieval.web_search import SearchResult
+        from gaze.retrieval.web_search import SearchResult
 
         sr = SearchResult(
             title="Test",
@@ -260,7 +260,7 @@ class TestSearchResultFrozen:
             sr.extracted_entities.append("c")  # type: ignore[attr-defined]
 
     def test_default_entities_empty_tuple(self) -> None:
-        from radiant_harness.retrieval.web_search import SearchResult
+        from gaze.retrieval.web_search import SearchResult
 
         sr = SearchResult(
             title="Test",
@@ -277,7 +277,7 @@ class TestImageSearchResultFrozen:
     """ImageSearchResult must be frozen with immutable metadata."""
 
     def test_cannot_reassign_title(self) -> None:
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         isr = ImageSearchResult(
             title="Test",
@@ -290,7 +290,7 @@ class TestImageSearchResultFrozen:
             isr.title = "hacked"  # type: ignore[misc]
 
     def test_metadata_is_mapping_proxy(self) -> None:
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         isr = ImageSearchResult(
             title="Test",
@@ -304,7 +304,7 @@ class TestImageSearchResultFrozen:
         assert isr.metadata["key"] == "val"
 
     def test_metadata_cannot_be_mutated(self) -> None:
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         isr = ImageSearchResult(
             title="Test",
@@ -318,7 +318,7 @@ class TestImageSearchResultFrozen:
             isr.metadata["key"] = "new"  # type: ignore[index]
 
     def test_default_metadata_empty(self) -> None:
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         isr = ImageSearchResult(
             title="Test",
@@ -331,7 +331,7 @@ class TestImageSearchResultFrozen:
         assert len(isr.metadata) == 0
 
     def test_nested_metadata_is_deep_frozen(self) -> None:
-        from radiant_harness.retrieval.image_search import ImageSearchResult
+        from gaze.retrieval.image_search import ImageSearchResult
 
         nested = {"outer": {"x": 1}}
         isr = ImageSearchResult(

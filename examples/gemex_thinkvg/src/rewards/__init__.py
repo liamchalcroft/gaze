@@ -5,7 +5,7 @@ Provides three verifiable reward components:
 2. Location reward - anatomical region matching
 3. BBox reward - IoU-based bounding box accuracy
 
-Also provides GEMeXVerifiersReward for radiant_harness verifiers integration.
+Also provides GEMeXVerifiersReward for gaze verifiers integration.
 """
 
 from __future__ import annotations

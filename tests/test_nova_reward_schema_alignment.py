@@ -197,7 +197,7 @@ class TestRewardParity:
 
     def test_iou_coordinate_normalization(self) -> None:
         """Core compute_iou normalizes swapped coordinates; env must too."""
-        from radiant_harness.utils.iou import compute_iou
+        from gaze.utils.iou import compute_iou
 
         # Swapped coords: x1 > x2
         box_normal = [0.0, 0.0, 10.0, 10.0]

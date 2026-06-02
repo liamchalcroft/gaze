@@ -39,7 +39,12 @@ def validate_bbox(bbox: list[int | float], image_size: int = IMAGE_SIZE) -> bool
     if not all(isinstance(x, int | float) for x in bbox):
         return False
 
-    # Check coordinate ordering
+    # Normalize ordering — models sometimes emit (x2,y2,x1,y1).
+    # Reject only truly degenerate boxes (zero area after normalisation).
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
     if x2 <= x1 or y2 <= y1:
         return False
 
@@ -91,7 +96,7 @@ def compute_iou(
     """Compute Intersection over Union between two bounding boxes.
 
     Normalizes coordinate ordering (x1 <= x2, y1 <= y2) before computing
-    IoU, matching the shared ``radiant_harness.utils.iou.compute_iou``.
+    IoU, matching the shared ``gaze.utils.iou.compute_iou``.
 
     Args:
         bbox1: First bbox [x1, y1, x2, y2]
@@ -202,7 +207,7 @@ def compute_center_distance(
     cy2 = (b2[1] + b2[3]) / 2
 
     # Euclidean distance normalized by diagonal
-    max_dist = (2 ** 0.5) * image_size
+    max_dist = (2**0.5) * image_size
     dist = ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
     return min(1.0, dist / max_dist)
@@ -275,7 +280,11 @@ def compute_bbox_reward(
     area_ratio = pred_area / image_area if image_area > 0 else 0.0
     # Linear penalty: full credit at ≤50% coverage, zero at 100%.
     area_penalty_start = 0.5
-    area_penalty = max(0.0, min(1.0, (1.0 - area_ratio) / (1.0 - area_penalty_start))) if area_ratio > area_penalty_start else 1.0
+    area_penalty = (
+        max(0.0, min(1.0, (1.0 - area_ratio) / (1.0 - area_penalty_start)))
+        if area_ratio > area_penalty_start
+        else 1.0
+    )
 
     # Weighted reward
     # Primary: IoU (most important)

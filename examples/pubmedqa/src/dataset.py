@@ -47,9 +47,7 @@ class PubmedQADataset:
             ValueError: If config is invalid
         """
         if config not in self.VALID_CONFIGS:
-            raise ValueError(
-                f"Invalid config '{config}'. Must be one of: {self.VALID_CONFIGS}"
-            )
+            raise ValueError(f"Invalid config '{config}'. Must be one of: {self.VALID_CONFIGS}")
 
         if config == "pqa_unlabeled":
             logger.warning(

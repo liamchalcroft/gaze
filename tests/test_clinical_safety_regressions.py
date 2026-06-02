@@ -20,18 +20,18 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from radiant_harness.base import _COORD_MODIFYING_TOOLS
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import ImageInput
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import GenerationLog
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.tools.visual import WINDOW_PRESETS
-from radiant_harness.tools.visual import apply_window_level
-from radiant_harness.types import ToolResult
-from radiant_harness.verifiers.rewards import IoUReward
-from radiant_harness.verifiers.rewards import extract_completion_text
+from gaze.base import _COORD_MODIFYING_TOOLS
+from gaze.base import AgenticProcessorBase
+from gaze.base import ImageInput
+from gaze.models import AdapterProtocol
+from gaze.models import GenerationLog
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.tools.visual import WINDOW_PRESETS
+from gaze.tools.visual import apply_window_level
+from gaze.types import ToolResult
+from gaze.verifiers.rewards import IoUReward
+from gaze.verifiers.rewards import extract_completion_text
 
 # Import diagnosis module from examples/nova
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -154,7 +154,7 @@ class TestWindowLevelPresetSafety:
 
     def test_all_presets_above_min_width(self) -> None:
         """Every preset must have width >= min_window_width (default 50)."""
-        from radiant_harness.config import get_config
+        from gaze.config import get_config
 
         min_width = get_config().image.min_window_width
         for name, (_center, width) in WINDOW_PRESETS.items():

@@ -8,33 +8,33 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from radiant_harness.config import ImageProcessingConfig
-from radiant_harness.exceptions import ToolExecutionError
-from radiant_harness.tools.registry import ToolRegistry
-from radiant_harness.tools.visual import WINDOW_PRESETS
-from radiant_harness.tools.visual import adaptive_equalize
-from radiant_harness.tools.visual import adjust_brightness
-from radiant_harness.tools.visual import adjust_contrast
-from radiant_harness.tools.visual import adjust_sharpness
-from radiant_harness.tools.visual import annotate_region
-from radiant_harness.tools.visual import apply_intensity_threshold
-from radiant_harness.tools.visual import apply_window_level
-from radiant_harness.tools.visual import compute_intensity_profile
-from radiant_harness.tools.visual import compute_symmetry_diff
-from radiant_harness.tools.visual import create_visual_tools
-from radiant_harness.tools.visual import crop_image
-from radiant_harness.tools.visual import denoise_gaussian
-from radiant_harness.tools.visual import detect_edges
-from radiant_harness.tools.visual import draw_grid_overlay
-from radiant_harness.tools.visual import equalize_histogram
-from radiant_harness.tools.visual import flip_horizontal
-from radiant_harness.tools.visual import flip_vertical
-from radiant_harness.tools.visual import get_intensity_stats
-from radiant_harness.tools.visual import invert_image
-from radiant_harness.tools.visual import measure_distance
-from radiant_harness.tools.visual import morphological_op
-from radiant_harness.tools.visual import rotate_90
-from radiant_harness.tools.visual import zoom_image
+from gaze.config import ImageProcessingConfig
+from gaze.exceptions import ToolExecutionError
+from gaze.tools.registry import ToolRegistry
+from gaze.tools.visual import WINDOW_PRESETS
+from gaze.tools.visual import adaptive_equalize
+from gaze.tools.visual import adjust_brightness
+from gaze.tools.visual import adjust_contrast
+from gaze.tools.visual import adjust_sharpness
+from gaze.tools.visual import annotate_region
+from gaze.tools.visual import apply_intensity_threshold
+from gaze.tools.visual import apply_window_level
+from gaze.tools.visual import compute_intensity_profile
+from gaze.tools.visual import compute_symmetry_diff
+from gaze.tools.visual import create_visual_tools
+from gaze.tools.visual import crop_image
+from gaze.tools.visual import denoise_gaussian
+from gaze.tools.visual import detect_edges
+from gaze.tools.visual import draw_grid_overlay
+from gaze.tools.visual import equalize_histogram
+from gaze.tools.visual import flip_horizontal
+from gaze.tools.visual import flip_vertical
+from gaze.tools.visual import get_intensity_stats
+from gaze.tools.visual import invert_image
+from gaze.tools.visual import measure_distance
+from gaze.tools.visual import morphological_op
+from gaze.tools.visual import rotate_90
+from gaze.tools.visual import zoom_image
 
 
 def _make_image(
@@ -1008,6 +1008,7 @@ class TestToolExecutors:
         with pytest.raises(ToolExecutionError, match="Invalid morphological"):
             await registry.execute("morphological", operation="invalid")
 
+    @pytest.mark.asyncio
     async def test_tool_without_image_raises(self) -> None:
         tools = create_visual_tools()
         registry = ToolRegistry(tools=tools)

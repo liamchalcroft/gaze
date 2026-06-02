@@ -1,4 +1,4 @@
-"""Tests for radiant_harness.verifiers.adapter — RadiantHarnessAdapter.
+"""Tests for gaze.verifiers.adapter — GazeAdapter.
 
 Covers _extract_user_prompt, _convert_response_to_messages,
 _collect_tool_calls, _collect_tool_results, create_environment_class,
@@ -15,19 +15,19 @@ from typing import Any
 import pytest
 
 try:
-    from radiant_harness.verifiers.adapter import RadiantHarnessAdapter
-    from radiant_harness.verifiers.base import BaseMultiTurnEnv
+    from gaze.verifiers.adapter import GazeAdapter
+    from gaze.verifiers.base import BaseMultiTurnEnv
 
     _HAS_VERIFIERS = True
 except ImportError:
     _HAS_VERIFIERS = False
 
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import ImageInput
-from radiant_harness.types import AgenticResult
-from radiant_harness.types import ToolCall
-from radiant_harness.types import ToolResult
-from radiant_harness.types import Turn
+from gaze.base import AgenticProcessorBase
+from gaze.base import ImageInput
+from gaze.types import AgenticResult
+from gaze.types import ToolCall
+from gaze.types import ToolResult
+from gaze.types import Turn
 
 pytestmark = pytest.mark.skipif(not _HAS_VERIFIERS, reason="verifiers not installed")
 
@@ -59,7 +59,7 @@ def _make_processor() -> _StubProcessor:
 
 class TestExtractUserPrompt:
     def setup_method(self) -> None:
-        self.adapter = RadiantHarnessAdapter(processor=_make_processor())
+        self.adapter = GazeAdapter(processor=_make_processor())
 
     def test_simple_string_content(self) -> None:
         messages = [{"role": "user", "content": "What is this?"}]
@@ -112,7 +112,7 @@ class TestExtractUserPrompt:
 
 class TestConvertResponseToMessages:
     def setup_method(self) -> None:
-        self.adapter = RadiantHarnessAdapter(processor=_make_processor())
+        self.adapter = GazeAdapter(processor=_make_processor())
 
     def test_response_only(self) -> None:
         messages = self.adapter._convert_response_to_messages('{"answer": "yes"}', [], [])
@@ -158,7 +158,7 @@ class TestConvertResponseToMessages:
 
 class TestCollectToolCallsAndResults:
     def setup_method(self) -> None:
-        self.adapter = RadiantHarnessAdapter(processor=_make_processor())
+        self.adapter = GazeAdapter(processor=_make_processor())
 
     def _make_result(self) -> AgenticResult:
         tc = ToolCall(id="tc_1", name="zoom", arguments={"level": 2})
@@ -219,16 +219,16 @@ class TestCollectToolCallsAndResults:
 
 class TestCreateEnvironmentClass:
     def test_creates_subclass_of_base(self) -> None:
-        adapter = RadiantHarnessAdapter(processor=_make_processor())
+        adapter = GazeAdapter(processor=_make_processor())
         env_cls = adapter.create_environment_class()
         assert issubclass(env_cls, BaseMultiTurnEnv)
 
     def test_created_env_has_adapter(self) -> None:
-        adapter = RadiantHarnessAdapter(processor=_make_processor())
+        adapter = GazeAdapter(processor=_make_processor())
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[])
         assert hasattr(env, "_adapter")
-        assert isinstance(env._adapter, RadiantHarnessAdapter)
+        assert isinstance(env._adapter, GazeAdapter)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +241,7 @@ class TestAdapterEnvResponse:
     async def test_env_response_updates_state(self) -> None:
         """env_response increments turn, counts tool_calls, sets is_complete."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[])
 
@@ -276,7 +276,7 @@ class TestAdapterEnvResponse:
     async def test_env_response_with_no_tool_calls(self) -> None:
         """When no tools are used, tool_uses stays at zero."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[])
 
@@ -327,7 +327,7 @@ class TestAdapterEnvIsCompleted:
     async def test_completed_via_max_turns(self) -> None:
         """@vf.stop _turn_limit_reached fires when turn >= max_turns."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=3)
 
@@ -338,7 +338,7 @@ class TestAdapterEnvIsCompleted:
     async def test_completed_via_state_flag(self) -> None:
         """@vf.stop _adapter_complete fires when is_complete=True."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=100)
 
@@ -349,7 +349,7 @@ class TestAdapterEnvIsCompleted:
     async def test_not_completed(self) -> None:
         """Neither max_turns nor state flag → not complete."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
         env_cls = adapter.create_environment_class()
         env = env_cls(cases=[], max_turns=100)
 
@@ -367,7 +367,7 @@ class TestProcessWithPathImagePath:
     async def test_path_object_image_path_passed_through(self) -> None:
         """When info['image_path'] is a Path, it is used directly (not str→Path)."""
         processor = _make_processor()
-        adapter = RadiantHarnessAdapter(processor=processor)
+        adapter = GazeAdapter(processor=processor)
 
         captured: dict[str, Any] = {}
 

@@ -1,7 +1,7 @@
 """GEMeX-ThinkVG example: RL fine-tuning with verifiable rewards.
 
 This example demonstrates reinforcement learning fine-tuning using the
-Radiant Harness with multi-rollout generation and verifiable rewards
+GAZE with multi-rollout generation and verifiable rewards
 for medical visual grounding tasks.
 
 The GEMeX-ThinkVG task has three verifiable outputs:
@@ -15,13 +15,16 @@ that leverage the harness's tool-augmented reasoning capabilities.
 
 from __future__ import annotations
 
+from .dataset import GEMeXDataset
 from .processor import GEMeXProcessor
 from .rewards import GEMeXRewardFunction
 from .rewards import RewardWeights
 from .rewards import compute_combined_reward
-from .verifiers import GEMeXThinkVGToolEnv, load_environment
+from .verifiers import GEMeXThinkVGToolEnv
+from .verifiers import load_environment
 
 __all__ = [
+    "GEMeXDataset",
     "GEMeXProcessor",
     "GEMeXRewardFunction",
     "RewardWeights",

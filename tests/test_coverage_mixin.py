@@ -18,10 +18,10 @@ import pytest
 try:
     import verifiers as vf  # noqa: F401
 
-    from radiant_harness.base import AgenticProcessorBase
-    from radiant_harness.verifiers.base import BaseMultiTurnEnv
-    from radiant_harness.verifiers.mixin import VerifiableProcessorMixin
-    from radiant_harness.verifiers.rewards import BaseRewardFunction
+    from gaze.base import AgenticProcessorBase
+    from gaze.verifiers.base import BaseMultiTurnEnv
+    from gaze.verifiers.mixin import VerifiableProcessorMixin
+    from gaze.verifiers.rewards import BaseRewardFunction
 
     _HAS_VERIFIERS = True
 except ImportError:
@@ -52,7 +52,7 @@ class _DummyProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
         super().__init__(
             model_name="test-model",
             use_tools=False,
-            adapter_factory=lambda: MagicMock(),
+            adapter_factory=MagicMock,
         )
 
     def get_system_prompt(self, images=None, metadata=None) -> str:

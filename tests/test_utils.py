@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from radiant_harness.utils import clamp_confidence
-from radiant_harness.utils.iou import compute_iou
+from gaze.utils import clamp_confidence
+from gaze.utils.iou import compute_iou
 
 
 class TestClampConfidenceStrings:

@@ -9,10 +9,10 @@ import verifiers as vf
 # Example environments
 from examples.gemex_thinkvg.src.verifiers.environment import GEMeXThinkVGToolEnv
 from examples.gemex_thinkvg.src.verifiers.environment import load_environment as load_gemex_env
-from radiant_harness.verifiers.rewards import CombinedReward
-from radiant_harness.verifiers.rewards import ExactMatchReward
-from radiant_harness.verifiers.rewards import IoUReward
-from radiant_harness.verifiers.rewards import TokenF1Reward
+from gaze.verifiers.rewards import CombinedReward
+from gaze.verifiers.rewards import ExactMatchReward
+from gaze.verifiers.rewards import IoUReward
+from gaze.verifiers.rewards import TokenF1Reward
 
 
 class TestExactMatchReward:
@@ -189,7 +189,7 @@ class TestCombinedReward:
 def test_verifiers_optional() -> None:
     """Test that verifiers integration handles missing import gracefully."""
     # This should not raise an error even if verifiers is not installed
-    from radiant_harness.verifiers import BaseRewardFunction
+    from gaze.verifiers import BaseRewardFunction
 
     assert callable(BaseRewardFunction)
     assert callable(BaseRewardFunction)

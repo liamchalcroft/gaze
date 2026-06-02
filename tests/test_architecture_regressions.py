@@ -22,10 +22,10 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image
 
-from radiant_harness._frozen import deep_freeze
-from radiant_harness._frozen import deep_thaw
-from radiant_harness.types import AgenticResult
-from radiant_harness.types import Turn
+from gaze._frozen import deep_freeze
+from gaze._frozen import deep_thaw
+from gaze.types import AgenticResult
+from gaze.types import Turn
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -333,8 +333,8 @@ class TestMultiImageToolRegistry:
     """Tool registry must only bind the first image, and warn about the rest."""
 
     def test_tool_registry_uses_first_image_only(self) -> None:
-        from radiant_harness.base import AgenticProcessorBase
-        from radiant_harness.base import ImageInput
+        from gaze.base import AgenticProcessorBase
+        from gaze.base import ImageInput
 
         with tempfile.TemporaryDirectory() as td:
             # Create two tiny images
@@ -376,8 +376,8 @@ class TestMultiImageToolRegistry:
     def test_system_prompt_warns_about_multi_image_tool_limitation(self) -> None:
         """When multiple images are present and tools are active, the system
         prompt should mention that tools operate on the first image only."""
-        from radiant_harness.base import AgenticProcessorBase
-        from radiant_harness.base import ImageInput
+        from gaze.base import AgenticProcessorBase
+        from gaze.base import ImageInput
 
         class Stub(AgenticProcessorBase):
             def get_system_prompt(self, images, metadata):
@@ -431,11 +431,11 @@ class TestVerifiersAdapterMessageHandling:
     missing image_path gracefully."""
 
     def test_extract_user_prompt_from_multimodal_message(self) -> None:
-        from radiant_harness.verifiers.adapter import RadiantHarnessAdapter
+        from gaze.verifiers.adapter import GazeAdapter
 
         # Build adapter with a mock processor
         mock_processor = AsyncMock()
-        adapter = RadiantHarnessAdapter.__new__(RadiantHarnessAdapter)
+        adapter = GazeAdapter.__new__(GazeAdapter)
         adapter.processor = mock_processor
 
         messages = [
@@ -454,18 +454,18 @@ class TestVerifiersAdapterMessageHandling:
         assert prompt == "What is the diagnosis?"
 
     def test_extract_user_prompt_from_string_message(self) -> None:
-        from radiant_harness.verifiers.adapter import RadiantHarnessAdapter
+        from gaze.verifiers.adapter import GazeAdapter
 
-        adapter = RadiantHarnessAdapter.__new__(RadiantHarnessAdapter)
+        adapter = GazeAdapter.__new__(GazeAdapter)
         adapter.processor = AsyncMock()
 
         messages = [{"role": "user", "content": "Simple question"}]
         assert adapter._extract_user_prompt(messages) == "Simple question"
 
     def test_extract_user_prompt_empty_when_no_user_message(self) -> None:
-        from radiant_harness.verifiers.adapter import RadiantHarnessAdapter
+        from gaze.verifiers.adapter import GazeAdapter
 
-        adapter = RadiantHarnessAdapter.__new__(RadiantHarnessAdapter)
+        adapter = GazeAdapter.__new__(GazeAdapter)
         adapter.processor = AsyncMock()
 
         messages = [{"role": "system", "content": "You are a doctor."}]
@@ -473,11 +473,11 @@ class TestVerifiersAdapterMessageHandling:
 
     def test_adapter_passes_none_images_when_no_image_path(self) -> None:
         """When info has no image_path, adapter must call analyze(images=None)."""
-        from radiant_harness.verifiers.adapter import RadiantHarnessAdapter
+        from gaze.verifiers.adapter import GazeAdapter
 
         mock_processor = AsyncMock()
         mock_processor.analyze = AsyncMock(return_value=_make_result())
-        adapter = RadiantHarnessAdapter.__new__(RadiantHarnessAdapter)
+        adapter = GazeAdapter.__new__(GazeAdapter)
         adapter.processor = mock_processor
 
         messages = [{"role": "user", "content": "What is visible?"}]
@@ -498,7 +498,7 @@ class TestExtractCompletionTextParity:
     multi-part assistant content."""
 
     def test_core_concatenates_all_text_items(self) -> None:
-        from radiant_harness.verifiers.rewards import extract_completion_text
+        from gaze.verifiers.rewards import extract_completion_text
 
         completion = [
             {
@@ -538,7 +538,7 @@ class TestExtractCompletionTextParity:
         assert "reasoning step" in env_result
         assert '{"answer": "glioma"}' in env_result
 
-        from radiant_harness.verifiers.rewards import extract_completion_text
+        from gaze.verifiers.rewards import extract_completion_text
 
         core_result = extract_completion_text(completion)
         assert core_result == env_result, (
@@ -560,7 +560,7 @@ class TestIoUComputationParity:
     """All IoU implementations must handle reversed coordinates identically."""
 
     def test_shared_iou_handles_reversed_coords(self) -> None:
-        from radiant_harness.utils.iou import compute_iou as shared_iou
+        from gaze.utils.iou import compute_iou as shared_iou
 
         box_reversed = [100.0, 50.0, 20.0, 80.0]
         box_normal = [20.0, 50.0, 100.0, 80.0]
@@ -652,7 +652,7 @@ class TestIoURewardNegativeCoordsFallback:
     """IoUReward regex fallback must handle negative coordinates."""
 
     def test_negative_coord_regex_extraction(self) -> None:
-        from radiant_harness.verifiers.rewards import IoUReward
+        from gaze.verifiers.rewards import IoUReward
 
         reward = IoUReward(normalized=False)
         # Negative coord in fallback regex path (no JSON object)

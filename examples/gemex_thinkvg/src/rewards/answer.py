@@ -75,12 +75,91 @@ def normalize_medical_text(text: str) -> str:
     return text
 
 
+_ANSWER_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "could",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
+        "his",
+        "her",
+        "its",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "into",
+        "about",
+        "between",
+        "through",
+        "during",
+        "before",
+        "after",
+        "and",
+        "or",
+        "but",
+        "nor",
+        "not",
+        "no",
+        "so",
+        "if",
+        "then",
+    }
+)
+
+
 @beartype
 def compute_token_overlap(pred: str, ref: str) -> float:
     """Compute token-level overlap between prediction and reference.
 
     Uses Counter-based (multiset) intersection so that repeating tokens
     dilutes precision, matching the NOVA and core TokenF1Reward implementations.
+
+    Filters stopwords to prevent gaming via generic filler text.
 
     Args:
         pred: Predicted answer (normalized)
@@ -91,8 +170,8 @@ def compute_token_overlap(pred: str, ref: str) -> float:
     """
     from collections import Counter
 
-    pred_counts = Counter(pred.split())
-    ref_counts = Counter(ref.split())
+    pred_counts = Counter(t for t in pred.split() if t not in _ANSWER_STOPWORDS)
+    ref_counts = Counter(t for t in ref.split() if t not in _ANSWER_STOPWORDS)
 
     pred_total = sum(pred_counts.values())
     ref_total = sum(ref_counts.values())
@@ -148,7 +227,9 @@ def compute_contains_match(pred: str, ref: str) -> float:
     ref_norm = normalize_medical_text(ref)
 
     if not pred_norm or not ref_norm:
-        return 1.0 if pred_norm == ref_norm else 0.0
+        # Both empty = no content to match → 0.0 (not a valid match).
+        # One empty, one not → 0.0 (mismatch).
+        return 0.0
 
     if pred_norm in ref_norm or ref_norm in pred_norm:
         shorter = min(len(pred_norm), len(ref_norm))
@@ -199,9 +280,7 @@ def compute_answer_reward(
         weights = {"exact": 0.3, "contains": 0.3, "token_f1": 0.4}
 
     reward = (
-        weights["exact"] * exact
-        + weights["contains"] * contains
-        + weights["token_f1"] * token_f1
+        weights["exact"] * exact + weights["contains"] * contains + weights["token_f1"] * token_f1
     )
 
     return {

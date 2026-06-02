@@ -17,13 +17,13 @@ from typing import Any
 
 import verifiers as vf
 from datasets import Dataset
-
-from radiant_harness.tools import encode_image
-from radiant_harness.verifiers import BaseRewardFunction
-from radiant_harness.verifiers import CombinedReward
-from radiant_harness.verifiers import TokenF1Reward
-from radiant_harness.verifiers import extract_completion_text
 from PIL import Image
+
+from gaze.tools import encode_image
+from gaze.verifiers import BaseRewardFunction
+from gaze.verifiers import CombinedReward
+from gaze.verifiers import TokenF1Reward
+from gaze.verifiers import extract_completion_text
 
 # ---------- Config ----------
 DEFAULT_DATASET_PATH = str(

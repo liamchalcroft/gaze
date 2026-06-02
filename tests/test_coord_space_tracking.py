@@ -12,14 +12,14 @@ from typing import Any
 import pytest
 from PIL import Image as PILImage
 
-from radiant_harness.base import _COORD_MODIFYING_TOOLS
-from radiant_harness.base import AgenticProcessorBase
-from radiant_harness.base import ImageInput
-from radiant_harness.models import AdapterProtocol
-from radiant_harness.models import GenerationLog
-from radiant_harness.tools import Tool
-from radiant_harness.tools import ToolRegistry
-from radiant_harness.types import ToolResult
+from gaze.base import _COORD_MODIFYING_TOOLS
+from gaze.base import AgenticProcessorBase
+from gaze.base import ImageInput
+from gaze.models import AdapterProtocol
+from gaze.models import GenerationLog
+from gaze.tools import Tool
+from gaze.tools import ToolRegistry
+from gaze.types import ToolResult
 
 # ---------------------------------------------------------------------------
 # Constant membership
