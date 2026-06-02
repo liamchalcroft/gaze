@@ -2,74 +2,111 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
+  pre-commit:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+    - name: Install dependencies
+      run: uv sync
+    - name: Run pre-commit
+      run: uv run pre-commit run --all-files --show-diff-on-failure
 
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v5
       with:
         enable-cache: true
-
     - name: Install dependencies
       run: uv sync
-
     - name: Run linting
       run: uv run ruff check .
-
     - name: Check formatting
       run: uv run ruff format --check .
-
     - name: Run type checking
       run: uv run pyright src/
-
     - name: Verify lockfile is in sync
       run: uv lock --check
-
     - name: Run tests
-      run: uv run pytest tests/ -x --cov=radiant_harness --cov-report=xml
-
+      run: uv run pytest tests/ --cov=gaze --cov-report=xml
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.11'
       uses: codecov/codecov-action@v5
       with:
-        file: ./coverage.xml
+        files: ./coverage.xml
         flags: unittests
         fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
 
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [check]
     steps:
     - uses: actions/checkout@v4
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
-
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v5
       with:
         enable-cache: true
-
     - name: Install dependencies with NOVA extras
       run: uv sync --extra nova
+    - name: Run torch-gated core tests + example suites
+      # The nova extra provides torch/datasets, so the torch-gated tests in
+      # tests/ (which the base check job skips) actually execute here, along
+      # with every example's smoke tests.
+      run: uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper --tb=short
 
-    - name: Run NOVA tests
-      run: uv run pytest examples/nova/tests/ -x --tb=short
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Advisory: surfaces dependency vulnerabilities without blocking merges.
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+    - name: Audit locked dependencies
+      run: |
+        uv export --frozen --no-emit-project --no-hashes --format requirements-txt > /tmp/requirements.txt
+        uvx pip-audit --requirement /tmp/requirements.txt

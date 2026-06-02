@@ -1,8 +1,8 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.4
+    rev: v0.15.15
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/pygrep-hooks
@@ -14,12 +14,13 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
         exclude: tests/.*\.(json|yaml)$
   - repo: local
     hooks:
       - id: pyright
         name: pyright
-        entry: uv run pyright
+        entry: uv run pyright src/
         language: system
         types: [python]
         pass_filenames: false
