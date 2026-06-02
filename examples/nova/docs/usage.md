@@ -1,4 +1,4 @@
-# Usage Guide
+# Usage guide
 
 ## Prerequisites
 
@@ -73,4 +73,4 @@ uv run python -m src.cli --task all --model openai/gpt-4o -v
 - `sample_<index>.json` -- per-sample result
 - `summary.json` -- aggregate metrics and configuration
 
-See [Agentic Workflow](./agentic_workflow.md) for the tool loop and prompt flow.
+See [Agentic workflow](./agentic_workflow.md) for the tool loop and prompt flow.

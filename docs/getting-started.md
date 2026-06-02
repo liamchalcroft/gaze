@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 ## Installation
 
@@ -14,7 +14,13 @@ cd gaze
 uv sync
 ```
 
-## Your First Processor
+## Verify your install
+
+```bash
+python -c "import gaze; print(gaze.__version__)"
+```
+
+## Your first processor
 
 The core abstraction is `AgenticProcessorBase`. Subclass it and implement four methods:
 
@@ -53,7 +59,7 @@ class XRayProcessor(AgenticProcessorBase):
         return "findings" in response and "impression" in response
 ```
 
-## Running the Processor
+## Running the processor
 
 ```python
 async def main():
@@ -72,7 +78,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Using Local Models
+## Using local models
 
 `AgenticProcessorBase` has no `base_url` constructor argument. To target a
 local OpenAI-compatible server (such as LM Studio), pass an `adapter_factory`:
@@ -108,7 +114,7 @@ await require_lmstudio_model(
 )
 ```
 
-## Enabling Tools
+## Enabling tools
 
 When `use_tools=True`, the model can call built-in visual tools during
 reasoning. Tools are only offered in multi-turn mode (`max_turns > 1`); the
@@ -128,16 +134,17 @@ enables two more tools:
 
 The agentic loop continues until the model sets `"continue": false` or the turn limit is reached.
 
-## Environment Variables
+## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` or `OPENAI_API_KEY` | Yes (cloud) | API access |
 | `NCBI_API_KEY` | No | Higher PubMed rate limits |
 | `NCBI_EMAIL` | No | PubMed API compliance |
+| `GAZE_ALLOW_CUSTOM_BASE_URL` | No | Set to 1 to send API keys to a non-allowlisted model host |
 
-## Next Steps
+## Next steps
 
 - [Architecture](architecture.md) -- understand the framework design
 - [Examples](examples.md) -- see complete applications
-- [API Reference](api/index.md) -- full module documentation
+- [API reference](api/index.md) -- full module documentation

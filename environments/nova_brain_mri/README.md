@@ -1,6 +1,8 @@
-# NOVA Brain MRI Environment
+# NOVA brain MRI environment
 
 MedMarks-compatible evaluation environment for the NOVA brain MRI benchmark.
+
+Part of [GAZE](https://github.com/liamchalcroft/gaze); see the [MedMarks integration](https://github.com/liamchalcroft/gaze/blob/main/docs/MEDMARKS_INTEGRATION.md) docs.
 
 ## Tasks
 
@@ -52,7 +54,7 @@ results = env.evaluate(client=openai_client, model="gpt-4o", num_examples=100)
 | `iou_threshold` | float | 0.5 | IoU threshold for localization (NOVA ACC50) |
 | `data_dir` | str | None | Custom data directory |
 
-## Response Schema
+## Response schema
 
 Models return JSON with this structure:
 
@@ -89,7 +91,7 @@ Models return JSON with this structure:
 }
 ```
 
-## Reward Functions
+## Reward functions
 
 ### Caption
 Token-level F1 between predicted and reference captions.
@@ -100,10 +102,10 @@ Combined: 60% top-1 accuracy (primary diagnosis matches reference) + 40% coverag
 ### Localization
 Detection F1 using greedy best-IoU matching. Each predicted box is matched to its best-IoU ground truth box. Matches above the threshold count as true positives. F1 computed from precision and recall.
 
-### Combined Rubric
+### Combined rubric
 Weights: 33% caption, 34% diagnosis, 33% localization.
 
-## Data Format
+## Data format
 
 Each case:
 ```json

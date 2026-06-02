@@ -2,9 +2,9 @@
 
 GAZE includes five complete example applications demonstrating different use cases.
 
-## NOVA Brain MRI
+## NOVA brain MRI
 
-**Location:** `examples/nova/`
+**Location:** `examples/nova/` ([README](https://github.com/liamchalcroft/gaze/blob/main/examples/nova/README.md))
 
 Brain MRI analysis with three sub-tasks: caption generation, diagnosis prediction, and lesion localization. Uses the [NOVA dataset](https://huggingface.co/datasets/c-i-ber/Nova) which auto-downloads from HuggingFace.
 
@@ -26,29 +26,43 @@ uv run python -m examples.nova.src.cli \
   --max-samples 10
 ```
 
-## GEMeX Visual Grounding
+## GEMeX visual grounding
 
-**Location:** `examples/gemex_thinkvg/`
+**Location:** `examples/gemex_thinkvg/` ([README](https://github.com/liamchalcroft/gaze/blob/main/examples/gemex_thinkvg/README.md))
 
 Visual grounding with chain-of-thought reasoning on chest X-rays. Requires MIMIC-CXR access (PhysioNet credentialed).
 
 ```bash
 pip install gaze-vlm[gemex]
+
+uv run python -m examples.gemex_thinkvg.eval \
+  --dataset ./data/test.jsonl \
+  --image-dir /path/to/mimic-cxr-jpg \
+  --model openai/gpt-4o \
+  --mode agentic \
+  --use-tools \
+  --output ./results
 ```
 
 ## AgentClinic NEJM
 
-**Location:** `examples/agentclinic_nejm/`
+**Location:** `examples/agentclinic_nejm/` ([README](https://github.com/liamchalcroft/gaze/blob/main/examples/agentclinic_nejm/README.md))
 
 Multi-turn diagnostic reasoning where the model gathers clinical information (history, exam, tests, imaging) before making a diagnosis.
 
 ```bash
 pip install gaze-vlm[agentclinic]
+
+uv run python -m examples.agentclinic_nejm.eval \
+  --dataset ./data/agentclinic_nejm_extended.jsonl \
+  --model openai/gpt-4o \
+  --num-samples 10 \
+  --output ./results
 ```
 
 ## PubMedQA
 
-**Location:** `examples/pubmedqa/`
+**Location:** `examples/pubmedqa/` ([README](https://github.com/liamchalcroft/gaze/blob/main/examples/pubmedqa/README.md))
 
 Text-only medical Q&A with yes/no/maybe answers. Uses the [PubMedQA dataset](https://huggingface.co/datasets/qiaojin/PubMedQA) (auto-downloads).
 
@@ -63,7 +77,7 @@ uv run python -m examples.pubmedqa.src.cli \
 
 ## VQA-RAD
 
-**Location:** `examples/vqa_rad/`
+**Location:** `examples/vqa_rad/` ([README](https://github.com/liamchalcroft/gaze/blob/main/examples/vqa_rad/README.md))
 
 Radiology visual question answering with closed and open-ended questions. Uses the [VQA-RAD dataset](https://huggingface.co/datasets/flaviagiammarino/vqa-rad) (auto-downloads).
 
@@ -77,7 +91,7 @@ uv run python -m examples.vqa_rad.src.cli \
   --max-samples 20
 ```
 
-## Local Models
+## Local models
 
 All examples support local model inference via LM Studio. Pass `--base-url` to point at your instance:
 
@@ -89,9 +103,9 @@ uv run python -m examples.pubmedqa.src.cli \
   --max-samples 5
 ```
 
-## Writing Your Own Example
+## Writing your own example
 
-See [Getting Started](getting-started.md) for the pattern. The examples vary
+See [Getting started](getting-started.md) for the pattern. The examples vary
 in size, but the NOVA example (`examples/nova/src/`) is representative. Note
 that `evaluation/` is a package, not a single module, and dataset loading
 lives under `data/`:

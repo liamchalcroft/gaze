@@ -61,31 +61,36 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
+  - Getting started: getting-started.md
   - Architecture: architecture.md
   - Examples: examples.md
   - Tools: tools.md
   - Configuration: configuration.md
+  - Troubleshooting: troubleshooting.md
   - Integrations:
       - Verifiers (RL): verifiers_integration.md
       - MedMarks: MEDMARKS_INTEGRATION.md
-  - API Reference:
+  - API reference:
       - Overview: api/index.md
-      - Base Processor: api/base.md
+      - Base processor: api/base.md
       - Types: api/types.md
       - Configuration: api/config.md
       - Exceptions: api/exceptions.md
       - Models:
-          - Adapter Protocol: api/models/adapter_protocol.md
-          - OpenAI Adapter: api/models/openai_adapter.md
-          - LM Studio Adapter: api/models/lmstudio_adapter.md
+          - Adapter protocol: api/models/adapter_protocol.md
+          - OpenAI adapter: api/models/openai_adapter.md
+          - LM Studio adapter: api/models/lmstudio_adapter.md
       - Tools:
           - Registry: api/tools/registry.md
-          - Visual Tools: api/tools/visual.md
-          - Search Tools: api/tools/search.md
+          - Visual tools: api/tools/visual.md
+          - Search tools: api/tools/search.md
       - Retrieval:
-          - PubMed Search: api/retrieval/web_search.md
-          - Image Search: api/retrieval/image_search.md
+          - PubMed search: api/retrieval/web_search.md
+          - Image search: api/retrieval/image_search.md
       - Verifiers: api/verifiers.md
       - Utilities: api/utils.md
   - Contributing: contributing.md
+  - Project:
+      - Changelog: https://github.com/liamchalcroft/gaze/blob/main/CHANGELOG.md
+      - Security: https://github.com/liamchalcroft/gaze/blob/main/SECURITY.md
+      - Code of conduct: https://github.com/liamchalcroft/gaze/blob/main/CODE_OF_CONDUCT.md

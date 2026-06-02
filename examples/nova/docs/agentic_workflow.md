@@ -1,4 +1,4 @@
-# Agentic Workflow
+# Agentic workflow
 
 Multi-turn reasoning with visual tools and web search for medical image analysis.
 
@@ -86,33 +86,10 @@ Returns `AgenticResult`.
 
 ## Tools
 
-| Tool | Parameters | Description |
-|------|------------|-------------|
-| `zoom` | `factor: float` | Magnify image (0.5--4.0x) |
-| `crop` | `box: [x1,y1,x2,y2]` | Extract region (normalized 0--1) |
-| `adjust_contrast` | `factor: float` | Contrast enhancement (0.5--3.0) |
-| `adjust_brightness` | `factor: float` | Brightness adjustment (0.5--3.0) |
-| `adjust_sharpness` | `factor: float` | Sharpness adjustment (0.0--3.0) |
-| `threshold` | `lower, upper` | Intensity thresholding (0--255) |
-| `window_level` | `center, width` or `preset` | Clinical windowing (brain, subdural, bone, etc.) |
-| `equalize_histogram` | -- | Global histogram equalization (grayscale) |
-| `adaptive_equalize` | `clip_limit, tile_size` | CLAHE local contrast enhancement |
-| `detect_edges` | `method: sobel\|laplacian` | Edge detection for boundary delineation |
-| `denoise` | `sigma: float` | Gaussian noise reduction |
-| `morphological` | `operation, iterations` | Erode/dilate/open/close for mask cleanup |
-| `get_intensity_stats` | `box` (optional) | Compute intensity statistics over region |
-| `intensity_profile` | `point1, point2` | Sample intensities along a line |
-| `symmetry_diff` | -- | Left-right symmetry difference map |
-| `invert` | -- | Invert pixel intensities (negative) |
-| `annotate_region` | `box, color, label` | Draw bounding box overlay |
-| `flip_horizontal` | -- | Mirror left-right |
-| `flip_vertical` | -- | Mirror top-bottom |
-| `rotate` | `clockwise: bool` | Rotate 90 degrees |
-| `show_grid` | `divisions: int` | Overlay labeled spatial grid |
-| `measure` | `point1, point2` | Measure distance between two points |
-| `reset` | -- | Restore original image |
-| `search_web` | `query, search_type` | PubMed literature search |
-| `search_images` | `query, modality, body_part` | Open-i image search |
+The full tool catalogue, parameters, value ranges, and coordinate/intensity
+effects are documented in [docs/tools.md](../../../docs/tools.md). NOVA enables
+the visual tools with `--use-tools` and the PubMed/Open-i search tools with
+`--use-web-search`.
 
 ```python
 from gaze import ToolRegistry, create_visual_tools, create_search_tools
@@ -124,7 +101,7 @@ result = await registry.execute_tool("zoom", factor=2.0)
 # ToolResult(success=True, image_base64="...", description="Zoomed 2.0x")
 ```
 
-## Multi-Turn Flow
+## Multi-turn flow
 
 ```mermaid
 sequenceDiagram
@@ -155,7 +132,7 @@ sequenceDiagram
 
 Each turn, the model returns JSON with `"continue": true` or `"continue": false`. When `continue` is false (or max turns reached), the response is finalized.
 
-## Result Types
+## Result types
 
 ```python
 @dataclass(frozen=True)
@@ -174,7 +151,7 @@ class Turn:
     image_base64: str | None
 ```
 
-## Web Search
+## Web search
 
 PubMed search via NCBI E-utilities with reliability scoring. Search is invoked through the tool system:
 

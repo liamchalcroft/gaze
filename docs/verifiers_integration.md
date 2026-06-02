@@ -1,6 +1,8 @@
-# Verifiers Integration
+# Verifiers integration
 
 Integration with the [verifiers](https://github.com/primeintellect-ai/verifiers) package for RL training with verifiable rewards.
+
+See the [API reference](api/verifiers.md) for signatures.
 
 ## Overview
 
@@ -38,9 +40,9 @@ RL training additionally needs torch/transformers/datasets, provided by the
 uv sync --group rl
 ```
 
-## Quick Start
+## Quick start
 
-### 1. Multi-Turn Environment
+### 1. Multi-turn environment
 
 ```python
 from gaze.verifiers import BaseMultiTurnEnv
@@ -58,7 +60,7 @@ env = MyEnvironment(
 )
 ```
 
-### 2. Reward Functions
+### 2. Reward functions
 
 ```python
 from gaze.verifiers import ExactMatchReward, TokenF1Reward, CombinedReward
@@ -75,7 +77,7 @@ combined = CombinedReward(
 )
 ```
 
-### 3. Processor-Based Environment
+### 3. Processor-based environment
 
 Use `VerifiableProcessorMixin` to turn a processor into a verifiers environment:
 
@@ -130,7 +132,7 @@ Methods to override:
 - `is_completed(messages, state, info) -> bool`
 - `env_response(messages, state, info) -> tuple[Messages, State]`
 
-### Reward Functions
+### Reward functions
 
 All inherit from `BaseRewardFunction` which defines `__call__(prompt, completion, info) -> float`.
 
@@ -181,7 +183,7 @@ result = await adapter.process_verifiers_messages(messages, info)
 EnvClass = adapter.create_environment_class(max_turns=5)
 ```
 
-### Custom Reward Functions
+### Custom reward functions
 
 ```python
 from gaze.verifiers import BaseRewardFunction
@@ -193,7 +195,7 @@ class MyReward(BaseRewardFunction):
         return float(pred == ref)
 ```
 
-## Data Format
+## Data format
 
 Use JSONL with consistent fields:
 ```json

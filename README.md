@@ -6,7 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://liamchalcroft.github.io/gaze/)
 
-A modular Python framework for building multi-turn agentic vision-language model (VLM) systems. Built for medical image analysis but applicable to any visual reasoning task.
+**GAZE** (Grounded Agentic Zero-shot Evaluation) is a modular Python framework for multi-turn agentic vision-language model (VLM) systems, built for medical image analysis.
+
+A radiologist rarely reads a scan in a single glance: they zoom, adjust the window, compare regions, and consult the literature before writing a report. A vision-language model, by contrast, reads an image once and produces text in a single forward pass. GAZE closes that gap by giving a VLM viewer-level tools (zoom, windowing, contrast, edge detection) and literature retrieval (PubMed, Open-i), then running it as a multi-turn loop with schema-validated outputs and full tool-call traces for auditability. It applies to any visual reasoning task, not only medical imaging.
 
 ## Features
 
@@ -15,6 +17,17 @@ A modular Python framework for building multi-turn agentic vision-language model
 - **Task processors** -- abstract base class with dependency injection for prompts, schemas, and validation
 - **Model adapters** -- OpenAI API (including OpenRouter), LM Studio for local models, HuggingFace Transformers
 - **Verifiers integration** -- reward functions and multi-turn environments for RL training via [verifiers](https://github.com/primeintellect-ai/verifiers)
+
+## Tools at a glance
+
+The model can call these during reasoning (multi-turn mode); the full set of 25 is in the [tool reference](https://liamchalcroft.github.io/gaze/tools/).
+
+| Category | Representative tools |
+|----------|----------------------|
+| Inspect | `zoom`, `crop`, `rotate`, `flip_horizontal` |
+| Enhance | `adjust_contrast`, `adjust_brightness`, `window_level`, `equalize_histogram` |
+| Analyze | `threshold`, `detect_edges`, `morphological`, `symmetry_diff` |
+| Retrieve | `search_web` (PubMed), `search_images` (Open-i) |
 
 ## Installation
 
@@ -42,7 +55,7 @@ cd gaze
 uv sync
 ```
 
-## Quick Start
+## Quick start
 
 Subclass `AgenticProcessorBase` and implement four methods:
 
@@ -91,12 +104,16 @@ async def main():
 asyncio.run(main())
 ```
 
-The model returns JSON each turn with `"continue": true` to keep reasoning or `"continue": false` when done.
+The model returns JSON each turn with `"continue": true` to keep reasoning or `"continue": false` when done. `result.final_response` is the validated JSON from the last turn, for example:
+
+```json
+{"findings": "No acute intracranial abnormality.", "continue": false}
+```
 
 ## Architecture
 
 ```
-gaze/
+src/gaze/
     base.py          AgenticProcessorBase -- subclass this
     types.py         ToolCall, ToolResult, Turn, AgenticResult (all frozen)
     config.py        Frozen dataclasses: GazeConfig, SearchConfig, etc.
@@ -108,6 +125,8 @@ gaze/
     verifiers/       RL reward functions and multi-turn environments
     utils/           IoU, JSON extraction, type coercion, confidence clamping
 ```
+
+The import path is `gaze` (the package lives under `src/gaze/`).
 
 ## Examples
 
@@ -123,7 +142,7 @@ Five complete example applications are included:
 
 Each example includes a CLI, evaluation metrics, and run scripts for local models.
 
-## Local Models (LM Studio)
+## Local models (LM Studio)
 
 All examples support local model inference via LM Studio:
 
@@ -135,44 +154,40 @@ uv run python -m examples.nova.src.cli \
   --max-samples 5
 ```
 
-## Environment Variables
+## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` or `OPENAI_API_KEY` | Yes (for cloud models) | Model API access |
 | `NCBI_API_KEY` | No | Higher PubMed rate limits |
 | `NCBI_EMAIL` | No | PubMed API compliance |
+| `GAZE_ALLOW_CUSTOM_BASE_URL` | No | Set to `1` to send API keys to a non-allowlisted model host |
 
 ## Development
 
 ```bash
 uv sync                          # Install dependencies
 make check                       # Quality gate: lint + format + typecheck + lockfile + tests
+make check-nova                  # Torch-gated + example tests (installs the nova extra)
 uv run ruff check .              # Lint
 uv run ruff format .             # Format
 uv run pyright src/              # Type check
 uv run pytest tests/ -x          # Run tests
 ```
 
+## Stability and versioning
+
+GAZE follows [Semantic Versioning](https://semver.org). While the project is pre-1.0, minor releases may include breaking changes to the public API; each is recorded in the [Changelog](CHANGELOG.md). The public API is the set of names exported from the top-level `gaze` package (`gaze.__all__`); anything underscore-prefixed or imported from a submodule is internal and may change without notice. From 1.0 onward, removals will ship with a deprecation warning for at least one minor release.
+
 ## Documentation
 
-- [API Reference](https://liamchalcroft.github.io/gaze/)
-- [Tool Reference](docs/tools.md)
-- [Configuration](docs/configuration.md)
-- [Verifiers Integration](docs/verifiers_integration.md)
-- [MedMarks Integration](docs/MEDMARKS_INTEGRATION.md)
+- [Documentation site](https://liamchalcroft.github.io/gaze/)
+- [Getting started](https://liamchalcroft.github.io/gaze/getting-started/)
+- [Tool reference](https://liamchalcroft.github.io/gaze/tools/)
+- [Configuration](https://liamchalcroft.github.io/gaze/configuration/)
+- [Verifiers integration](https://liamchalcroft.github.io/gaze/verifiers_integration/)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
-
-## Stability & Versioning
-
-GAZE follows [Semantic Versioning](https://semver.org). While the project is
-pre-1.0, minor releases may include breaking changes to the public API; each is
-recorded in the [Changelog](CHANGELOG.md). The public API is the set of names
-exported from the top-level `gaze` package (`gaze.__all__`); anything
-underscore-prefixed or imported from a submodule is internal and may change
-without notice. From 1.0 onward, removals will ship with a deprecation warning
-for at least one minor release.
 
 ## Citation
 
@@ -180,7 +195,7 @@ If you use GAZE in your research, please cite:
 
 ```bibtex
 @inproceedings{chalcroft2026gaze,
-  title={GAZE: A Modular Framework for Agentic Vision-Language Models in Medical Image Analysis},
+  title={GAZE: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain MRI},
   author={Chalcroft, Liam},
   year={2026}
 }

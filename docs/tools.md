@@ -12,7 +12,7 @@ excluded by name via the `disabled_tools` constructor argument.
 
 ## Coordinate and intensity effects
 
-The harness classifies tools by whether they change how subsequent
+GAZE classifies tools by whether they change how subsequent
 measurements relate to the original image (`base.py`):
 
 - **Coordinate-modifying** (`_COORD_MODIFYING_TOOLS`): `crop`, `zoom`,
@@ -25,7 +25,7 @@ measurements relate to the original image (`base.py`):
   these, pixel values no longer represent original tissue intensities, so
   `get_intensity_stats` and `intensity_profile` reflect the transformed data.
 
-On the final turn the harness re-attaches the original image and warns the
+On the final turn GAZE re-attaches the original image and warns the
 model when either class of tool was used. A successful `reset` clears both
 flags. Tools marked **read-only** below render an image (or return numbers)
 without mutating the registry's image state, so they do not set either flag.

@@ -5,34 +5,34 @@
 GAZE is organized around a multi-turn agentic loop where a VLM reasons over images using tools and structured JSON output.
 
 ```
-                          ┌─────────────────────┐
-                          │  AgenticProcessorBase │
-                          │  (your subclass)      │
-                          └──────────┬────────────┘
-                                     │
-                          ┌──────────▼────────────┐
-                          │    Agentic Loop        │
-                          │  (multi-turn, JSON)    │
-                          └──────────┬────────────┘
-                                     │
-                    ┌────────────────┼────────────────┐
-                    │                │                 │
-            ┌───────▼──────┐ ┌──────▼───────┐ ┌──────▼───────┐
-            │ Model Adapter │ │ Tool Registry │ │   Prompts    │
-            │ (OpenAI, LM  │ │ (visual,      │ │ (Jinja2)     │
-            │  Studio, HF) │ │  search)      │ │              │
-            └──────────────┘ └──────┬───────┘ └──────────────┘
-                                    │
-                        ┌───────────┼───────────┐
-                        │                       │
-                ┌───────▼──────┐       ┌────────▼─────┐
-                │ Image Manager │       │  Retrieval   │
-                │ (PIL ops)     │       │ (PubMed,     │
-                └──────────────┘       │  Open-i)     │
-                                       └──────────────┘
+                       +------------------------+
+                       |  AgenticProcessorBase  |
+                       |     (your subclass)    |
+                       +-----------+------------+
+                                   |
+                       +-----------v------------+
+                       |      Agentic loop      |
+                       |   (multi-turn, JSON)   |
+                       +-----------+------------+
+                                   |
+            +----------------------+----------------------+
+            |                      |                      |
+   +--------v---------+   +--------v---------+   +--------v---------+
+   |  Model adapter   |   |  Tool registry   |   |     Prompts      |
+   | (OpenAI, LM      |   |     (visual,     |   |    (Jinja2)      |
+   |  Studio, HF)     |   |      search)     |   |                  |
+   +------------------+   +--------+---------+   +------------------+
+                                   |
+                       +-----------+-----------+
+                       |                       |
+              +--------v---------+   +---------v--------+
+              |  Image manager   |   |    Retrieval     |
+              |    (PIL ops)     |   |    (PubMed,      |
+              |                  |   |     Open-i)      |
+              +------------------+   +------------------+
 ```
 
-## Core Components
+## Core components
 
 ### AgenticProcessorBase (`base.py`)
 
@@ -64,7 +64,7 @@ Frozen dataclasses for all configuration:
 
 Use `config_context()` for task-scoped overrides via ContextVar.
 
-### Model Adapters (`models/`)
+### Model adapters (`models/`)
 
 All adapters implement `AdapterProtocol`:
 
@@ -72,7 +72,7 @@ All adapters implement `AdapterProtocol`:
 - **LMStudioAdapter** -- local models via LM Studio (subclasses OpenAIAdapter, no retries, HTTP allowed)
 - **HuggingFaceAdapter** -- direct Transformers inference (lazy-imported to avoid torch dependency)
 
-### Tool System (`tools/`)
+### Tool system (`tools/`)
 
 - **ToolRegistry** -- manages tool lifecycle and execution
 - **Visual tools** (23) -- image manipulation via PIL
@@ -83,7 +83,7 @@ All adapters implement `AdapterProtocol`:
 - **PubMed search** -- NCBI E-utilities API
 - **Open-i image search** -- medical image retrieval
 
-### Verifiers Integration (`verifiers/`)
+### Verifiers integration (`verifiers/`)
 
 For RL training with verifiable rewards:
 
@@ -91,7 +91,7 @@ For RL training with verifiable rewards:
 - **Reward functions** -- ExactMatchReward, TokenF1Reward, IoUReward, CombinedReward
 - **GazeAdapter** -- bridges processors and verifiers
 
-## Design Principles
+## Design principles
 
 - **Frozen data** -- all types and configs are immutable. Use `deep_freeze()`/`deep_thaw()` for nested structures.
 - **beartype validation** -- runtime type checking on all public APIs.
@@ -99,7 +99,7 @@ For RL training with verifiable rewards:
 - **Async-first** -- all I/O operations are async.
 - **Config isolation** -- `config_context()` uses ContextVar for thread/task-safe overrides.
 
-## How the Agentic Loop Works
+## How the agentic loop works
 
 The loop lives in `AgenticProcessorBase._run_analysis()` (`base.py`). The
 description below tracks that implementation; the constants named in
@@ -109,7 +109,7 @@ parentheses are module-level defaults in `base.py`.
 
 Each `analyze()` call normalizes and loads the input images, optionally
 downscales them (`max_encode_dimension`), builds a tool registry (multi-turn
-only), then iterates up to `max_turns` times. On every turn the harness:
+only), then iterates up to `max_turns` times. On every turn GAZE:
 
 1. Sends the running message list to the adapter via `generate_chat()`.
 2. Parses the response into either tool calls or a JSON object.
@@ -124,7 +124,7 @@ The default turn budget is 10 (`_DEFAULT_MAX_TURNS`) and the hard ceiling is
 In multi-turn mode the system prompt instructs the model to return a boolean
 `continue` field every turn: `true` to request more tools or analysis,
 `false` to finalize. Local models often omit the field when they mean
-"false", so the harness injects `continue: false` whenever the key is
+"false", so GAZE injects `continue: false` whenever the key is
 absent. It also coerces non-boolean values: `null` becomes `false`, `0`/`1`
 become booleans, and the strings `"true"`/`"false"`/`"yes"`/`"no"` are
 normalized. A value that cannot be coerced raises `AgenticProcessingError`.
@@ -162,7 +162,7 @@ tool messages (`supports_multipart_tool_content == False`, e.g.
 `LMStudioAdapter`) receive a text description plus a note that the image
 could not be displayed.
 
-The harness tracks whether coordinate-modifying or intensity-modifying tools
+GAZE tracks whether coordinate-modifying or intensity-modifying tools
 have run (see the `_COORD_MODIFYING_TOOLS` and `_INTENSITY_MODIFYING_TOOLS`
 sets, documented in [Tools](tools.md)). On the final turn it re-attaches the
 original image and warns the model that bounding boxes from transformed views
@@ -176,20 +176,20 @@ The loop is built to keep going when a model misbehaves rather than crashing:
 - **Nudges.** Empty responses, non-JSON text, non-object JSON, truncated
   output, and responses that fail `validate_response()` each trigger a
   corrective user message that restates the required structure. After
-  `_MAX_CONSECUTIVE_NUDGES` (2) consecutive failures the harness escalates to
+  `_MAX_CONSECUTIVE_NUDGES` (2) consecutive failures GAZE escalates to
   a stricter force-finalize message. If nudges still do not recover after
   `_MAX_RECOVERY_NUDGES` total attempts, it raises `AgenticProcessingError`.
   A turn with valid JSON or successful tool calls resets the nudge counter.
 - **Idle-tool force-finalize.** In multi-turn mode, if tools are available
   but the model has made zero tool calls by `_IDLE_TOOL_TURNS_LIMIT` (3)
-  turns, the harness force-finalizes to avoid wasting tokens. It nudges once;
+  turns, GAZE force-finalizes to avoid wasting tokens. It nudges once;
   if the model still does not use tools, it accepts the current response.
 - **Final-turn tool stripping.** The last turn never offers tools. If the
-  model still emits tool calls on that turn, the harness first tries to
+  model still emits tool calls on that turn, GAZE first tries to
   salvage a valid JSON answer from the accompanying text; failing that, it
   raises `AgenticProcessingError`.
 - **Truncation salvage.** When the final turn is cut off (`finish_reason ==
-  "length"`), the harness attempts to extract partial JSON from the text and,
+  "length"`), GAZE attempts to extract partial JSON from the text and,
   if the salvaged keys match a sub-schema rather than the top level, wraps
   them under the correct parent key before validating.
 - **Stale image stripping.** On turns after the first, base64 image data from

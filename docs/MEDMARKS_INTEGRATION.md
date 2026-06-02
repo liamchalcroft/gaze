@@ -1,4 +1,4 @@
-# MedMarks Integration
+# MedMarks integration
 
 Integration with [MedMarks](https://medmarks.ai), an evaluation suite for medical LLMs developed by Sophont, MedARC, and Prime Intellect.
 
@@ -41,7 +41,7 @@ medarc-eval nova-brain-mri -m gpt-4o --use-tools --max-turns 10
 
 See [environments/nova_brain_mri/README.md](https://github.com/liamchalcroft/gaze/blob/main/environments/nova_brain_mri/README.md) for the Python API and configuration reference.
 
-### Via GAZE Processor
+### Via GAZE processor
 
 ```python
 from examples.nova.src.processor import NOVAAgenticProcessor
@@ -73,7 +73,7 @@ env = EnvClass()
 | `iou_threshold` | float | 0.5 | IoU threshold for localization |
 | `data_dir` | str | None | Custom dataset directory |
 
-## Reward Functions
+## Reward functions
 
 The environment provides three task-specific rewards:
 
@@ -83,7 +83,7 @@ The environment provides three task-specific rewards:
 
 Combined rubric weights: 33% caption, 34% diagnosis, 33% localization.
 
-## Creating Custom Environments
+## Creating custom environments
 
 Any `AgenticProcessorBase` subclass with `VerifiableProcessorMixin` can become a MedMarks-compatible environment:
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
 GAZE is currently at an early release stage. Security fixes are provided for
 the latest `0.1.x` release line only.
@@ -10,7 +10,7 @@ the latest `0.1.x` release line only.
 | 0.1.x   | :white_check_mark: |
 | < 0.1   | :x:                |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
 Please do not report security vulnerabilities through public GitHub issues,
 pull requests, or discussions.
@@ -30,14 +30,14 @@ When reporting, please include where relevant:
 - The affected version or commit.
 - Any suggested mitigation.
 
-## Response Process
+## Response process
 
 - We aim to acknowledge a report within 5 business days.
 - We will provide an assessment and an indication of next steps after triage.
 - We will coordinate a disclosure timeline with the reporter and credit the
   reporter on request once a fix is released.
 
-## Scope and Threat Model
+## Scope and threat model
 
 GAZE is a research framework for agentic vision-language model systems. When
 assessing reports, please keep the following operational characteristics in
