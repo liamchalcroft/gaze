@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+type: software
+title: "GAZE: Grounded Agentic Zero-shot Evaluation"
+authors:
+  - family-names: Chalcroft
+    given-names: Liam
+repository-code: "https://github.com/liamchalcroft/gaze"
+url: "https://liamchalcroft.github.io/gaze/"
+license: MIT
+version: 0.1.0
+preferred-citation:
+  # Venue is not yet finalised; update type and venue fields once published.
+  type: article
+  title: "GAZE: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain MRI"
+  authors:
+    - family-names: Chalcroft
+      given-names: Liam
+  year: 2026
+  # notes: venue TBD (journal or conference to be confirmed).
