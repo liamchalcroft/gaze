@@ -11,15 +11,15 @@ Verifiers Framework (vf.MultiTurnEnv, vf.Rubric)
         |
 NOVA Brain MRI Environment (environments/nova_brain_mri/)
         |
-Radiant Harness (AgenticProcessorBase, VerifiableProcessorMixin)
+GAZE (AgenticProcessorBase, VerifiableProcessorMixin)
 ```
 
-The `environments/nova_brain_mri/` package provides a MedMarks-compatible environment for the NOVA brain-MRI benchmark. It wraps the verifiers framework and uses Radiant Harness reward utilities.
+The `environments/nova_brain_mri/` package provides a MedMarks-compatible environment for the NOVA brain-MRI benchmark. It wraps the verifiers framework and uses GAZE reward utilities.
 
 ## Installation
 
 ```bash
-# Install radiant-harness with MedMarks dependencies (from source)
+# Install gaze-vlm with MedMarks dependencies (from source)
 pip install -e .[medmarks]
 
 # Install the NOVA brain-MRI environment
@@ -39,9 +39,9 @@ medarc-eval nova-brain-mri -m gpt-4o --use-tools --max-turns 10
 
 ### Via Python API
 
-See [environments/nova_brain_mri/README.md](../environments/nova_brain_mri/README.md) for the Python API and configuration reference.
+See [environments/nova_brain_mri/README.md](https://github.com/liamchalcroft/gaze/blob/main/environments/nova_brain_mri/README.md) for the Python API and configuration reference.
 
-### Via Radiant Harness Processor
+### Via GAZE Processor
 
 ```python
 from examples.nova.src.processor import NOVAAgenticProcessor
@@ -88,8 +88,8 @@ Combined rubric weights: 33% caption, 34% diagnosis, 33% localization.
 Any `AgenticProcessorBase` subclass with `VerifiableProcessorMixin` can become a MedMarks-compatible environment:
 
 ```python
-from radiant_harness import AgenticProcessorBase
-from radiant_harness.verifiers import VerifiableProcessorMixin, BaseRewardFunction
+from gaze import AgenticProcessorBase
+from gaze.verifiers import VerifiableProcessorMixin, BaseRewardFunction
 
 class MyMedicalProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
     def get_system_prompt(self, images, metadata):

@@ -4,21 +4,36 @@ Integration with the [verifiers](https://github.com/primeintellect-ai/verifiers)
 
 ## Overview
 
-The `radiant_harness.verifiers` module provides:
+The `gaze.verifiers` module provides:
 
 - `BaseMultiTurnEnv` -- base class for multi-turn RL environments (extends `vf.MultiTurnEnv`)
 - `VerifiableProcessorMixin` -- mixin that adds `as_verifiers_env()` to processors
-- `RadiantHarnessAdapter` -- bridges processor and verifiers message formats
+- `GazeAdapter` -- bridges processor and verifiers message formats
 - Reward functions: `ExactMatchReward`, `TokenF1Reward`, `IoUReward`, `CombinedReward`
 
 ## Installation
 
+`verifiers` is not part of the core `gaze-vlm` runtime dependencies. It is
+declared in the `dev` dependency group and in several optional extras
+(`[verifiers]`, `[rl]`, `[medmarks]`, `[gemex]`, `[agentclinic]`), so it is
+only pulled in when you ask for it.
+
+End users install the optional extra:
+
 ```bash
-# verifiers is a core dependency, installed with:
+pip install gaze-vlm[verifiers]
+```
+
+Contributors working from a checkout get it through the dev group, which
+`uv sync` installs by default:
+
+```bash
 uv sync
 ```
 
-For RL training with torch/transformers:
+RL training additionally needs torch/transformers/datasets, provided by the
+`rl` group:
+
 ```bash
 uv sync --group rl
 ```
@@ -28,7 +43,7 @@ uv sync --group rl
 ### 1. Multi-Turn Environment
 
 ```python
-from radiant_harness.verifiers import BaseMultiTurnEnv
+from gaze.verifiers import BaseMultiTurnEnv
 
 class MyEnvironment(BaseMultiTurnEnv):
     def get_system_prompt(self) -> str:
@@ -46,7 +61,7 @@ env = MyEnvironment(
 ### 2. Reward Functions
 
 ```python
-from radiant_harness.verifiers import ExactMatchReward, TokenF1Reward, CombinedReward
+from gaze.verifiers import ExactMatchReward, TokenF1Reward, CombinedReward
 
 # Single reward
 reward = ExactMatchReward(normalize=True)
@@ -65,8 +80,8 @@ combined = CombinedReward(
 Use `VerifiableProcessorMixin` to turn a processor into a verifiers environment:
 
 ```python
-from radiant_harness import AgenticProcessorBase
-from radiant_harness.verifiers import VerifiableProcessorMixin, ExactMatchReward
+from gaze import AgenticProcessorBase
+from gaze.verifiers import VerifiableProcessorMixin, ExactMatchReward
 
 class MyProcessor(VerifiableProcessorMixin, AgenticProcessorBase):
     def get_system_prompt(self, images, metadata):
@@ -103,7 +118,7 @@ BaseMultiTurnEnv(
     cases=None,              # Pre-loaded cases (list of dicts)
     dataset_path=None,       # Path to JSONL file
     max_turns=10,
-    name="BaseRadiantEnv",
+    name="BaseGazeEnv",
     log_dir=None,
 )
 ```
@@ -154,14 +169,14 @@ CombinedReward(
 )
 ```
 
-### RadiantHarnessAdapter
+### GazeAdapter
 
-Bridges a Radiant Harness processor with verifiers message formats:
+Bridges a GAZE processor with verifiers message formats:
 
 ```python
-from radiant_harness.verifiers import RadiantHarnessAdapter
+from gaze.verifiers import GazeAdapter
 
-adapter = RadiantHarnessAdapter(processor=my_processor)
+adapter = GazeAdapter(processor=my_processor)
 result = await adapter.process_verifiers_messages(messages, info)
 EnvClass = adapter.create_environment_class(max_turns=5)
 ```
@@ -169,7 +184,7 @@ EnvClass = adapter.create_environment_class(max_turns=5)
 ### Custom Reward Functions
 
 ```python
-from radiant_harness.verifiers import BaseRewardFunction
+from gaze.verifiers import BaseRewardFunction
 
 class MyReward(BaseRewardFunction):
     def __call__(self, prompt, completion, info) -> float:
@@ -188,6 +203,6 @@ Use JSONL with consistent fields:
 
 ## Troubleshooting
 
-- **Import errors**: run `uv sync` to install dependencies
+- **Import errors**: install the verifiers extra (`pip install gaze-vlm[verifiers]`), or run `uv sync` from a checkout
 - **Memory issues**: reduce batch size
 - **Debugging**: pass `log_dir="./logs"` to the environment constructor

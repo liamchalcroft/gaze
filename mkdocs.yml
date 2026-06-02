@@ -1,0 +1,91 @@
+site_name: GAZE
+site_url: https://liamchalcroft.github.io/gaze/
+site_description: Modular framework for multi-turn agentic vision-language model systems
+site_author: Liam Chalcroft
+
+repo_name: liamchalcroft/gaze
+repo_url: https://github.com/liamchalcroft/gaze
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            show_signature_annotations: true
+            separate_signature: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Examples: examples.md
+  - Tools: tools.md
+  - Configuration: configuration.md
+  - Integrations:
+      - Verifiers (RL): verifiers_integration.md
+      - MedMarks: MEDMARKS_INTEGRATION.md
+  - API Reference:
+      - Overview: api/index.md
+      - Base Processor: api/base.md
+      - Types: api/types.md
+      - Configuration: api/config.md
+      - Exceptions: api/exceptions.md
+      - Models:
+          - Adapter Protocol: api/models/adapter_protocol.md
+          - OpenAI Adapter: api/models/openai_adapter.md
+          - LM Studio Adapter: api/models/lmstudio_adapter.md
+      - Tools:
+          - Registry: api/tools/registry.md
+          - Visual Tools: api/tools/visual.md
+          - Search Tools: api/tools/search.md
+      - Retrieval:
+          - PubMed Search: api/retrieval/web_search.md
+          - Image Search: api/retrieval/image_search.md
+      - Verifiers: api/verifiers.md
+      - Utilities: api/utils.md
+  - Contributing: contributing.md

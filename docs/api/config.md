@@ -1,0 +1,3 @@
+# Configuration
+
+::: gaze.config

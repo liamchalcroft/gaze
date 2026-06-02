@@ -1,0 +1,3 @@
+# Exceptions
+
+::: gaze.exceptions
