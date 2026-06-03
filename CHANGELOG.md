@@ -17,6 +17,12 @@ version history is not carried onto this version line.
   tool-calling, schema validation, and automatic error recovery. Subclass it
   and implement four methods (`get_system_prompt`, `get_user_message`,
   `get_response_schema`, `validate_response`).
+- `analyze()`: a high-level convenience function (and the underlying
+  `SimpleProcessor`) for one-off analyses without defining a subclass.
+- Tunable agentic loop via `AgenticConfig` (turn, token, and temperature
+  defaults plus the nudge, idle-tool, and tool-content budgets), a settable
+  `temperature`, an overridable `should_continue()` stop hook, and a direct
+  `adapter=` argument alongside `adapter_factory`.
 - 25 built-in tools: 23 visual-manipulation tools (zoom, crop, contrast,
   windowing, thresholding, edge detection, morphology, and more) and 2
   retrieval tools (PubMed via NCBI E-utilities, Open-i image search).
