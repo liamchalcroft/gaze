@@ -8,9 +8,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Generic
-from typing import Protocol
 from typing import TypeVar
-from typing import runtime_checkable
 
 from beartype import beartype
 from loguru import logger
@@ -19,11 +17,6 @@ from gaze.config import CacheConfig
 from gaze.config import get_config
 
 T = TypeVar("T")
-
-
-@runtime_checkable
-class _SupportsClose(Protocol):
-    def close(self) -> object: ...
 
 
 class TTLCache(Generic[T]):
@@ -162,10 +155,16 @@ class TTLCache(Generic[T]):
             return False
 
     def _close_value(self, key: str, value: object, reason: str) -> None:
-        """Close a cached value if it exposes a close method."""
-        if isinstance(value, _SupportsClose):
+        """Close a cached value if it exposes a callable ``close``.
+
+        Duck-typed rather than an ``isinstance`` Protocol check: the latter is
+        not version-stable for test doubles (Python 3.12 stopped ``Mock``
+        instances from satisfying ``runtime_checkable`` protocols).
+        """
+        close = getattr(value, "close", None)
+        if callable(close):
             try:
-                value.close()
+                close()
             except OSError as e:
                 logger.warning(f"Error closing {reason} cached value for key {key}: {e}")
 
