@@ -1,0 +1,59 @@
+{# GENERIC AGENTIC TASK PROMPT - Reference template for multi-turn analysis #}
+{# Supports text-only, single image, and multi-image input modes. #}
+{# Dataset-specific implementations (e.g. examples/nova/) typically provide #}
+{# their own task templates. The "continue" field and turn-limit instructions #}
+{# are injected by _run_analysis() as a POLICY block — do NOT duplicate here. #}
+{#
+  Required variables: (none — all are optional)
+  Optional variables:
+    - task_instructions: str — the specific task to perform
+    - images: list[ImageInput] — image objects with .path, .width, .height, .label
+    - image_info: str — fallback text description of images
+    - context: str — additional context (e.g., clinical history)
+    - output_format: str — description of expected output format
+    - has_images: bool — whether images are provided
+#}
+
+{% if task_instructions is defined and task_instructions %}
+**TASK:**
+
+{{ task_instructions }}
+{% endif %}
+
+{% if images is defined and images|length > 0 %}
+**INPUT IMAGES:**
+
+{% if images|length == 1 %}
+- Image: {{ images[0].path.name }} ({{ images[0].width }}x{{ images[0].height }})
+{% else %}
+{% for img in images %}
+- {% if img.label %}{{ img.label }}{% else %}Image {{ loop.index }}{% endif %}: {{ img.path.name }} ({{ img.width }}x{{ img.height }})
+{% endfor %}
+{% endif %}
+{% elif image_info is defined and image_info %}
+**IMAGE INFORMATION:**
+
+{{ image_info }}
+{% endif %}
+
+{% if context is defined and context %}
+<context>
+{{ context }}
+</context>
+{% endif %}
+
+{% if output_format is defined and output_format %}
+**OUTPUT FORMAT:**
+
+{{ output_format }}
+{% endif %}
+
+{% if has_images is defined and has_images %}
+**STRATEGY:**
+
+- **Turn 1**: Initial survey and identify areas requiring investigation.
+- **Turn 2+**: Progressive investigation using tools as needed.
+- **Final Turn**: Complete synthesis with all findings.
+{% endif %}
+
+Begin your analysis.

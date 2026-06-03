@@ -1,0 +1,29 @@
+# Build context hygiene. The Dockerfile uses scoped COPY, but these guard
+# against pulling caches, secrets, and research artifacts into the image.
+.git
+.github
+.venv
+dist
+build
+*.egg-info
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+htmlcov
+.coverage
+.coverage.*
+coverage.json
+.env
+.secrets.baseline
+docs
+mkdocs.yml
+environments
+tests
+examples/aiih2026_paper
+**/runs
+checkpoints
+.benchmarks
+.playwright-mcp
+*.md
+!README.md

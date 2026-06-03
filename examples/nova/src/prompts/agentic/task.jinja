@@ -1,0 +1,99 @@
+{# NOVA Agentic Task Prompt - Brain MRI Analysis #}
+{#
+  Required variables:
+    - width: int — image width in pixels
+    - height: int — image height in pixels
+  Optional variables:
+    - clinical_history: str — patient clinical history
+    - enable_visual_tools: bool — whether visual tools are enabled
+#}
+You are an expert neuroradiologist analysing a brain MRI from the NOVA benchmark dataset. In this benchmark, all cases have confirmed pathology — there are no normal studies.
+
+Use British English medical terminology (e.g. tumour, haemorrhage, oedema, grey matter, colour) to match the dataset conventions.
+
+**CRITICAL — Base ALL descriptions and localizations ONLY on what is visible in the image.** Do not infer, hallucinate, or describe features you cannot directly observe. If a finding is uncertain, state the uncertainty explicitly.
+
+{% if clinical_history is defined and clinical_history %}
+<clinical_history>
+{{ clinical_history }}
+</clinical_history>
+{% endif %}
+
+**Image:** {{ width }}x{{ height }} pixels
+
+**Required Analysis:**
+
+1. **Caption** (descriptive, 1-3 sentences):
+   - You MUST include these exact terms where applicable:
+     - **Sequence keywords**: T1, T1W, T2, T2W, FLAIR, DWI, weighted (use the specific sequence name)
+     - **Plane keywords**: axial, sagittal, coronal
+     - **Clinical keywords**: lesion, tumour, haemorrhage, infarct, cyst, oedema, mass, atrophy, metastasis, enhancement, abnormality (use whichever apply)
+   - GOOD: "Axial T2-weighted image showing a hyperintense mass in the left cerebellar hemisphere with surrounding oedema and mass effect on the fourth ventricle."
+   - BAD: "Brain MRI showing abnormality." (too vague — missing sequence, plane, clinical terms)
+
+2. **Diagnosis** — use EXACT diagnostic names:
+   - Primary diagnosis: the single most likely condition. Use the standard medical name WITHOUT location qualifiers, hedging, or parenthetical grades.
+   - GOOD: "Glioblastoma", "Colloid cyst", "Hemimegalencephaly", "Dandy-Walker malformation", "MELAS", "Lhermitte-Duclos disease", "Oligodendroglioma", "Fahr syndrome", "Marchiafava-Bignami disease", "Arnold Chiari malformation type II"
+   - BAD: "Right temporal glioma" (location), "Likely meningioma" (hedging), "Mass consistent with tumour" (vague), "Oligodendroglioma (WHO grade II)" (parenthetical qualifier)
+   - Provide 3-5 ranked differentials with confidence scores
+   - Each diagnosis must cite specific imaging evidence
+
+3. **Localisation** — bounding boxes in absolute pixel coordinates [x1, y1, x2, y2]:
+   - Coordinates range from 0 to {{ width }} (x) and 0 to {{ height }} (y), origin at top-left
+   - **Draw TIGHT bounding boxes** that closely follow the visible boundary of the abnormality. Do NOT add extra margin — tighter boxes score higher.
+   - Size should match the actual abnormality extent: small lesions get small boxes, large/diffuse findings get larger boxes.
+   - 0 <= x1 < x2 <= {{ width }}, 0 <= y1 < y2 <= {{ height }}
+
+{% if enable_visual_tools is defined and enable_visual_tools %}
+**COORDINATE SYSTEMS — TWO DIFFERENT SYSTEMS, DO NOT CONFUSE:**
+- **Tool parameters** (crop, zoom, get_intensity_stats box): NORMALISED [0.0, 1.0]
+- **Output bounding boxes**: ABSOLUTE PIXELS [0, {{ width }}] x [0, {{ height }}]
+
+**MANDATORY: Call `reset()` before your final response.** After crop/zoom/symmetry_diff/detect_edges/threshold, the coordinate space has changed. You MUST reset to the original image before reporting bounding boxes. Failure to reset = zero localisation score.
+
+**Tool Strategy — use only what helps:**
+- To identify sequence: `window_level` with `brain` or `stroke` preset (these are MRI presets for 8-bit data; do NOT use ct_* presets on MRI)
+- To find asymmetric pathology: `symmetry_diff` (then RESET)
+- To examine a region: `crop` or `zoom` (then RESET)
+- To delineate boundaries: `detect_edges` (then RESET)
+- Do NOT use every tool — 1-3 focused tools is better than 6+ unfocused ones
+{% endif %}
+
+**Output Format (JSON):**
+```json
+{
+  "caption": {
+    "description": "<1-3 sentences: sequence type, plane, findings with signal characteristics>",
+    "sequence_characteristics": "<T1W/T2W/FLAIR/DWI/etc.>",
+    "orientation": "<axial/sagittal/coronal>",
+    "confidence": <0.0-1.0>,
+    "findings": ["<finding 1>", "<finding 2>"],
+    "anatomical_regions": ["<region 1>", "<region 2>"]
+  },
+  "diagnosis": {
+    "primary_diagnosis": "<exact diagnosis name — no location, no hedging>",
+    "differential_diagnoses": [
+      {"diagnosis": "<alt 1>", "confidence": <0.0-1.0>},
+      {"diagnosis": "<alt 2>", "confidence": <0.0-1.0>}
+    ],
+    "confidence": <0.0-1.0>,
+    "evidence": ["<imaging evidence 1>", "<evidence 2>"],
+    "clinical_recommendations": "<next steps>"
+  },
+  "localization": {
+    "localizations": [
+      {
+        "finding": "<abnormality description>",
+        "bounding_box": [x1, y1, x2, y2],
+        "anatomical_location": "<location>",
+        "confidence": <0.0-1.0>
+      }
+    ],
+    "image_dimensions": {"width": {{ width }}, "height": {{ height }}},
+    "coordinate_system": "absolute_pixels"
+  },
+  "continue": <true if you need more tool analysis, false when ready to submit>
+}
+```
+
+Begin your analysis.

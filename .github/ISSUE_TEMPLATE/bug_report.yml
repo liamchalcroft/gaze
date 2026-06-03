@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a defect in GAZE so it can be reproduced and fixed.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please do not report
+        security vulnerabilities here; see SECURITY.md for the private reporting
+        process.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear and concise description of the bug and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, command, or code snippet that triggers the bug.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Model adapter
+      description: Which model adapter were you using?
+      options:
+        - OpenAI
+        - OpenRouter
+        - LM Studio
+        - HuggingFace
+        - Other / not applicable
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model name or identifier in use.
+      placeholder: "e.g. openai/gpt-4o, qwen3.5-a3b"
+    validations:
+      required: false
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.11.9"
+    validations:
+      required: true
+  - type: input
+    id: gaze-version
+    attributes:
+      label: gaze-vlm version
+      description: Output of `python -c "import gaze; print(gaze.__version__)"` or the installed package version.
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and traceback
+      description: Relevant log output or the full traceback. This is automatically formatted as code.
+      render: shell
+    validations:
+      required: false

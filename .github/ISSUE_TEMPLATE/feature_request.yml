@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a new capability or an improvement to GAZE.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please describe the motivation
+        before the proposed solution so the underlying need is clear.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem does this solve, or what need does it address?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: The behavior or API you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you have considered, and why they fall short.
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Which part of the project does this affect?
+      options:
+        - Core library (src/gaze)
+        - A specific example (nova, gemex_thinkvg, agentclinic_nejm, pubmedqa, vqa_rad)
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true

@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+type: software
+title: "GAZE: Grounded Agentic Zero-shot Evaluation"
+authors:
+  - family-names: Alim
+    given-names: Duaa
+  - family-names: Alim
+    given-names: Mogtaba
+  - family-names: Chalcroft
+    given-names: Liam
+repository-code: "https://github.com/liamchalcroft/gaze"
+url: "https://liamchalcroft.github.io/gaze/"
+license: MIT
+version: 0.1.0
+preferred-citation:
+  type: article
+  title: "GAZE: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain MRI"
+  authors:
+    - family-names: Alim
+      given-names: Duaa
+    - family-names: Alim
+      given-names: Mogtaba
+    - family-names: Chalcroft
+      given-names: Liam
+  year: 2026
+  journal: "arXiv preprint arXiv:2605.00876"
+  url: "https://arxiv.org/abs/2605.00876"
+  notes: "Accepted as a full paper at AIiH 2026."
+  identifiers:
+    - type: other
+      value: "arXiv:2605.00876"
+      description: "arXiv preprint identifier"

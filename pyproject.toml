@@ -1,0 +1,319 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gaze"]
+
+[tool.hatch.version]
+path = "src/gaze/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/gaze",
+    "/tests",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# aiih2026_paper is no longer tracked in git; keep it out of the lint surface.
+extend-exclude = ["examples/aiih2026_paper/"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "S",   # bandit (security)
+    "T20", # flake8-print
+    "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate (commented code)
+    "PL",  # pylint
+    "PERF", # perflint
+]
+ignore = [
+    "S101",  # assert usage (common in tests)
+    "PLR0913", # too many arguments
+    "PLR0912", # too many branches
+    "PLR0915", # too many statements
+    "PLR0911", # too many return statements
+    "PLR2004", # magic value used in comparison
+    "F722",  # syntax error in forward annotation (jaxtyping)
+    "F821",  # undefined name (jaxtyping shape annotations)
+    "PLC0415", # import should be at top level (legitimate uses in functions)
+    "PTH123", # use pathlib (many legitimate open() uses)
+    "PERF203", # try-except in loop (sometimes necessary)
+    "SIM116", # use dict instead of if-elif (sometimes clearer as if-elif)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001", "ARG002", "ARG005", "N802", "N811"]
+"scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
+"src/gaze/__main__.py" = ["T201"]
+# Examples are demo/research code: linted for real pyflakes correctness and
+# bug-prone constructs (F401/F811/F841/F821/F541, B023 loop-binding, I001
+# import sorting), but tolerant of CLI prints, naming, and pathlib pedantry.
+"examples/**/*.py" = [
+    "E501",    # long lines tolerated in demo/research code
+    "S101",    # assert usage (common in tests/demos)
+    "T201",    # print (CLIs print to stdout)
+    "B905",    # zip without strict=
+    "B007",    # unused loop variable
+    "C408",    # dict() instead of literal
+    "E701",    # multiple statements on one line (colon)
+    "E702",    # multiple statements on one line (semicolon)
+    "E741",    # ambiguous variable name
+    "E402",    # module import not at top (after sys.path tweaks)
+    "N802",    # function name should be lowercase
+    "N803",    # argument name should be lowercase
+    "N806",    # variable in function should be lowercase
+    "S110",    # try-except-pass
+    "S603",    # subprocess call
+    "S607",    # subprocess partial executable path
+    "PLR2004", # magic value in comparison
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
+    "PLC0415", # import not at top level
+    "ARG001",  # unused function argument
+    "ARG002",  # unused method argument
+    "ARG005",  # unused lambda argument
+    "PTH103",  # os.makedirs over Path.mkdir
+    "PTH118",  # os.path.join over Path
+    "PTH120",  # os.path.dirname over Path
+    "PTH123",  # open() over Path.open
+    "SIM103",  # return condition directly
+    "SIM105",  # contextlib.suppress
+    "SIM108",  # ternary over if-else
+    "SIM114",  # combine if branches with or
+    "SIM115",  # context manager for opening files
+    "PERF401", # list comprehension over loop
+    "PERF403", # dict comprehension over loop
+    "PLW2901", # loop variable overwritten
+    "PLW3301", # nested min/max
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gaze"]
+force-single-line = true
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.10"
+executionEnvironments = [
+    { root = "src" },
+    { root = "tests", extraPaths = ["src"] },
+    { root = "scripts", extraPaths = ["src"] }
+]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = false
+reportUnusedClass = false
+reportUnusedFunction = false
+reportDuplicateImport = true
+reportUnnecessaryTypeIgnoreComment = false
+reportUnknownArgumentType = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownParameterType = "warning"
+reportUnknownVariableType = "warning"
+reportUnknownLambdaType = "warning"
+reportOptionalMemberAccess = "warning"
+reportUntypedBaseClass = "warning"
+reportIncompatibleMethodOverride = "warning"
+reportCallIssue = "warning"
+reportReturnType = "warning"
+reportArgumentType = "warning"
+reportAttributeAccessIssue = "warning"
+reportGeneralTypeIssues = "warning"
+exclude = [
+    # transformers/torch type stubs are incomplete (Optional tokenizer,
+    # Tensor.__call__), which produces false positives here.
+    "src/gaze/models/huggingface_adapter.py",
+    # vf.MultiTurnEnv is a dynamically-typed base class that pyright cannot
+    # resolve ("base class type is unknown").
+    "src/gaze/verifiers",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+pythonpath = [".", "src"]
+addopts = "--tb=short --strict-markers -m \"not integration\""
+testpaths = ["tests"]
+asyncio_mode = "strict"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests requiring real APIs (run with '-m integration')",
+    "unit: marks tests as unit tests",
+    "stress: marks tests as stress tests (deselect with '-m \"not stress\"')",
+    "edge_case: marks tests as edge case tests",
+    "performance: marks tests for performance validation",
+]
+# Scope warning suppression to known third-party noise so GAZE's own future
+# DeprecationWarnings stay visible. Pillow >=11 deprecates the legacy ``mode``
+# argument and "I mode" PNG saves ahead of Pillow 13; these fire from our PIL
+# calls but originate upstream, so we silence them by message rather than
+# blanket-ignoring the whole category.
+filterwarnings = [
+    "ignore:'mode' parameter is deprecated.*:DeprecationWarning",
+    "ignore:Saving I mode images as PNG is deprecated.*:DeprecationWarning",
+    "ignore::UserWarning:torch.*",
+    "ignore::FutureWarning:transformers.*",
+]
+log_cli = false
+log_cli_level = "WARNING"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+[tool.coverage.run]
+source = ["gaze"]
+omit = [
+    "*/tests/*",
+    "*/scripts/*",
+    # torch-gated: exercised by test_huggingface_adapter.py in the integration
+    # job (uv sync --extra nova), not by the default core coverage job.
+    "*/huggingface_adapter.py",
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[project]
+name = "gaze-vlm"
+dynamic = ["version"]
+description = "Grounded agentic framework for medical vision-language models: viewer-level image tools, multi-turn tool use, and PubMed/Open-i literature retrieval"
+readme = "README.md"
+authors = [
+    {name = "Liam Chalcroft", email = "liamchalcroft@gmail.com"},
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.13"
+keywords = [
+    "vlm",
+    "vision-language-model",
+    "agentic",
+    "tool-use",
+    "medical-imaging",
+    "radiology",
+    "multi-turn",
+    "openai",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Typing :: Typed",
+]
+dependencies = [
+    "loguru>=0.7,<1",
+    "beartype>=0.22.9,<1",
+    "pillow>=12.2.0,<13",
+    "numpy>=2.2.6,<3",
+    "openai>=2.40.0,<3",
+    "httpx>=0.25,<1",
+    "aiohttp>=3.13.4,<4",
+    "minijinja>=2.20.0,<3",
+    "tenacity>=9.1.4,<10",
+    "defusedxml>=0.7,<1",
+    "typing-extensions>=4.5,<5",
+]
+
+[project.urls]
+Homepage = "https://github.com/liamchalcroft/gaze"
+Repository = "https://github.com/liamchalcroft/gaze"
+Documentation = "https://liamchalcroft.github.io/gaze/"
+Issues = "https://github.com/liamchalcroft/gaze/issues"
+Changelog = "https://github.com/liamchalcroft/gaze/blob/main/CHANGELOG.md"
+
+[project.scripts]
+gaze = "gaze.__main__:main"
+
+[project.optional-dependencies]
+nova = [
+    "torch",
+    "torchvision",
+    "torchmetrics",
+    "pycocotools",
+    "pandas",
+    "datasets>=4.8.5",
+    "sacrebleu",
+    "bert-score",
+    "nltk",
+    "huggingface-hub",
+    "scipy>=1.15.3",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn",
+]
+gemex = [
+    "datasets>=4.8.5",
+    "verifiers>=0.1.6,<1",
+]
+agentclinic = [
+    "datasets>=4.8.5",
+    "verifiers>=0.1.6,<1",
+]
+pubmedqa = [
+    "datasets>=4.8.5",
+]
+vqa-rad = [
+    "datasets>=4.8.5",
+]
+medmarks = [
+    "verifiers>=0.1.6,<1",
+    "datasets>=4.8.5",
+]
+verifiers = [
+    "verifiers>=0.1.6,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<10",
+    "pytest-cov",
+    "pytest-asyncio",
+    "pytest-randomly",
+    "ruff==0.15.15",
+    "pyright==1.1.410",
+    "pre-commit",
+    "verifiers>=0.1.6,<1",
+]
+rl = [
+    "datasets>=4.8.5",
+    "transformers<5",
+    "torch",
+]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+]
