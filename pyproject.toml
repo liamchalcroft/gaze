@@ -99,6 +99,7 @@ ignore = [
     "SIM105",  # contextlib.suppress
     "SIM108",  # ternary over if-else
     "SIM114",  # combine if branches with or
+    "SIM115",  # context manager for opening files
     "PERF401", # list comprehension over loop
     "PERF403", # dict comprehension over loop
     "PLW2901", # loop variable overwritten
