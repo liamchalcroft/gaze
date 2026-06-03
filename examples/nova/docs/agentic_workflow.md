@@ -175,13 +175,13 @@ Reliability scores are based on source authority: PubMed articles (~0.95), gover
 
 ```bash
 # Visual tools
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
     --task localization \
     --model openai/gpt-4o \
     --use-tools
 
 # Tools + web search
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
     --task diagnosis \
     --model openai/gpt-4o \
     --use-tools \

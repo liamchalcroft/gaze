@@ -32,7 +32,7 @@ echo ""
 # --- Single-turn ---
 SINGLE_DIR="${RESULTS_DIR}/${MODEL}__single_turn__${MAX_SAMPLES}s"
 echo "--- Single-turn run -> ${SINGLE_DIR} ---"
-uv run python -m examples.vqa_rad.src.cli \
+uv run --extra vqa-rad python -m examples.vqa_rad.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --mode single_turn \
@@ -47,7 +47,7 @@ echo ""
 # --- Agentic (with tools) ---
 AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__tools__5t__${MAX_SAMPLES}s"
 echo "--- Agentic run -> ${AGENTIC_DIR} ---"
-uv run python -m examples.vqa_rad.src.cli \
+uv run --extra vqa-rad python -m examples.vqa_rad.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --mode agentic \

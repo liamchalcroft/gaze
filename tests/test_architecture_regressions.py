@@ -346,9 +346,7 @@ class TestMultiImageToolRegistry:
 
             image_inputs = [ImageInput(path=p) for p in paths]
             # Load images
-            loaded = asyncio.get_event_loop().run_until_complete(
-                asyncio.gather(*(img.aload() for img in image_inputs))
-            )
+            loaded = [asyncio.run(img.aload()) for img in image_inputs]
 
             # Create a minimal concrete processor to access _create_tool_registry
             class Stub(AgenticProcessorBase):
@@ -400,9 +398,7 @@ class TestMultiImageToolRegistry:
                 paths.append(p)
 
             image_inputs = [ImageInput(path=p) for p in paths]
-            loaded = asyncio.get_event_loop().run_until_complete(
-                asyncio.gather(*(img.aload() for img in image_inputs))
-            )
+            loaded = [asyncio.run(img.aload()) for img in image_inputs]
 
             processor = Stub(use_tools=True, use_web_search=False)
             registry = processor._create_tool_registry(list(loaded))
@@ -481,9 +477,7 @@ class TestVerifiersAdapterMessageHandling:
         adapter.processor = mock_processor
 
         messages = [{"role": "user", "content": "What is visible?"}]
-        asyncio.get_event_loop().run_until_complete(
-            adapter.process_verifiers_messages(messages, info={})
-        )
+        asyncio.run(adapter.process_verifiers_messages(messages, info={}))
         call_kwargs = mock_processor.analyze.call_args
         assert call_kwargs.kwargs.get("images") is None or call_kwargs[1].get("images") is None
 

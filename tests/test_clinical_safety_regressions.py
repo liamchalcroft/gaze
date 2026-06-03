@@ -336,7 +336,7 @@ class TestDiagnosisDefaultWarning:
                 ),
                 pytest.raises(ValueError, match="mocked"),
             ):
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     llm_semantic_match_async("glioma", "glioblastoma", "openai/gpt-5-nano", 1)
                 )
         finally:

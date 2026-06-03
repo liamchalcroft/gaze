@@ -1,4 +1,4 @@
-"""Tools module for the radiology VLM agent harness.
+"""Tools module for GAZE.
 
 Provides visual tools, search tools, and the tool registry.
 """

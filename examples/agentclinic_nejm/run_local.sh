@@ -4,7 +4,8 @@
 #   MODEL       required, e.g. qwen3.5-35b-a3b, glm-4.6v-flash, medgemma-1.5-4b-it
 #   BASE_URL    defaults to http://localhost:1234/v1
 #   NUM_SAMPLES defaults to 50 (-1 = all)
-#   DATASET     defaults to the bundled agentclinic_nejm_extended.jsonl
+#   DATASET     defaults to data/agentclinic_nejm_extended.jsonl
+#               (auto-downloaded via data/download.py if missing)
 #
 # NOTE: Only load one model in LM Studio at a time. The health-check probe
 # can trigger model swapping on memory-constrained GPUs (see EB-4).
@@ -29,11 +30,20 @@ RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 
 cd "${REPO_ROOT}"
 
+# The dataset is not shipped with the repo. When no explicit --dataset is
+# given, ensure the default JSONL exists by running the download script.
+DEFAULT_DATASET="${SCRIPT_DIR}/data/agentclinic_nejm_extended.jsonl"
+if [[ -z "${DATASET}" && ! -f "${DEFAULT_DATASET}" ]]; then
+  echo "--- Dataset not found, running data/download.py ---"
+  uv run --extra agentclinic python "${SCRIPT_DIR}/data/download.py"
+  echo ""
+fi
+
 echo "=== AgentClinic NEJM local model evaluation ==="
 echo "Model:    ${MODEL}"
 echo "Endpoint: ${BASE_URL}"
 echo "Samples:  ${NUM_SAMPLES} (-1 = all)"
-echo "Dataset:  ${DATASET:-<bundled default>}"
+echo "Dataset:  ${DATASET:-${DEFAULT_DATASET}}"
 echo ""
 
 OUT_DIR="${RESULTS_DIR}/${MODEL}__multi_turn__10t"
@@ -44,7 +54,7 @@ if [[ -n "${DATASET}" ]]; then
   DATASET_ARGS=(--dataset "${DATASET}")
 fi
 
-uv run python -m examples.agentclinic_nejm.eval \
+uv run --extra agentclinic python -m examples.agentclinic_nejm.eval \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --max-turns 10 \

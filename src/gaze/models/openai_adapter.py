@@ -1,5 +1,5 @@
 # pyright: basic
-"""OpenAI chat/vision adapter for the VLM harness."""
+"""OpenAI chat/vision adapter for GAZE."""
 
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ class OpenAIAdapter(AdapterProtocol):
         retry=retry_if_exception_type((APITimeoutError, RateLimitError)),
         before_sleep=lambda retry_state: logger.warning(
             f"Retry {retry_state.attempt_number}/5 for OpenAI API: "
-            f"{type(retry_state.outcome.exception()).__name__ if retry_state.outcome else 'unknown'}"
+            f"{type(retry_state.outcome.exception()).__name__ if retry_state.outcome else 'unknown'}"  # noqa: E501
         ),
     )
     async def _create_completion_with_retry(self, **kwargs):

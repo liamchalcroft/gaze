@@ -3,13 +3,40 @@
 from __future__ import annotations
 
 import threading
-import time
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
 
+import gaze.cache
 from gaze.cache import TTLCache
 from gaze.config import CacheConfig
+
+
+class _FakeClock:
+    """Deterministic stand-in for the module-level time source.
+
+    ``TTLCache`` reads the current time via ``gaze.cache.time.time()``. Tests
+    monkeypatch that reference with an instance of this class so TTL expiry and
+    insert ordering can be driven explicitly, with no real ``time.sleep``.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeClock]:
+    """Patch the cache's time source with a controllable fake clock."""
+    fake = _FakeClock()
+    monkeypatch.setattr(gaze.cache, "time", fake)
+    yield fake
 
 
 class TestTTLCache:
@@ -38,7 +65,7 @@ class TestTTLCache:
         mock_obj2.close.assert_called_once()
         # mock_obj3 has no close method, so no assertion
 
-    def test_cache_cleanup_on_eviction(self):
+    def test_cache_cleanup_on_eviction(self, clock: _FakeClock):
         """Test that expired objects are cleaned up on eviction."""
         config = CacheConfig(cache_duration_seconds=0.1, max_cache_size=2)  # Short TTL
         cache = TTLCache(config)
@@ -51,8 +78,8 @@ class TestTTLCache:
         cache.set("key1", mock_obj1)
         cache.set("key2", mock_obj2)
 
-        # Wait for expiration
-        time.sleep(0.2)
+        # Advance past the TTL so both entries are now expired
+        clock.advance(0.2)
 
         # Add another object to trigger eviction
         cache.set("key3", mock_obj3)
@@ -65,7 +92,7 @@ class TestTTLCache:
         mock_obj1.close.assert_called_once()
         mock_obj2.close.assert_called_once()
 
-    def test_cache_size_limit_eviction(self):
+    def test_cache_size_limit_eviction(self, clock: _FakeClock):
         """Test that oldest objects are evicted when size limit is reached."""
         # max_cache_size=2 means when we try to add a 3rd item, size exceeds limit
         # With evict_ratio=0.5, target_size = 2 * (1-0.5) = 1
@@ -78,13 +105,14 @@ class TestTTLCache:
         mock_obj3 = MagicMock()
         mock_obj4 = MagicMock()
 
-        # Fill cache
+        # Fill cache. Advance the clock between sets so each entry has a distinct
+        # timestamp, making oldest-first eviction deterministic.
         cache.set("key1", mock_obj1)  # len=1 (no eviction check)
-        time.sleep(0.01)
+        clock.advance(1)
         cache.set("key2", mock_obj2)  # len=2 (no eviction, not > 2)
-        time.sleep(0.01)
+        clock.advance(1)
         cache.set("key3", mock_obj3)  # len=3 (eviction checks when > 2)
-        time.sleep(0.01)
+        clock.advance(1)
         # Now with 3 items, adding a 4th keeps size within limit after eviction
         cache.set("key4", mock_obj4)
 
@@ -106,7 +134,7 @@ class TestTTLCache:
         # Error should be logged but not raised
         mock_obj.close.assert_called_once()
 
-    def test_cache_closes_values_on_size_limit_eviction(self):
+    def test_cache_closes_values_on_size_limit_eviction(self, clock: _FakeClock):
         """Test that closeable values are properly closed on size limit eviction."""
         # max_cache_size=2, evict_ratio=0.5 means:
         # - eviction triggers when cache size > 2 (i.e., at 3 items)
@@ -119,11 +147,11 @@ class TestTTLCache:
         mock3 = MagicMock()
 
         cache.set("key1", mock1)  # size=1
-        time.sleep(0.01)  # Ensure ordering
+        clock.advance(1)  # Ensure ordering via distinct timestamps
         cache.set("key2", mock2)  # size=2
-        time.sleep(0.01)
+        clock.advance(1)
         cache.set("key3", mock3)  # size=3, but eviction checks BEFORE add (size=2, not > 2)
-        time.sleep(0.01)
+        clock.advance(1)
 
         # Eviction happens on key3; adding key4 should not evict further
         mock4 = MagicMock()
@@ -166,7 +194,7 @@ class TestTTLCache:
         first.close.assert_called_once()
         second.close.assert_not_called()
 
-    def test_cache_has_respects_expiration(self):
+    def test_cache_has_respects_expiration(self, clock: _FakeClock):
         """Test that has() returns False for expired entries."""
         config = CacheConfig(cache_duration_seconds=0.1)
         cache: TTLCache[str] = TTLCache(config)
@@ -174,7 +202,12 @@ class TestTTLCache:
         cache.set("key", "value")
         assert cache.has("key") is True
 
-        time.sleep(0.2)
+        # Not yet expired: still within the TTL window.
+        clock.advance(0.05)
+        assert cache.has("key") is True
+
+        # Past the TTL: entry is now expired.
+        clock.advance(0.06)
         assert cache.has("key") is False
 
     def test_cache_stats(self):
@@ -290,7 +323,7 @@ class TestTTLCacheStress:
 
         assert cache.size <= config.max_cache_size
 
-    def test_mixed_ttl_expiry_and_size_eviction(self):
+    def test_mixed_ttl_expiry_and_size_eviction(self, clock: _FakeClock):
         """Entries expire by TTL while new entries trigger size eviction."""
         config = CacheConfig(cache_duration_seconds=0.1, max_cache_size=10, evict_ratio=0.3)
         cache: TTLCache[int] = TTLCache(config)
@@ -299,7 +332,8 @@ class TestTTLCacheStress:
         for i in range(10):
             cache.set(f"old-{i}", i)
 
-        time.sleep(0.15)
+        # Advance past the TTL so every "old-*" entry is now stale.
+        clock.advance(0.15)
 
         # Insert new entries; stale ones should be cleaned first
         for i in range(15):

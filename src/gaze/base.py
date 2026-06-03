@@ -28,6 +28,8 @@ from gaze._image import ImageInput
 from gaze._image import _downscale_image
 from gaze._schema_skeleton import _build_schema_skeleton
 from gaze._schema_skeleton import _try_wrap_inner_schema
+from gaze.config import AgenticConfig
+from gaze.config import get_config
 from gaze.exceptions import AgenticProcessingError
 from gaze.exceptions import GazeError
 from gaze.exceptions import SchemaValidationError
@@ -51,24 +53,12 @@ from gaze.utils.json_extract import extract_json_from_text
 # Limits prompt-injection surface from external data (PubMed abstracts, etc.).
 _MAX_TOOL_CONTENT_CHARS = 8_000
 
-# Agentic processing defaults (previously AgenticConfig dataclass).
-_MAX_TURNS_LIMIT = 30
-_DEFAULT_MAX_TURNS = 10
-_DEFAULT_MAX_TOKENS = 16384
-_DEFAULT_TEMPERATURE = 0.0
-_MAX_CONSECUTIVE_NUDGES = 2
-_MAX_RECOVERY_NUDGES = _MAX_CONSECUTIVE_NUDGES + 2  # Total nudges before giving up
-
 # Regex for ASCII/Unicode control characters (except newline/tab).
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 # Pre-compiled regexes for tool name sanitization (used per tool call).
 _SPECIAL_TOKEN_RE = re.compile(r"<\|[^|]*\|>")
 _TRAILING_PARENS_RE = re.compile(r"\(.*\)\s*$")
-
-# Turns with zero tool calls before force-finalizing in agentic mode.
-# Prevents wasting tokens when the model ignores available tools.
-_IDLE_TOOL_TURNS_LIMIT = 3
 
 # Tools that modify the image coordinate space. After these, bounding box
 # coordinates no longer correspond to the original image.
@@ -121,6 +111,10 @@ class AgenticProcessorBase(ABC):
 
     Provides core agentic loop with tool calling support. Subclasses
     must implement methods to provide task-specific prompts and schemas.
+
+    In multi-turn mode the loop reserves a top-level boolean ``continue``
+    field in each response; :meth:`should_continue` reads it and can be
+    overridden for a custom stop condition.
     """
 
     @beartype
@@ -138,6 +132,9 @@ class AgenticProcessorBase(ABC):
         max_encode_dimension: int | None = None,
         seed: int | None = None,
         max_tokens: int | None = None,
+        temperature: float | None = None,
+        adapter: AdapterProtocol | None = None,
+        agentic_config: AgenticConfig | None = None,
     ) -> None:
         """Initialize agentic processor.
 
@@ -155,13 +152,22 @@ class AgenticProcessorBase(ABC):
                 exceeds this many pixels before base64 encoding.
             seed: Random seed for model API calls (reproducibility).
             max_tokens: Max completion tokens per turn. If None, uses
-                the module default (16384).
+                ``AgenticConfig.default_max_tokens``.
+            temperature: Sampling temperature. If None, uses
+                ``AgenticConfig.default_temperature`` (0.0 = greedy).
+            adapter: A ready-made adapter instance. Takes precedence over
+                ``adapter_factory``; use it to plug in a non-OpenAI adapter
+                (e.g. ``HuggingFaceAdapter``) without a zero-argument factory.
+            agentic_config: Loop tuning (turn/token/temperature defaults plus
+                the nudge, idle-tool, and tool-content budgets). If None, the
+                active ``GazeConfig().agentic`` is used.
 
         Raises:
             ValueError: If max_turns < 1
         """
+        agentic_cfg = agentic_config if agentic_config is not None else get_config().agentic
         if max_turns is None:
-            max_turns = _DEFAULT_MAX_TURNS
+            max_turns = agentic_cfg.default_max_turns
         if max_turns < 1:
             raise ValueError(f"max_turns must be >= 1, got {max_turns}")
 
@@ -178,12 +184,24 @@ class AgenticProcessorBase(ABC):
         self.max_encode_dimension = max_encode_dimension
         self.seed = seed
         self.max_tokens = max_tokens
+        self.temperature = (
+            temperature if temperature is not None else agentic_cfg.default_temperature
+        )
 
-        if max_turns > _MAX_TURNS_LIMIT:
+        # Resolve loop parameters from config once at construction time.
+        self._agentic_config = agentic_cfg
+        self._max_turns_limit = agentic_cfg.max_turns_limit
+        self._default_max_tokens = agentic_cfg.default_max_tokens
+        self._max_consecutive_nudges = agentic_cfg.max_consecutive_nudges
+        self._max_recovery_nudges = agentic_cfg.max_consecutive_nudges + 2
+        self._idle_tool_turns_limit = agentic_cfg.idle_tool_turns_limit
+        self._max_tool_content_chars = agentic_cfg.max_tool_content_chars
+
+        if max_turns > self._max_turns_limit:
             logger.warning(
-                f"max_turns={max_turns} exceeds max_turns_limit={_MAX_TURNS_LIMIT}, clamping"
+                f"max_turns={max_turns} exceeds max_turns_limit={self._max_turns_limit}, clamping"
             )
-        self.max_turns = min(max_turns, _MAX_TURNS_LIMIT)
+        self.max_turns = min(max_turns, self._max_turns_limit)
         self.reasoning_enabled = reasoning_enabled
         self.reasoning_effort = reasoning_effort
         self.enable_caching = enable_caching
@@ -193,7 +211,8 @@ class AgenticProcessorBase(ABC):
         if not use_web_search:
             self._disabled_tools.update(["search_web", "search_images"])
 
-        self._model_adapter: AdapterProtocol | None = None
+        # An explicitly provided adapter takes precedence over adapter_factory.
+        self._model_adapter: AdapterProtocol | None = adapter
         self._shared_web_search_manager = None
         self._shared_image_search_manager = None
 
@@ -390,6 +409,11 @@ class AgenticProcessorBase(ABC):
     def get_response_schema(self) -> dict[str, Any] | None:
         """Get the JSON schema for structured outputs.
 
+        Note:
+            In multi-turn mode (``max_turns > 1``) the loop reserves a
+            top-level boolean ``continue`` field, which it injects and reads
+            via :meth:`should_continue`. Do not use ``continue`` for task data.
+
         Returns:
             OpenAI-compatible JSON schema dict, or None for free-form responses
         """
@@ -440,6 +464,61 @@ class AgenticProcessorBase(ABC):
         return max(0.0, min(1.0, confidence))
 
     @beartype
+    def should_continue(self, response: dict[str, Any]) -> bool:
+        """Return whether the agentic loop should run another turn.
+
+        The default reads the reserved boolean ``continue`` field that the
+        multi-turn POLICY (injected when ``max_turns > 1``) asks the model to
+        return each turn. Override to implement a custom stop condition.
+
+        ``continue`` is a RESERVED top-level field; do not use it for task data
+        in :meth:`get_response_schema`.
+
+        Args:
+            response: The parsed, continue-normalized model response.
+
+        Returns:
+            True to run another turn, False to finalize.
+        """
+        return bool(response.get("continue", False))
+
+    @beartype
+    def _normalize_continue_flag(self, parsed: dict[str, Any], turn_idx: int) -> None:
+        """Normalize the reserved ``continue`` field to a clean bool in place.
+
+        Local models often omit it, or return null / 0-1 / "true"-"false"
+        strings. Missing is treated as False; recognized non-bool values are
+        coerced (with a warning); anything else raises so the caller surfaces a
+        clear error before :meth:`should_continue` reads the flag.
+        """
+        if "continue" not in parsed:
+            parsed["continue"] = False
+            return
+        raw = parsed["continue"]
+        if isinstance(raw, bool):
+            return
+        if raw is None:
+            parsed["continue"] = False
+            logger.warning(f"Turn {turn_idx + 1}: coerced null 'continue' to False")
+        elif isinstance(raw, int):
+            parsed["continue"] = bool(raw)
+            logger.warning(
+                f"Turn {turn_idx + 1}: coerced int 'continue' value {raw!r} to bool {bool(raw)!r}"
+            )
+        elif isinstance(raw, str) and raw.strip().lower() in ("true", "false", "yes", "no"):
+            coerced = raw.strip().lower() in ("true", "yes")
+            parsed["continue"] = coerced
+            logger.warning(
+                f"Turn {turn_idx + 1}: coerced string 'continue' value {raw!r} to bool {coerced!r}"
+            )
+        else:
+            raise AgenticProcessingError(
+                "Response field 'continue' must be boolean",
+                turns_completed=turn_idx + 1,
+                partial_response={"error": "invalid_continue_flag"},
+            )
+
+    @beartype
     async def analyze(
         self,
         images: list[Path] | list[Image.Image] | Path | Image.Image | None = None,
@@ -470,9 +549,14 @@ class AgenticProcessorBase(ABC):
             image_inputs = list(
                 await asyncio.gather(*(img._aload_pil_only() for img in image_inputs))
             )
-            image_inputs = [
-                _downscale_image(img, self.max_encode_dimension) for img in image_inputs
-            ]
+            image_inputs = list(
+                await asyncio.gather(
+                    *(
+                        asyncio.to_thread(_downscale_image, img, self.max_encode_dimension)
+                        for img in image_inputs
+                    )
+                )
+            )
         else:
             image_inputs = list(await asyncio.gather(*(img.aload() for img in image_inputs)))
 
@@ -545,6 +629,81 @@ class AgenticProcessorBase(ABC):
                     raise ValueError(f"Unsupported image format: {item.suffix}")
                 result.append(ImageInput(path=item, label=label))
         return result
+
+    @beartype
+    def _build_final_turn_message(
+        self,
+        images: list[ImageInput],
+        *,
+        coord_space_modified: bool,
+        intensity_modified: bool,
+        response_schema: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build the final-turn user message.
+
+        On the last turn tools are withheld, so the model receives a fresh copy
+        of the original (untransformed) images plus a reminder that bounding
+        boxes must reference the original pixel space, and (when a schema is
+        set) the required top-level keys. Image-mutating tools used earlier do
+        not carry their transformed view into this turn.
+        """
+        final_parts: list[dict[str, Any]] = []
+
+        coord_note = ""
+        if images:
+            w, h = images[0].width, images[0].height
+            if coord_space_modified:
+                coord_note = (
+                    f" WARNING: You used crop/zoom/rotate/flip which changed the "
+                    f"coordinate space. The original {w}x{h} image is "
+                    f"re-attached below. "
+                    f"Any bounding boxes from your transformed analysis are "
+                    f"INVALID. Re-examine this original image and provide ALL "
+                    f"coordinates in the original pixel space "
+                    f"[0, {w - 1}] x [0, {h - 1}]."
+                )
+            else:
+                coord_note = (
+                    " The ORIGINAL (untransformed) image is re-attached below. "
+                    "All spatial coordinates (bounding boxes) MUST reference "
+                    "this original image, NOT any zoomed or cropped version."
+                )
+            if intensity_modified:
+                coord_note += (
+                    " NOTE: You used intensity-modifying tools (threshold, "
+                    "window_level, equalize, etc.) during this session. "
+                    "Any intensity measurements from modified images do NOT "
+                    "reflect original tissue characteristics."
+                )
+
+        schema_note = ""
+        if response_schema is not None:
+            schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+            top_keys = list(schema_obj.get("properties", {}).keys())
+            if top_keys:
+                schema_note = (
+                    f" You MUST respond with a complete JSON object containing "
+                    f"these required top-level keys: {top_keys}."
+                )
+
+        final_parts.append(
+            {
+                "type": "text",
+                "text": (
+                    f"[System: This is your FINAL turn. Tools are no longer available."
+                    f"{coord_note}{schema_note} "
+                    f"Set 'continue': false. Do NOT attempt tool calls.]"
+                ),
+            }
+        )
+
+        # Re-inject original images for coordinate reference.
+        final_parts.extend(
+            {"type": "image_url", "image_url": {"url": img.encoded.to_data_url()}}
+            for img in images
+            if img.encoded is not None
+        )
+        return {"role": "user", "content": final_parts}
 
     @beartype
     async def _run_analysis(
@@ -673,71 +832,18 @@ class AgenticProcessorBase(ABC):
             # On the last turn, inject a schema reminder so models that don't
             # fully support response_format still know the expected output.
             if is_last_turn and turn_idx > 0:
-                # Build final-turn message with original image + schema reminder.
-                # No reset_to_original() — original images are re-injected from
-                # ImageInput.encoded; the ImageManager is closed in analyze().
-                final_parts: list[dict[str, Any]] = []
-
-                coord_note = ""
-                if images:
-                    w, h = images[0].width, images[0].height
-                    if coord_space_modified:
-                        coord_note = (
-                            f" WARNING: You used crop/zoom/rotate/flip which changed the "
-                            f"coordinate space. The original {w}x{h} image is "
-                            f"re-attached below. "
-                            f"Any bounding boxes from your transformed analysis are "
-                            f"INVALID. Re-examine this original image and provide ALL "
-                            f"coordinates in the original pixel space "
-                            f"[0, {w - 1}] x [0, {h - 1}]."
-                        )
-                    else:
-                        coord_note = (
-                            " The ORIGINAL (untransformed) image is re-attached below. "
-                            "All spatial coordinates (bounding boxes) MUST reference "
-                            "this original image, NOT any zoomed or cropped version."
-                        )
-                    if intensity_modified:
-                        coord_note += (
-                            " NOTE: You used intensity-modifying tools (threshold, "
-                            "window_level, equalize, etc.) during this session. "
-                            "Any intensity measurements from modified images do NOT "
-                            "reflect original tissue characteristics."
-                        )
-
-                schema_note = ""
-                if response_schema is not None:
-                    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-                    top_keys = list(schema_obj.get("properties", {}).keys())
-                    if top_keys:
-                        schema_note = (
-                            f" You MUST respond with a complete JSON object containing "
-                            f"these required top-level keys: {top_keys}."
-                        )
-
-                final_parts.append(
-                    {
-                        "type": "text",
-                        "text": (
-                            f"[System: This is your FINAL turn. Tools are no longer available."
-                            f"{coord_note}{schema_note} "
-                            f"Set 'continue': false. Do NOT attempt tool calls.]"
-                        ),
-                    }
+                messages.append(
+                    self._build_final_turn_message(
+                        images,
+                        coord_space_modified=coord_space_modified,
+                        intensity_modified=intensity_modified,
+                        response_schema=response_schema,
+                    )
                 )
-
-                # Re-inject original images for coordinate reference
-                final_parts.extend(
-                    {"type": "image_url", "image_url": {"url": img.encoded.to_data_url()}}
-                    for img in images
-                    if img.encoded is not None
-                )
-
-                messages.append({"role": "user", "content": final_parts})
 
             # Circuit-breaker: if nudges have been exhausted without recovery,
             # stop burning turns with the same force-finalize message.
-            if nudge_count > _MAX_RECOVERY_NUDGES:
+            if nudge_count > self._max_recovery_nudges:
                 raise AgenticProcessingError(
                     f"Model failed to produce valid output after {nudge_count} "
                     f"consecutive recovery attempts",
@@ -751,8 +857,8 @@ class AgenticProcessorBase(ABC):
 
             chat_result = await model_adapter.generate_chat(
                 messages=messages,
-                max_tokens=self.max_tokens or _DEFAULT_MAX_TOKENS,
-                temperature=_DEFAULT_TEMPERATURE,
+                max_tokens=self.max_tokens or self._default_max_tokens,
+                temperature=self.temperature,
                 tools=current_tools,
                 response_format=current_format,
                 seed=self.seed,
@@ -895,7 +1001,9 @@ class AgenticProcessorBase(ABC):
                         tool_content = [
                             {
                                 "type": "text",
-                                "text": _sanitize_tool_content(result.description),
+                                "text": _sanitize_tool_content(
+                                    result.description, max_chars=self._max_tool_content_chars
+                                ),
                             },
                             {"type": "image_url", "image_url": {"url": image_data_url}},
                         ]
@@ -911,7 +1019,9 @@ class AgenticProcessorBase(ABC):
                                 f"in this adapter's tool messages. Use the visual "
                                 f"information from the text description above.]"
                             )
-                        tool_content = _sanitize_tool_content(raw)
+                        tool_content = _sanitize_tool_content(
+                            raw, max_chars=self._max_tool_content_chars
+                        )
 
                     messages.append(
                         {
@@ -959,9 +1069,9 @@ class AgenticProcessorBase(ABC):
                     logger.warning(
                         f"Turn {turn_idx + 1} truncated (completion_tokens="
                         f"{gen_log.completion_tokens}). Nudge {nudge_count}/"
-                        f"{_MAX_CONSECUTIVE_NUDGES}."
+                        f"{self._max_consecutive_nudges}."
                     )
-                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
+                    if nudge_count >= self._max_consecutive_nudges:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
@@ -997,7 +1107,7 @@ class AgenticProcessorBase(ABC):
                         )
                         final_response = salvaged
                         break
-                effective_max = self.max_tokens or _DEFAULT_MAX_TOKENS
+                effective_max = self.max_tokens or self._default_max_tokens
                 total = gen_log.prompt_tokens + gen_log.completion_tokens
                 # When completion_tokens < max_tokens but the model still hit
                 # finish_reason=length, the server's context window (n_ctx) is
@@ -1026,9 +1136,9 @@ class AgenticProcessorBase(ABC):
                 nudge_count += 1
                 logger.warning(
                     f"Turn {turn_idx + 1} returned empty response with no tool calls. "
-                    f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
+                    f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
                 )
-                if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
+                if nudge_count >= self._max_consecutive_nudges:
                     messages.append({"role": "user", "content": _force_finalize_message()})
                 else:
                     messages.append(
@@ -1057,9 +1167,9 @@ class AgenticProcessorBase(ABC):
                         # On intermediate turns, nudge instead of crashing
                         logger.warning(
                             f"Turn {turn_idx + 1} returned non-JSON text. "
-                            f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
+                            f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
                         )
-                        if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
+                        if nudge_count >= self._max_consecutive_nudges:
                             messages.append({"role": "user", "content": _force_finalize_message()})
                         else:
                             messages.append(
@@ -1087,9 +1197,9 @@ class AgenticProcessorBase(ABC):
                     logger.warning(
                         f"Turn {turn_idx + 1} returned non-object JSON "
                         f"(got {type(parsed_obj).__name__}). "
-                        f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
+                        f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
                     )
-                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
+                    if nudge_count >= self._max_consecutive_nudges:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
@@ -1119,49 +1229,9 @@ class AgenticProcessorBase(ABC):
             if response_schema is not None:
                 coerce_json_types(parsed, response_schema)
 
-            wants_continue = parsed.get("continue", False)
-            # Inject missing "continue" — local models often omit it when
-            # the answer is "false" (they treat absence as false).  Without
-            # this, validate_response() rejects the response because the
-            # key is literally absent from the dict.
-            if "continue" not in parsed:
-                parsed["continue"] = False
-            if not isinstance(wants_continue, bool):
-                # Local models frequently return non-bool values for "continue":
-                #   None / null  → treat as false (model is done)
-                #   0 / 1        → coerce to bool
-                #   "true"/"false" strings → coerce to bool
-                if wants_continue is None:
-                    wants_continue = False
-                    parsed["continue"] = False
-                    logger.warning(f"Turn {turn_idx + 1}: coerced null 'continue' to False")
-                elif isinstance(wants_continue, int):
-                    original_value = wants_continue
-                    wants_continue = bool(wants_continue)
-                    parsed["continue"] = wants_continue
-                    logger.warning(
-                        f"Turn {turn_idx + 1}: coerced int 'continue' "
-                        f"value {original_value!r} to bool {wants_continue!r}"
-                    )
-                elif isinstance(wants_continue, str) and wants_continue.strip().lower() in (
-                    "true",
-                    "false",
-                    "yes",
-                    "no",
-                ):
-                    original_value = wants_continue
-                    wants_continue = wants_continue.strip().lower() in ("true", "yes")
-                    parsed["continue"] = wants_continue
-                    logger.warning(
-                        f"Turn {turn_idx + 1}: coerced string 'continue' "
-                        f"value {original_value!r} to bool {wants_continue!r}"
-                    )
-                else:
-                    raise AgenticProcessingError(
-                        "Response field 'continue' must be boolean",
-                        turns_completed=turn_idx + 1,
-                        partial_response={"error": "invalid_continue_flag"},
-                    )
+            # Normalize the reserved continue flag, then consult the hook.
+            self._normalize_continue_flag(parsed, turn_idx)
+            wants_continue = self.should_continue(parsed)
 
             if not wants_continue:
                 # Model says it's done — but if the response is incomplete
@@ -1190,9 +1260,9 @@ class AgenticProcessorBase(ABC):
                     logger.warning(
                         f"Turn {turn_idx + 1} returned incomplete response "
                         f"(keys: {list(parsed.keys())[:10]}).{missing_hint} "
-                        f"Nudge {nudge_count}/{_MAX_CONSECUTIVE_NUDGES}."
+                        f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
                     )
-                    if nudge_count >= _MAX_CONSECUTIVE_NUDGES:
+                    if nudge_count >= self._max_consecutive_nudges:
                         messages.append({"role": "user", "content": _force_finalize_message()})
                     else:
                         messages.append(
@@ -1225,7 +1295,7 @@ class AgenticProcessorBase(ABC):
             if (
                 tool_registry is not None
                 and total_tool_calls == 0
-                and turn_idx >= _IDLE_TOOL_TURNS_LIMIT - 1
+                and turn_idx >= self._idle_tool_turns_limit - 1
             ):
                 if idle_tool_nudged:
                     # Already nudged once — accept this response as final.
@@ -1310,9 +1380,9 @@ class AgenticProcessorBase(ABC):
 
         run_config = RunConfig(
             model_name=self.model_name,
-            temperature=_DEFAULT_TEMPERATURE,
+            temperature=self.temperature,
             seed=self.seed,
-            max_tokens=self.max_tokens or _DEFAULT_MAX_TOKENS,
+            max_tokens=self.max_tokens or self._default_max_tokens,
             max_turns=self.max_turns,
         )
 
@@ -1558,3 +1628,109 @@ class AgenticProcessorBase(ABC):
                     new_content.append(part)
             msg["content"] = new_content
         return last_assistant_idx
+
+
+class SimpleProcessor(AgenticProcessorBase):
+    """Concrete processor configured by plain values instead of subclassing.
+
+    Implements the four abstract hooks from constructor arguments so a simple,
+    one-off analysis does not require defining a subclass. The system prompt
+    and user message are used verbatim (they do not vary with ``metadata``);
+    for task-specific prompt construction, subclass
+    :class:`AgenticProcessorBase` directly.
+    """
+
+    @beartype
+    def __init__(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        response_schema: dict[str, Any] | None = None,
+        validate: Callable[[dict[str, Any]], bool] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._system_prompt = system_prompt
+        self._user_message = user_message
+        self._response_schema = response_schema
+        self._validate = validate
+
+    def get_system_prompt(
+        self,
+        images: list[ImageInput],  # noqa: ARG002 - fixed prompt ignores inputs
+        metadata: dict[str, Any],  # noqa: ARG002
+    ) -> str:
+        return self._system_prompt
+
+    def get_user_message(
+        self,
+        images: list[ImageInput],  # noqa: ARG002 - fixed message ignores inputs
+        metadata: dict[str, Any],  # noqa: ARG002
+    ) -> str:
+        return self._user_message
+
+    def get_response_schema(self) -> dict[str, Any] | None:
+        return self._response_schema
+
+    def validate_response(self, response: dict[str, Any]) -> bool:
+        if self._validate is not None:
+            return self._validate(response)
+        return True
+
+
+@beartype
+async def analyze(
+    images: list[Path] | list[Image.Image] | Path | Image.Image | None = None,
+    *,
+    system: str = "You are a careful assistant for analysing medical images.",
+    user: str = "Analyse the provided image(s) and report your findings.",
+    model: str = "openai/gpt-4o",
+    schema: dict[str, Any] | None = None,
+    validate: Callable[[dict[str, Any]], bool] | None = None,
+    metadata: dict[str, Any] | None = None,
+    image_labels: list[str] | None = None,
+    **processor_kwargs: Any,
+) -> AgenticResult:
+    """Run a one-off agentic analysis without subclassing.
+
+    Convenience entry point that builds a :class:`SimpleProcessor` and runs it.
+    Extra keyword arguments (``use_tools``, ``use_web_search``, ``max_turns``,
+    ``temperature``, ``adapter``, ...) are forwarded to the processor.
+
+    Example::
+
+        from pathlib import Path
+        from gaze import analyze
+
+        result = await analyze(
+            Path("scan.jpg"),
+            system="You are an expert radiologist.",
+            user="Describe any abnormalities.",
+        )
+        print(result.final_response)
+
+    Args:
+        images: Image input(s), as accepted by ``AgenticProcessorBase.analyze``.
+        system: System prompt, used verbatim.
+        user: Initial user message, used verbatim.
+        model: Model name for the default OpenAI-compatible adapter.
+        schema: Optional response JSON schema.
+        validate: Optional response validator (defaults to accept-all).
+        metadata: Context metadata passed through to the run.
+        image_labels: Optional per-image labels.
+        **processor_kwargs: Forwarded to :class:`SimpleProcessor`.
+
+    Returns:
+        The resulting :class:`~gaze.types.AgenticResult`.
+    """
+    processor = SimpleProcessor(
+        system_prompt=system,
+        user_message=user,
+        response_schema=schema,
+        validate=validate,
+        model_name=model,
+        **processor_kwargs,
+    )
+    async with processor:
+        return await processor.analyze(images=images, metadata=metadata, image_labels=image_labels)

@@ -1,4 +1,4 @@
-"""Public model interfaces for the VLM harness.
+"""Public model interfaces for GAZE.
 
 Provides two equal-priority adapter implementations:
 - OpenAIAdapter: For OpenAI API compatible services (OpenAI, OpenRouter, etc.)

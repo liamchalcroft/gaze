@@ -4,6 +4,8 @@
 [![PyPI](https://img.shields.io/pypi/v/gaze-vlm.svg)](https://pypi.org/project/gaze-vlm/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/liamchalcroft/gaze/branch/main/graph/badge.svg)](https://codecov.io/gh/liamchalcroft/gaze)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liamchalcroft/gaze/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liamchalcroft/gaze)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://liamchalcroft.github.io/gaze/)
 
 **GAZE** (Grounded Agentic Zero-shot Evaluation) is a modular Python framework for multi-turn agentic vision-language model (VLM) systems, built for medical image analysis.

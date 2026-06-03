@@ -107,8 +107,9 @@ class ImageInput:
             pil_image=img,
         )
 
+    @beartype
     async def aload(self) -> ImageInput:
-        """Async version of :meth:`load` — offloads blocking I/O to a thread.
+        """Async version of :meth:`load` that offloads blocking I/O to a thread.
 
         Returns ``self`` if already loaded.
         Use this instead of ``load()`` when calling from an async context

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 from typing import Protocol
+from typing import runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,15 @@ class GenerationLog:
         return self.prompt_tokens + self.completion_tokens
 
 
+@runtime_checkable
 class AdapterProtocol(Protocol):
-    """Minimal interface required by AgenticProcessorBase."""
+    """Minimal interface required by AgenticProcessorBase.
+
+    Declared ``@runtime_checkable`` so an adapter instance can be validated
+    with ``isinstance`` (used by ``@beartype`` when an adapter is passed
+    directly to ``AgenticProcessorBase``). ``isinstance`` checks only that the
+    required members are present, not their signatures.
+    """
 
     supports_multipart_tool_content: bool
 

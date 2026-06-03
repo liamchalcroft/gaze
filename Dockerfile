@@ -1,7 +1,7 @@
 # Container for the NOVA example CLI.
-# For reproducible, supply-chain-resistant builds, pin the base image by digest:
-#   FROM python:3.11-slim@sha256:<digest>
-FROM python:3.11-slim
+# Base image pinned by digest for reproducible, supply-chain-resistant builds.
+# Refresh with: docker manifest inspect python:3.11-slim
+FROM python:3.11-slim@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
 WORKDIR /app
 
@@ -27,4 +27,9 @@ USER appuser
 
 ENV PYTHONPATH=/app/examples/nova:/app
 WORKDIR /app/examples/nova
+
+# Smoke check: confirm the package imports inside the image.
+HEALTHCHECK --interval=1m --timeout=10s --retries=3 \
+    CMD python -c "import gaze" || exit 1
+
 ENTRYPOINT ["python", "-m", "src.cli"]

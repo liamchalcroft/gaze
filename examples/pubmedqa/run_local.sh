@@ -32,7 +32,7 @@ echo ""
 # --- Single-turn ---
 SINGLE_DIR="${RESULTS_DIR}/${MODEL}__single_turn__${MAX_SAMPLES}s"
 echo "--- Single-turn run -> ${SINGLE_DIR} ---"
-uv run python -m examples.pubmedqa.src.cli \
+uv run --extra pubmedqa python -m examples.pubmedqa.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --mode single_turn \
@@ -46,11 +46,11 @@ echo ""
 # --- Agentic (with search) ---
 AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__search__5t__${MAX_SAMPLES}s"
 echo "--- Agentic run -> ${AGENTIC_DIR} ---"
-uv run python -m examples.pubmedqa.src.cli \
+uv run --extra pubmedqa python -m examples.pubmedqa.src.cli \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --mode agentic \
-  --use-search \
+  --use-web-search \
   --max-turns 5 \
   --max-samples "${MAX_SAMPLES}" \
   --max-tokens 8192 \

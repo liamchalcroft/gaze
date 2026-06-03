@@ -42,6 +42,12 @@ LOG_PATH = LOG_DIR / "debug.log"
 # ---------- Helpers ----------
 def _read_jsonl(path: str) -> list[dict[str, Any]]:
     """Read JSONL file."""
+    if not Path(path).exists():
+        raise FileNotFoundError(
+            f"AgentClinic NEJM dataset not found at {path}. "
+            "The dataset is not shipped with the repository; download it first:\n"
+            "    cd examples/agentclinic_nejm/data && python download.py"
+        )
     rows: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as fh:
         for raw_line in fh:

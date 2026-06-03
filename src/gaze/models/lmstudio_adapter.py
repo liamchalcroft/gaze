@@ -167,6 +167,7 @@ class LMStudioAdapter(OpenAIAdapter):
             seed=seed,
         )
 
+    @beartype
     async def list_models(self) -> list[dict[str, Any]]:
         """List models currently loaded in LM Studio.
 

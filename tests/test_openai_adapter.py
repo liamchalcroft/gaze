@@ -195,6 +195,47 @@ class TestGenerateChat:
         assert gen_log.prompt_tokens == 0
         assert gen_log.completion_tokens == 0
 
+    @pytest.mark.asyncio
+    async def test_empty_content_falls_back_to_reasoning_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Thinking models (Qwen3.5, GLM-4.6V) leave content empty and put the
+        answer in reasoning_content; the adapter must surface it as content."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        mock_completion = _make_completion(content="")
+        mock_completion.choices[0].message.reasoning_content = "the answer"
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        content, _, gen_log = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+        )
+        assert content == "the answer"
+        # reasoning_content is also recorded on the generation log for telemetry.
+        assert gen_log.reasoning_content == "the answer"
+
+    @pytest.mark.asyncio
+    async def test_nonempty_content_ignores_reasoning_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When content is present, reasoning_content must not override it."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        adapter = OpenAIAdapter(model_name="gpt-4o")
+
+        mock_completion = _make_completion(content="real content")
+        mock_completion.choices[0].message.reasoning_content = "chain of thought"
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        content, _, _ = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=1,
+            temperature=0.0,
+        )
+        assert content == "real content"
+
 
 # ---------------------------------------------------------------------------
 # generate_chat kwarg construction

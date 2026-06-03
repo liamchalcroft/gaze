@@ -17,6 +17,7 @@ import tempfile
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from types import MappingProxyType
 from types import TracebackType
@@ -166,7 +167,7 @@ class ImageSearchResult:
     publication_date: str | None = None
     license: str | None = None
     reliability_score: float = 0.8
-    metadata: Mapping[str, Any] = MappingProxyType({})
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         frozen = deep_freeze(self.metadata)

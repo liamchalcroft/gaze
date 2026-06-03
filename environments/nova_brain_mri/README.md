@@ -19,9 +19,47 @@ cd environments/nova_brain_mri
 pip install -e .
 ```
 
+## Data
+
+The environment loads cases from `data/nova_<split>.jsonl`, which is not shipped.
+Build it once from the HuggingFace NOVA dataset (`c-i-ber/Nova`) with the bundled
+`prepare_data.py`. It needs `pandas` and `huggingface-hub` in addition to the
+package's own dependencies:
+
+```bash
+pip install -e .
+pip install pandas huggingface-hub
+python prepare_data.py --split test
+```
+
+This downloads NOVA, copies the brain-MRI images into `data/images/`, and writes
+`data/nova_test.jsonl` with the caption, diagnosis, clinical history, and gold
+bounding boxes for each case. Use `--max-samples N` for a quick subset, or
+`--data-dir /path/to/local/Nova` to skip the download.
+
 ## Usage
 
+### Run standalone
+
+The package ships a self-contained CLI, so no external runner is required. After
+`prepare_data.py`, evaluate with either the console script or the module form:
+
+```bash
+# Console script (registered in pyproject [project.scripts])
+nova-brain-mri --model gpt-4o --num-examples 100 --task all
+
+# Equivalent module invocation
+python -m nova_brain_mri --model gpt-4o --num-examples 100 --task diagnosis
+```
+
+Set `OPENAI_API_KEY` or `OPENROUTER_API_KEY` (or pass `--api-key`); an
+OpenAI-compatible endpoint can be targeted with `--base-url`.
+
 ### Via medarc-eval CLI
+
+`medarc-eval` is the MedARC evaluation runner from the [MedMarks](https://medmarks.ai)
+ecosystem; this package registers itself as a verifiers environment (see
+`[tool.verifiers.environment]` in `pyproject.toml`) so MedMarks can discover it.
 
 ```bash
 medarc-eval nova-brain-mri -m gpt-4o -n 100

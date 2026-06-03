@@ -45,7 +45,7 @@ def _resolve_mode(
     """Normalize CLI mode into concrete processor settings."""
     if mode == "single_turn":
         if use_tools or use_search:
-            raise ValueError("--use-tools and --use-search are only valid with --mode agentic")
+            raise ValueError("--use-tools and --use-web-search are only valid with --mode agentic")
         if max_turns not in (None, 1):
             raise ValueError("--mode single_turn requires --max-turns 1")
         return 1, False, False
@@ -315,7 +315,8 @@ def parse_args() -> argparse.Namespace:
         help="Enable visual manipulation tools in agentic mode",
     )
     parser.add_argument(
-        "--use-search",
+        "--use-web-search",
+        dest="use_search",
         action="store_true",
         help="Enable medical literature/image search in agentic mode",
     )

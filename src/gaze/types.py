@@ -1,4 +1,4 @@
-"""Core types for the radiology VLM agent harness.
+"""Core types for GAZE.
 
 Provides dataclasses for tool calls, results, conversation turns,
 and agentic analysis results.

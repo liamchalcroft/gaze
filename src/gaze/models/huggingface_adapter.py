@@ -1,5 +1,5 @@
 # pyright: basic
-"""HuggingFace model adapters for the VLM harness.
+"""HuggingFace model adapters for GAZE.
 
 Provides adapters for local HuggingFace models (text and vision-language).
 These are equal-priority alternatives to the OpenAI adapter for local inference.

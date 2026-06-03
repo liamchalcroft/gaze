@@ -1,0 +1,29 @@
+name: Docker
+
+# The image bundles the NOVA example and its torch dependency, so a build is
+# expensive. Only run it when the container definition itself changes.
+on:
+  push:
+    branches: [main]
+    paths: ["Dockerfile", ".dockerignore"]
+  pull_request:
+    branches: [main]
+    paths: ["Dockerfile", ".dockerignore"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        persist-credentials: false
+    - name: Build image
+      run: docker build -t gaze:ci .

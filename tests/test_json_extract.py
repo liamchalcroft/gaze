@@ -178,3 +178,30 @@ class TestTruncatedJsonRepair:
         result = extract_json_from_text(text)
         assert result is not None
         assert result["diagnosis"] == "tumor"
+
+    def test_truncated_string_with_backslash_escapes(self) -> None:
+        """A backslash escape inside an unterminated string must be tracked so
+        the closing-quote bookkeeping stays correct during repair."""
+        # The unterminated value contains escaped backslashes; the repairer must
+        # treat the char after each ``\`` as escaped (not a real string boundary).
+        text = '{"path": "C:\\\\Users\\\\name\\\\file'
+        result = extract_json_from_text(text)
+        assert result is not None
+        # Repair closes the open string and brace, preserving the escaped content.
+        assert result["path"].startswith("C:")
+
+    def test_truncated_with_escaped_quote_then_more(self) -> None:
+        """An escaped quote inside the string must not be read as the closer."""
+        text = '{"note": "he said \\"hi\\" and then walked away to the door'
+        result = extract_json_from_text(text)
+        assert result is not None
+        assert "he said" in result["note"]
+
+    def test_unrepairable_fragment_returns_none(self) -> None:
+        """A long, structurally invalid fragment (missing commas) cannot be
+        repaired by any closing suffix and must return None."""
+        # Unbalanced single '{' but invalid JSON regardless of which closer is
+        # appended, so every repair suffix fails and the final return None fires.
+        text = '{"a": 1 "b": 2 "c": 3 "d": 4'
+        assert _try_repair_truncated(text) is None
+        assert extract_json_from_text(text) is None

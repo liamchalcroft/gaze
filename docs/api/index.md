@@ -9,12 +9,14 @@ renders the module's public classes and functions from their docstrings.
 - [Types](types.md): `ToolCall`, `ToolResult`, `Turn`, `AgenticResult`
 - [Configuration](config.md): frozen config dataclasses and `config_context()`
 - [Exceptions](exceptions.md): `GazeError` hierarchy
+- [Prompts](prompts.md): Jinja template loading and rendering
 
 ## Models
 
 - [Adapter protocol](models/adapter_protocol.md): the interface all adapters implement
 - [OpenAI adapter](models/openai_adapter.md): OpenAI API and OpenRouter
 - [LM Studio adapter](models/lmstudio_adapter.md): local model inference
+- [HuggingFace adapter](models/huggingface_adapter.md): local torch/transformers models
 
 ## Tools
 

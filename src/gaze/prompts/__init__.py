@@ -1,4 +1,4 @@
-"""Prompt loading utilities for the radiology VLM agent harness.
+"""Prompt loading utilities for GAZE.
 
 Provides Jinja2 template loading and rendering for system and task prompts.
 Dataset-specific implementations should provide their own prompts directory.
@@ -20,6 +20,14 @@ from minijinja import TemplateError as MinijinjaTemplateError
 from typing_extensions import assert_never
 
 from gaze.exceptions import TemplateError
+
+__all__ = [
+    "AnalysisMode",
+    "combine_prompts",
+    "create_prompt",
+    "load_prompt",
+    "load_template",
+]
 
 # Module-level environment with strict undefined behavior.
 # Re-used across all render calls to avoid per-call construction overhead.
@@ -175,7 +183,7 @@ def create_prompt(
         prompts_dir: Base directory containing mode subdirectories
         mode: Analysis mode ('agentic' or 'single_turn')
         context: Dictionary of variables for template rendering.
-            Standard context variables for generic harness templates:
+            Standard context variables for generic GAZE templates:
             - domain_expertise: Domain-specific expertise description
             - analysis_workflow: Domain-specific analysis workflow steps
             - task_instructions: The specific task to perform

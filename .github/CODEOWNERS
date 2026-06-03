@@ -1,0 +1,5 @@
+# Code owners for GAZE. Requested for review automatically on pull requests.
+# See https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repository.
+*       @liamchalcroft

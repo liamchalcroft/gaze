@@ -1,4 +1,4 @@
-"""Configuration classes for the radiology VLM agent harness.
+"""Configuration classes for GAZE.
 
 Provides centralized configuration for constants, limits, and tunable parameters.
 All previously hardcoded values are now configurable via these dataclasses.
@@ -256,8 +256,68 @@ class SearchConfig:
 
 
 @dataclass(frozen=True)
+class AgenticConfig:
+    """Configuration for the multi-turn agentic loop.
+
+    Holds the tunable parameters of ``AgenticProcessorBase``. Processor
+    constructor arguments (``max_turns``, ``max_tokens``, ``temperature``)
+    override the corresponding defaults here for a single processor; values
+    that are not exposed as constructor arguments (the hard turn limit, nudge
+    and idle-tool budgets, tool-content cap) are taken from this config.
+
+    Attributes:
+        max_turns_limit: Hard upper bound on ``max_turns`` (requests above this
+            are clamped).
+        default_max_turns: Default number of turns when none is given.
+        default_max_tokens: Default completion-token budget per turn.
+        default_temperature: Default sampling temperature (0.0 = greedy).
+        max_consecutive_nudges: Recovery nudges before sending the
+            force-finalize message.
+        idle_tool_turns_limit: Turns with zero tool calls (in agentic mode)
+            before force-finalizing to avoid token waste.
+        max_tool_content_chars: Maximum characters retained from a single tool
+            result before truncation (limits prompt-injection surface).
+    """
+
+    max_turns_limit: int = 30
+    default_max_turns: int = 10
+    default_max_tokens: int = 16384
+    default_temperature: float = 0.0
+    max_consecutive_nudges: int = 2
+    idle_tool_turns_limit: int = 3
+    max_tool_content_chars: int = 8_000
+
+    def __post_init__(self) -> None:
+        if self.max_turns_limit < 1:
+            raise ValueError(f"max_turns_limit must be >= 1, got {self.max_turns_limit}")
+        if not 1 <= self.default_max_turns <= self.max_turns_limit:
+            raise ValueError(
+                f"default_max_turns ({self.default_max_turns}) must be between 1 and "
+                f"max_turns_limit ({self.max_turns_limit})"
+            )
+        if self.default_max_tokens < 1:
+            raise ValueError(f"default_max_tokens must be >= 1, got {self.default_max_tokens}")
+        if not 0.0 <= self.default_temperature <= 2.0:
+            raise ValueError(
+                f"default_temperature must be between 0.0 and 2.0, got {self.default_temperature}"
+            )
+        if self.max_consecutive_nudges < 1:
+            raise ValueError(
+                f"max_consecutive_nudges must be >= 1, got {self.max_consecutive_nudges}"
+            )
+        if self.idle_tool_turns_limit < 1:
+            raise ValueError(
+                f"idle_tool_turns_limit must be >= 1, got {self.idle_tool_turns_limit}"
+            )
+        if self.max_tool_content_chars < 1:
+            raise ValueError(
+                f"max_tool_content_chars must be >= 1, got {self.max_tool_content_chars}"
+            )
+
+
+@dataclass(frozen=True)
 class GazeConfig:
-    """Root configuration for the GAZE.
+    """Root configuration for GAZE.
 
     Provides access to all sub-configurations. Can be customized by
     passing individual config objects or by modifying the defaults.
@@ -280,6 +340,7 @@ class GazeConfig:
     image: ImageProcessingConfig = field(default_factory=ImageProcessingConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    agentic: AgenticConfig = field(default_factory=AgenticConfig)
 
 
 class _ConfigHolder:

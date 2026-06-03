@@ -5,6 +5,7 @@ site_author: Liam Chalcroft
 
 repo_name: liamchalcroft/gaze
 repo_url: https://github.com/liamchalcroft/gaze
+edit_uri: edit/main/docs/
 
 theme:
   name: material
@@ -76,10 +77,12 @@ nav:
       - Types: api/types.md
       - Configuration: api/config.md
       - Exceptions: api/exceptions.md
+      - Prompts: api/prompts.md
       - Models:
           - Adapter protocol: api/models/adapter_protocol.md
           - OpenAI adapter: api/models/openai_adapter.md
           - LM Studio adapter: api/models/lmstudio_adapter.md
+          - HuggingFace adapter: api/models/huggingface_adapter.md
       - Tools:
           - Registry: api/tools/registry.md
           - Visual tools: api/tools/visual.md
