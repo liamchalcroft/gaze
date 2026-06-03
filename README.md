@@ -1,4 +1,6 @@
-# GAZE
+<p align="center">
+  <img src="https://raw.githubusercontent.com/liamchalcroft/gaze/main/docs/assets/banner.png" alt="GAZE: Grounded Agentic Zero-shot Evaluation" width="100%">
+</p>
 
 [![CI](https://github.com/liamchalcroft/gaze/actions/workflows/ci.yml/badge.svg)](https://github.com/liamchalcroft/gaze/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/gaze-vlm.svg)](https://pypi.org/project/gaze-vlm/)

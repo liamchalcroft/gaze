@@ -255,6 +255,10 @@ configs/personal/
 *.bmp
 *.tiff
 *.svg
+
+# Project banner/logo assets are tracked.
+!docs/assets/*.png
+!docs/assets/*.svg
 *.mp4
 *.avi
 *.mov

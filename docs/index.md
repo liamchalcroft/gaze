@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="GAZE" width="720">
+</p>
+
 # GAZE
 
 A modular Python framework for building multi-turn agentic vision-language model (VLM) systems. Built for medical image analysis but applicable to any visual reasoning task.
