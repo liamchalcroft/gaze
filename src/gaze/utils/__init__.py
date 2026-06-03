@@ -2,6 +2,8 @@
 
 import math
 
+from beartype import beartype
+
 from gaze.utils.iou import compute_iou
 from gaze.utils.json_coerce import coerce_json_types
 from gaze.utils.json_extract import extract_json_from_text
@@ -19,6 +21,7 @@ _CONFIDENCE_WORD_MAP: dict[str, float] = {
 }
 
 
+@beartype
 def clamp_confidence(value: object) -> float | None:
     """Clamp a confidence value to [0.0, 1.0].
 
