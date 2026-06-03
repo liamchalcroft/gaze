@@ -13,6 +13,9 @@
    uv sync
    pre-commit install
    ```
+   Hook revisions in `.pre-commit-config.yaml` are not covered by Dependabot.
+   Run `pre-commit autoupdate` periodically to keep them in step with the `ruff`
+   and `pyright` pins in `pyproject.toml`.
 
 3. Configure API keys in `.env` (see README.md).
 
@@ -90,6 +93,8 @@ Add to the relevant example's `evaluation/` directory. Follow the existing patte
 - **Exceptions**: use specific types from `gaze.exceptions`. Never bare `except:`.
 - **Commits**: conventional format (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`).
 - **Tests**: pytest. The core library is heavily tested; keep new code covered (aim for >90% on changed lines). Mock external API calls -- unit tests must not hit the network.
+- **Coverage scope**: the default `--cov=gaze` measurement (the headline ~98% figure) covers the core `src/gaze/` library only. `huggingface_adapter.py` and the NOVA example package are omitted from the core run (see `[tool.coverage.run] omit` in `pyproject.toml`); they are exercised and measured separately in the `integration` CI job, which installs the torch extras via `uv sync --extra nova`.
+- **Integration tests**: tests marked `@pytest.mark.integration` hit live external services (NCBI E-utilities, NIH Open-i) and are excluded from the default run by the `-m "not integration"` filter. Run them explicitly with `uv run pytest -m integration`.
 
 ## Pull Requests
 

@@ -53,7 +53,6 @@ ignore = [
     "F722",  # syntax error in forward annotation (jaxtyping)
     "F821",  # undefined name (jaxtyping shape annotations)
     "PLC0415", # import should be at top level (legitimate uses in functions)
-    "E501",  # line too long (LaTeX strings, etc.)
     "PTH123", # use pathlib (many legitimate open() uses)
     "PERF203", # try-except in loop (sometimes necessary)
     "SIM116", # use dict instead of if-elif (sometimes clearer as if-elif)
@@ -67,6 +66,7 @@ ignore = [
 # bug-prone constructs (F401/F811/F841/F821/F541, B023 loop-binding, I001
 # import sorting), but tolerant of CLI prints, naming, and pathlib pedantry.
 "examples/**/*.py" = [
+    "E501",    # long lines tolerated in demo/research code
     "S101",    # assert usage (common in tests/demos)
     "T201",    # print (CLIs print to stdout)
     "B905",    # zip without strict=
@@ -125,7 +125,6 @@ reportUnusedFunction = false
 reportDuplicateImport = true
 reportUnnecessaryTypeIgnoreComment = false
 reportUnknownArgumentType = "warning"
-reportUnknownAttribute = "warning"
 reportUnknownMemberType = "warning"
 reportUnknownParameterType = "warning"
 reportUnknownVariableType = "warning"
@@ -136,6 +135,8 @@ reportIncompatibleMethodOverride = "warning"
 reportCallIssue = "warning"
 reportReturnType = "warning"
 reportArgumentType = "warning"
+reportAttributeAccessIssue = "warning"
+reportGeneralTypeIssues = "warning"
 exclude = [
     # transformers/torch type stubs are incomplete (Optional tokenizer,
     # Tensor.__call__), which produces false positives here.
@@ -145,15 +146,10 @@ exclude = [
     "src/gaze/verifiers",
 ]
 
-[tool.pyright.diagnosticSeverityOverrides]
-reportOptionalMemberAccess = "warning"
-reportAttributeAccessIssue = "warning"
-reportGeneralTypeIssues = "warning"
-
 [tool.pytest.ini_options]
 minversion = "6.0"
 pythonpath = [".", "src"]
-addopts = "-v --tb=short --strict-markers -m \"not integration\""
+addopts = "--tb=short --strict-markers -m \"not integration\""
 testpaths = ["tests"]
 asyncio_mode = "strict"
 markers = [
@@ -164,9 +160,14 @@ markers = [
     "edge_case: marks tests as edge case tests",
     "performance: marks tests for performance validation",
 ]
+# Scope warning suppression to known third-party noise so GAZE's own future
+# DeprecationWarnings stay visible. Pillow >=11 deprecates the legacy ``mode``
+# argument and "I mode" PNG saves ahead of Pillow 13; these fire from our PIL
+# calls but originate upstream, so we silence them by message rather than
+# blanket-ignoring the whole category.
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
+    "ignore:'mode' parameter is deprecated.*:DeprecationWarning",
+    "ignore:Saving I mode images as PNG is deprecated.*:DeprecationWarning",
     "ignore::UserWarning:torch.*",
     "ignore::FutureWarning:transformers.*",
 ]
@@ -208,7 +209,7 @@ authors = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10,<4.0"
+requires-python = ">=3.10,<3.13"
 keywords = [
     "vlm",
     "vision-language-model",
@@ -300,6 +301,7 @@ dev = [
     "pytest>=8,<9",
     "pytest-cov",
     "pytest-asyncio",
+    "pytest-randomly",
     "ruff==0.15.15",
     "pyright==1.1.410",
     "pre-commit",
