@@ -196,12 +196,16 @@ GAZE follows [Semantic Versioning](https://semver.org). While the project is pre
 If you use GAZE in your research, please cite:
 
 ```bibtex
-@inproceedings{chalcroft2026gaze,
-  title={GAZE: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain MRI},
-  author={Chalcroft, Liam},
-  year={2026}
+@article{alim2026gaze,
+  title   = {{GAZE}: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain {MRI}},
+  author  = {Alim, Duaa and Alim, Mogtaba and Chalcroft, Liam},
+  journal = {arXiv preprint arXiv:2605.00876},
+  year    = {2026},
+  note    = {Accepted at AIiH 2026},
 }
 ```
+
+The preprint is available at [arXiv:2605.00876](https://arxiv.org/abs/2605.00876).
 
 ## License
 
