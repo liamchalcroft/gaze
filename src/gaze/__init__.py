@@ -31,6 +31,9 @@ from typing import TYPE_CHECKING
 
 from gaze.base import AgenticProcessorBase
 from gaze.base import ImageInput
+from gaze.base import SimpleProcessor
+from gaze.base import analyze
+from gaze.config import AgenticConfig
 from gaze.config import CacheConfig
 from gaze.config import GazeConfig
 from gaze.config import ImageProcessingConfig
@@ -83,9 +86,12 @@ __version__ = "0.1.0"
 __all__ = [
     # Core
     "AgenticProcessorBase",
+    "SimpleProcessor",
+    "analyze",
     "ImageInput",
     # Configuration
     "GazeConfig",
+    "AgenticConfig",
     "CacheConfig",
     "SearchConfig",
     "ImageProcessingConfig",

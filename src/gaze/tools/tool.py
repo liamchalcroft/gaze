@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing import Any
 
@@ -14,26 +15,21 @@ if TYPE_CHECKING:
 
 
 @beartype
+@dataclass(frozen=True)
 class Tool:
-    """Tool definition for agentic processing."""
+    """Tool definition for agentic processing.
 
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        parameters: dict[str, Any],
-        execute: Callable[..., Awaitable[ToolResult]],
-        requires_image: bool = False,
-        category: str | None = None,
-        prompt_documentation: str | None = None,
-    ) -> None:
-        self.name = name
-        self.description = description
-        self.parameters = parameters
-        self.execute = execute
-        self.requires_image = requires_image
-        self.category = category
-        self._prompt_documentation = prompt_documentation
+    Immutable: a tool is constructed once (e.g. in ``create_visual_tools``)
+    and never mutated, consistent with the frozen data types in ``gaze.types``.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    execute: Callable[..., Awaitable[ToolResult]]
+    requires_image: bool = False
+    category: str | None = None
+    prompt_documentation: str | None = None
 
     def get_prompt_documentation(self, *, compact: bool = False) -> str:
         """Generate documentation for prompt inclusion.
@@ -54,8 +50,8 @@ class Tool:
             )
             return f"- {self.name}({params}): {self.description}"
 
-        if self._prompt_documentation:
-            return self._prompt_documentation
+        if self.prompt_documentation:
+            return self.prompt_documentation
 
         doc = f"**{self.name}**: {self.description}\n"
         if self.parameters:
