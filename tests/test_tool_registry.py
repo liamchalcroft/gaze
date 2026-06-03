@@ -494,21 +494,15 @@ def test_zoom_within_max_dimension_succeeds() -> None:
 # ── PR5: OpenAI adapter retry config tests ──────────────────────
 
 
-def test_openai_adapter_disables_sdk_retries() -> None:
+def test_openai_adapter_disables_sdk_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     """SDK max_retries should be 0 to let tenacity control retry logic."""
-    import os
-
     from gaze.models.openai_adapter import OpenAIAdapter
 
+    # Set a dummy key to allow client creation; monkeypatch restores env after.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
     adapter = OpenAIAdapter(model_name="test-model")
-    # Set a dummy key to allow client creation
-    os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy")
-    try:
-        client = adapter.client
-        assert client.max_retries == 0
-    finally:
-        if os.environ.get("OPENAI_API_KEY") == "sk-test-dummy":
-            del os.environ["OPENAI_API_KEY"]
+    client = adapter.client
+    assert client.max_retries == 0
 
 
 # ---------------------------------------------------------------------------

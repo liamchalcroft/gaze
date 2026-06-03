@@ -250,6 +250,26 @@ class TestResponseFormatStripping:
         assert "response_format" not in call_kwargs
 
 
+class TestReasoningContentFallback:
+    """LMStudioAdapter inherits OpenAIAdapter.generate_chat, so the empty-content
+    fallback to reasoning_content applies to local thinking models too (e.g.
+    GLM-4.6V, Qwen3.5 served via LM Studio)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_content_falls_back_to_reasoning_content(self) -> None:
+        adapter = LMStudioAdapter(model_name="test-model")
+        mock_completion = _make_completion(content="")
+        mock_completion.choices[0].message.reasoning_content = "local model answer"
+        adapter._create_completion_with_retry = AsyncMock(return_value=mock_completion)
+
+        content, _, _ = await adapter.generate_chat(
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=100,
+            temperature=0.0,
+        )
+        assert content == "local model answer"
+
+
 # ---------------------------------------------------------------------------
 # Protocol signature parity
 # ---------------------------------------------------------------------------

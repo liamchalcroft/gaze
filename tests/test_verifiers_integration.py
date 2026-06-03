@@ -219,6 +219,9 @@ class TestToolEnvIntegrations:
         assert isinstance(env.rubric, vf.Rubric)
         import asyncio
 
+        # asyncio.run creates and tears down a fresh event loop, so this stays
+        # robust regardless of test ordering. get_event_loop() raised under
+        # pytest-randomly when a prior test had already closed the loop.
         state: dict = {}
-        state = asyncio.get_event_loop().run_until_complete(env.setup_state(state))
+        state = asyncio.run(env.setup_state(state))
         assert state["turn"] == 0

@@ -28,12 +28,17 @@ def test_readme_structured_output_example_matches_runtime_shape() -> None:
     assert "from pathlib import Path" in readme
 
 
-def test_cli_usage_message_matches_example_parser(capsys) -> None:
-    exit_code = main()
+def test_cli_info_points_to_repo_not_local_examples(capsys) -> None:
+    import gaze
+
+    exit_code = main([])
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "python -m src.cli --task localization --model openai/gpt-4o" in captured.out
-    assert "task=localization" not in captured.out
+    assert f"GAZE {gaze.__version__}" in captured.out
+    # An installed wheel has no examples/ directory, so the CLI must not tell
+    # users to cd into one; it points at the source repository instead.
+    assert "cd examples" not in captured.out
+    assert "github.com/liamchalcroft/gaze" in captured.out
 
 
 def test_nova_example_lazy_exports_are_listed_in_all() -> None:
