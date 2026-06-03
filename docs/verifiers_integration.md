@@ -17,7 +17,7 @@ The `gaze.verifiers` module provides:
 
 `verifiers` is not part of the core `gaze-vlm` runtime dependencies. It is
 declared in the `dev` dependency group and in several optional extras
-(`[verifiers]`, `[rl]`, `[medmarks]`, `[gemex]`, `[agentclinic]`), so it is
+(`[verifiers]`, `[medmarks]`, `[gemex]`, `[agentclinic]`), so it is
 only pulled in when you ask for it.
 
 End users install the optional extra:
