@@ -81,7 +81,7 @@ from gaze.types import ToolResult
 from gaze.types import Turn
 from gaze.utils.json_coerce import coerce_json_types
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     # Core

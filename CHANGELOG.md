@@ -4,6 +4,13 @@ All notable changes to GAZE are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org).
 
+## [0.1.1] - 2026-06-03
+
+### Changed
+- Relaxed `requires-python` from `>=3.10,<3.13` to `>=3.10`, so `pip install
+  gaze-vlm` works on Python 3.13 and 3.14. The CI matrix now covers 3.10 through
+  3.14 on Linux and 3.14 on macOS.
+
 ## [0.1.0] - 2026-06-02
 
 First public release. GAZE (Grounded Agentic Zero-shot Evaluation) is a modular
