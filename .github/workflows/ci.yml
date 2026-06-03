@@ -102,8 +102,14 @@ jobs:
       # with every example's smoke tests. Coverage spans the core library, the
       # HuggingFace adapter, and the NOVA example package (none of which the
       # core check job measures).
+      #
+      # Deterministic order (-p no:randomly): the NOVA example tests import the
+      # example package under two paths (src.* and examples.nova.src.*), so a
+      # shuffled run can load it twice as distinct modules and trip beartype
+      # class-identity checks. Order-dependence in the library is policed by the
+      # randomised check jobs on tests/.
       run: |
-        uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper \
+        uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper -p no:randomly \
           --cov=gaze --cov=examples/nova/src --cov-report=xml:coverage-full.xml --tb=short
     - name: Upload full coverage to Codecov
       uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
