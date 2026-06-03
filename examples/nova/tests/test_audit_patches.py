@@ -17,6 +17,14 @@ if str(EXAMPLE_ROOT) not in sys.path:
 if str(PAPER_ROOT) not in sys.path:
     sys.path.insert(0, str(PAPER_ROOT))
 
+# A few tests below exercise code that lives only in the gitignored
+# examples/aiih2026_paper research directory, which is absent from clean
+# checkouts (e.g. CI). Skip them when that directory is not present.
+_skip_without_paper = pytest.mark.skipif(
+    not (PAPER_ROOT / "experiments").exists(),
+    reason="examples/aiih2026_paper is gitignored and absent in clean checkouts",
+)
+
 
 class TestAreaPenaltyEdgeCases:
     def test_penalty_start_exactly_one(self) -> None:
@@ -294,6 +302,7 @@ class TestDashPatternSync:
         )
 
 
+@_skip_without_paper
 class TestLocalizationAnalysisLoading:
     def test_compute_model_ious_uses_box_annotations_only(
         self,
@@ -669,6 +678,7 @@ class TestAreaPenaltySwappedCoordinates:
         )
 
 
+@_skip_without_paper
 class TestSampleStdAggregation:
     """aggregate.py must use sample std (n-1 denominator)."""
 
