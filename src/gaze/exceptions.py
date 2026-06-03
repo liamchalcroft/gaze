@@ -1,4 +1,4 @@
-"""Exceptions for the radiology VLM agent harness."""
+"""Exceptions for GAZE."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 class GazeError(Exception):
-    """Base exception for all harness errors."""
+    """Base exception for all GAZE errors."""
 
 
 class ToolExecutionError(GazeError):

@@ -119,7 +119,7 @@ class GazeAdapter:
         tool_calls: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
     ) -> Messages:
-        """Convert a harness response to verifiers messages format."""
+        """Convert a GAZE response to verifiers messages format."""
         messages: Messages = []
 
         if response_text:

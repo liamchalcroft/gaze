@@ -60,7 +60,7 @@ class VerifiableProcessorMixin:
     Provides methods for:
     - Creating verifiers environments from processors
     - Defining task-specific reward functions
-    - Converting between harness and verifiers formats
+    - Converting between GAZE and verifiers formats
 
     Usage:
         class MyProcessor(VerifiableProcessorMixin, AgenticProcessorBase):

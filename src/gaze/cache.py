@@ -1,4 +1,4 @@
-"""Shared caching utilities for the radiology VLM agent harness.
+"""Shared caching utilities for GAZE.
 
 Provides a generic TTL cache implementation used by search managers.
 """

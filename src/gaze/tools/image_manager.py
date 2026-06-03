@@ -1,4 +1,4 @@
-"""Image management for the radiology VLM agent harness."""
+"""Image management for GAZE."""
 
 from __future__ import annotations
 
