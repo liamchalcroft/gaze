@@ -199,8 +199,15 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         # Build user message with image
         user_content = self._build_user_message(case)
 
+        # Use list-of-parts content for both messages so a HuggingFace
+        # ``Dataset`` can infer a single, consistent type for the prompt column
+        # (mixing a string system message with a list user message makes
+        # ``Dataset.from_dict`` raise "cannot mix list and non-list").
+        if isinstance(user_content, str):
+            user_content = [{"type": "text", "text": user_content}]
+
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
             {"role": "user", "content": user_content},
         ]
 

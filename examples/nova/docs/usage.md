@@ -8,20 +8,24 @@
 
 ## Install
 
+Run all commands from the repository root:
+
 ```bash
-cd examples/nova
-uv sync
+uv sync --extra nova
 ```
 
 ## Environment
 
-Create `.env` in `examples/nova/`:
+Create `.env` at the repository root (the CLI reads API keys from the
+environment; data and output directories are passed with `--data-dir` /
+`--output-dir`, not env vars):
 
 ```dotenv
 OPENROUTER_API_KEY=your_key
 OPENAI_API_KEY=your_key
-DATA_DIR=./data/nova
-OUTPUT_DIR=./runs
+# Optional: override the diagnosis semantic-match judge
+# NOVA_SEMANTIC_MATCH_MODEL=openai/gpt-5-nano
+# NOVA_SEMANTIC_MATCH_BASE_URL=http://localhost:1234/v1
 ```
 
 ## Data
@@ -35,17 +39,16 @@ OUTPUT_DIR=./runs
 ### Basic run
 
 ```bash
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
   --task localization \
   --model openai/gpt-4o \
-  --data-dir ./data/nova \
   --output-dir ./runs
 ```
 
 ### With tools and search
 
 ```bash
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
   --task diagnosis \
   --model openai/gpt-4o \
   --use-tools \
@@ -56,7 +59,7 @@ uv run python -m src.cli \
 ### Re-run existing samples
 
 ```bash
-uv run python -m src.cli \
+uv run --extra nova python -m examples.nova.src.cli \
   --task caption \
   --model openai/gpt-4o-mini \
   --no-skip-existing
@@ -65,7 +68,7 @@ uv run python -m src.cli \
 ### Verbose
 
 ```bash
-uv run python -m src.cli --task all --model openai/gpt-4o -v
+uv run --extra nova python -m examples.nova.src.cli --task all --model openai/gpt-4o -v
 ```
 
 ## Output

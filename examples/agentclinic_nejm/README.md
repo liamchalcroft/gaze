@@ -12,12 +12,14 @@ Based on [AgentClinic](https://github.com/SamuelSchmidgall/AgentClinic).
 
 - Source: New England Journal of Medicine (NEJM) clinical cases
 - Format: extended JSONL with patient information, images, and answer choices
-- Access: run the bundled download script (below); the file is also committed as `data/agentclinic_nejm_extended.jsonl`
+- Access: the dataset is NOT shipped with this repository. Run the download script below before the first evaluation; it fetches `agentclinic_nejm_extended.jsonl` from the upstream AgentClinic repository into `data/` (gitignored).
 
 ```bash
 cd examples/agentclinic_nejm/data
 python download.py
 ```
+
+`download.py` is required: without it the default command below raises `FileNotFoundError`.
 
 ## Install
 
@@ -40,7 +42,9 @@ uv run python -m examples.agentclinic_nejm.eval \
   --output ./results
 ```
 
-Omit `--dataset` to use the bundled default. To load the multi-turn environment directly (for example, to inspect cases or wire up training):
+`--model openai/...` runs go through OpenRouter/OpenAI: set `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`) first, or the run fails with "No API key found". The local LM Studio path via `--base-url` (below) needs no key.
+
+Omit `--dataset` to use the default path (`data/agentclinic_nejm_extended.jsonl`), which is where `download.py` writes the file. To load the multi-turn environment directly (for example, to inspect cases or wire up training):
 
 ```python
 from examples.agentclinic_nejm.src import load_environment
@@ -64,7 +68,7 @@ Conversation history grows each turn, so use `n_ctx >= 8192`; thinking models ne
 
 ## Flags
 
-- `--dataset PATH`: NEJM JSONL dataset (default: bundled file)
+- `--dataset PATH`: NEJM JSONL dataset (default: `data/agentclinic_nejm_extended.jsonl`, written by `download.py`)
 - `--model NAME`: model name (OpenAI/OpenRouter format, or local ID for `--base-url`)
 - `--base-url URL`: OpenAI-compatible server, e.g. `http://localhost:1234/v1`
 - `--max-turns N`: maximum conversation turns (default 10)
@@ -133,8 +137,8 @@ agentclinic_nejm/
         __init__.py              # Package exports
         environment.py           # MultiTurnEnv + reward functions
     data/
-        download.py              # Dataset download script
-        agentclinic_nejm_extended.jsonl  # Bundled dataset
+        download.py              # Dataset download script (run this first)
+        agentclinic_nejm_extended.jsonl  # Produced by download.py (gitignored, not shipped)
     tests/                       # Hermetic smoke tests
     train.py                     # Training-config prep template (see note)
     eval.py                      # Runnable evaluation loop

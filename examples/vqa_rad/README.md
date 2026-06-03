@@ -32,6 +32,8 @@ uv run python -m examples.vqa_rad.src.cli \
   --output-dir ./runs/vqa_rad
 ```
 
+`--model openai/...` runs go through OpenRouter/OpenAI: set `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`) first, or the run fails with "No API key found". The local LM Studio path via `--base-url` (below) needs no key.
+
 ## Run locally (LM Studio)
 
 `run_local.sh` sweeps single-turn then agentic against a local OpenAI-compatible server. Pass `--base-url` (default `http://localhost:1234/v1`) to point at LM Studio or any compatible vision-capable endpoint:
@@ -44,13 +46,21 @@ Use `n_ctx >= 4096` (8192 recommended). The script sets `--max-image-dim 256` to
 
 ## Flags
 
-- `--mode {single_turn,agentic}`: single-turn answers directly; agentic can use tools and iterate
+- `--model NAME`: model name (must accept image input; OpenRouter format, or local ID for `--base-url`; default `openai/gpt-4o`)
+- `--base-url URL`: OpenAI-compatible server, e.g. `http://localhost:1234/v1`
+- `--mode {single_turn,agentic}`: single-turn answers directly; agentic can use tools and iterate (default `agentic`)
+- `--split {train,test}`: dataset split (default `test`)
 - `--use-tools`: enable visual manipulation tools (agentic mode)
-- `--use-search`: enable medical literature/image search (agentic mode)
+- `--use-web-search`: enable medical literature/image search (agentic mode)
+- `--max-samples N`: maximum samples to evaluate (default: all)
 - `--max-turns N`: agentic turn limit (single-turn forces 1; agentic defaults to 5)
 - `--max-tokens N`: completion tokens per turn (thinking models need >= 4096)
 - `--max-image-dim N`: downscale images so neither side exceeds N pixels before encoding
-- `-v`: verbose logging
+- `--batch-size N`: samples processed concurrently (default 1)
+- `--reasoning`: enable model reasoning mode
+- `--seed N`: random seed for reproducibility
+- `--output-dir PATH`: output directory (default `./runs/vqa_rad`)
+- `-v`, `--verbose`: verbose logging
 
 ## Output
 

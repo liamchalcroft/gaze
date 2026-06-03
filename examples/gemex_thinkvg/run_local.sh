@@ -27,6 +27,15 @@ RESULTS_DIR="${SCRIPT_DIR}/runs/main_results"
 
 cd "${REPO_ROOT}"
 
+# The GEMeX JSONL is built from the HuggingFace source by prepare_data.py and is
+# not shipped with the repo. Fail early with a clear hint if it is absent.
+if [[ ! -f "${DATASET}" ]]; then
+  echo "ERROR: dataset not found at ${DATASET}" >&2
+  echo "Build it first (needs the gemex extra):" >&2
+  echo "  uv run --extra gemex python -m examples.gemex_thinkvg.prepare_data --split train" >&2
+  exit 1
+fi
+
 echo "=== GEMeX-ThinkVG local model evaluation ==="
 echo "Model:     ${MODEL}"
 echo "Dataset:   ${DATASET}"
@@ -38,7 +47,7 @@ echo ""
 # --- Single-turn ---
 SINGLE_DIR="${RESULTS_DIR}/${MODEL}__single_turn"
 echo "--- Single-turn run -> ${SINGLE_DIR} ---"
-uv run python -m examples.gemex_thinkvg.eval \
+uv run --extra gemex python -m examples.gemex_thinkvg.eval \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --dataset "${DATASET}" \
@@ -55,7 +64,7 @@ echo ""
 # --- Agentic (with tools) ---
 AGENTIC_DIR="${RESULTS_DIR}/${MODEL}__agentic__tools__8t"
 echo "--- Agentic run -> ${AGENTIC_DIR} ---"
-uv run python -m examples.gemex_thinkvg.eval \
+uv run --extra gemex python -m examples.gemex_thinkvg.eval \
   --model "${MODEL}" \
   --base-url "${BASE_URL}" \
   --dataset "${DATASET}" \

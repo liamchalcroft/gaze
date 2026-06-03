@@ -20,7 +20,7 @@ The reward combines three components (default weights `answer=0.4, location=0.3,
 - Images: chest X-rays from MIMIC-CXR-JPG (PhysioNet credentialed access)
 - Annotations: findings with bounding boxes and anatomical locations
 - Format: chain-of-thought reasoning with visual grounding
-- Splits: currently only `train` is available
+- Splits: currently only `train` is available (build it locally with `prepare_data.py`, see below)
 
 MIMIC-CXR-JPG requires credentialed access:
 
@@ -39,11 +39,26 @@ uv sync --extra gemex
 pip install gaze-vlm[gemex]
 ```
 
+## Prepare data
+
+`eval.py` reads a local JSONL produced from the HuggingFace source. Build it
+once with `prepare_data.py` (needs the `gemex` extra for HuggingFace `datasets`):
+
+```bash
+uv run --extra gemex python -m examples.gemex_thinkvg.prepare_data --split train
+```
+
+This writes `examples/gemex_thinkvg/data/train.jsonl`, parsing each sample's
+ground-truth answer, anatomical location, and bounding box from the dataset's
+XML `response` column. GEMeX-ThinkVG exposes only a `train` split, so that is
+the file the run commands below use. The MIMIC-CXR-JPG images are not downloaded
+(they need PhysioNet credentials); pass their root via `--image-dir`.
+
 ## Run
 
 ```bash
 uv run python -m examples.gemex_thinkvg.eval \
-  --dataset ./data/test.jsonl \
+  --dataset ./examples/gemex_thinkvg/data/train.jsonl \
   --image-dir /path/to/mimic-cxr-jpg \
   --model openai/gpt-4o \
   --mode agentic \
@@ -51,12 +66,16 @@ uv run python -m examples.gemex_thinkvg.eval \
   --output ./results
 ```
 
+`--model openai/...` runs go through OpenRouter/OpenAI: set `OPENROUTER_API_KEY`
+(or `OPENAI_API_KEY`) first, or the run fails with "No API key found". The local
+LM Studio path via `--base-url` (below) needs no key.
+
 ## Run locally (LM Studio)
 
 `run_local.sh` sweeps single-turn then agentic against a local OpenAI-compatible server. It requires the dataset and MIMIC-CXR image root as positional arguments; pass `--base-url` (default `http://localhost:1234/v1`) to point at LM Studio:
 
 ```bash
-./examples/gemex_thinkvg/run_local.sh glm-4.6v-flash ./data/test.jsonl /path/to/mimic-cxr-jpg http://localhost:1234/v1 50
+./examples/gemex_thinkvg/run_local.sh glm-4.6v-flash ./examples/gemex_thinkvg/data/train.jsonl /path/to/mimic-cxr-jpg http://localhost:1234/v1 50
 ```
 
 GEMeX needs `n_ctx >= 8192` (16384 recommended); the image plus schema prompt is large and thinking models need headroom. The script sets `--max-image-dim 256` to keep encoded images within budget. Only load one model in LM Studio at a time (the health-check probe can trigger model swapping on memory-constrained GPUs).
@@ -92,7 +111,7 @@ GEMeX needs `n_ctx >= 8192` (16384 recommended); the image plus schema prompt is
 from examples.gemex_thinkvg.src import load_environment
 
 env = load_environment(
-    dataset_path="./data/test.jsonl",
+    dataset_path="./examples/gemex_thinkvg/data/train.jsonl",
     max_turns=8,
 )
 ```
@@ -218,6 +237,7 @@ gemex_thinkvg/
         verifiers/               # verifiers package integration
             environment.py       # GEMeXThinkVGToolEnv (MultiTurnEnv)
     tests/                       # Hermetic smoke tests
+    prepare_data.py              # Export HuggingFace source to data/<split>.jsonl
     train.py                     # Training-config prep template (see note)
     eval.py                      # Evaluation script
     run_local.sh                 # Local (LM Studio) evaluation sweep

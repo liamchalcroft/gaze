@@ -26,10 +26,12 @@ pip install gaze-vlm[pubmedqa]
 uv run python -m examples.pubmedqa.src.cli \
   --model openai/gpt-4o \
   --mode agentic \
-  --use-search \
+  --use-web-search \
   --max-samples 50 \
   --output-dir ./runs/pubmedqa
 ```
+
+`--model openai/...` runs go through OpenRouter/OpenAI: set `OPENROUTER_API_KEY` (or `OPENAI_API_KEY`) first, or the run fails with "No API key found". The local LM Studio path via `--base-url` (below) needs no key.
 
 ## Run locally (LM Studio)
 
@@ -43,12 +45,19 @@ PubMedQA is text-only, so it works with `n_ctx >= 4096`; thinking models benefit
 
 ## Flags
 
-- `--mode {single_turn,agentic}`: single-turn answers from context; agentic can search and iterate
-- `--use-search`: enable PubMed retrieval (agentic mode)
+- `--model NAME`: model name (OpenRouter format, or local ID for `--base-url`; default `openai/gpt-4o`)
+- `--base-url URL`: OpenAI-compatible server, e.g. `http://localhost:1234/v1`
+- `--mode {single_turn,agentic}`: single-turn answers from context; agentic can search and iterate (default `agentic`)
+- `--use-web-search`: enable PubMed retrieval (agentic mode)
+- `--config {pqa_labeled,pqa_artificial,pqa_unlabeled}`: dataset subset (default `pqa_labeled`)
+- `--max-samples N`: maximum samples to evaluate (default: all)
 - `--max-turns N`: agentic turn limit (single-turn forces 1; agentic defaults to 5)
 - `--max-tokens N`: completion tokens per turn (thinking models need >= 4096)
-- `--config {pqa_labeled,pqa_artificial,pqa_unlabeled}`: dataset subset
-- `-v`: verbose logging
+- `--batch-size N`: samples processed concurrently (default 1)
+- `--reasoning`: enable model reasoning mode
+- `--seed N`: random seed for reproducibility
+- `--output-dir PATH`: output directory (default `./runs/pubmedqa`)
+- `-v`, `--verbose`: verbose logging
 
 ## Output
 

@@ -8,8 +8,9 @@
 
 NOVA VLM benchmarks vision-language models on brain-MRI analysis with three tasks: captioning, diagnosis, and localization. The agentic mode enables multi-turn reasoning with visual tools and PubMed search.
 
+Run from the repository root:
+
 ```bash
-cd examples/nova
-uv sync
-uv run python -m src.cli --task localization --model openai/gpt-4o --data-dir ./data/nova --output-dir ./runs
+uv sync --extra nova
+uv run --extra nova python -m examples.nova.src.cli --task localization --model openai/gpt-4o --output-dir ./runs
 ```

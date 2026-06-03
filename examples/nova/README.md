@@ -20,13 +20,15 @@ uv sync --extra nova
 pip install gaze-vlm[nova]
 ```
 
-Create `.env`:
+Create `.env` (the CLI reads API keys from the environment; data and output
+directories are passed with `--data-dir` / `--output-dir`, not env vars):
 
 ```dotenv
 OPENROUTER_API_KEY=your_key
 OPENAI_API_KEY=your_key
-DATA_DIR=./data/nova
-OUTPUT_DIR=./runs
+# Optional: override the diagnosis semantic-match judge
+# NOVA_SEMANTIC_MATCH_MODEL=openai/gpt-5-nano
+# NOVA_SEMANTIC_MATCH_BASE_URL=http://localhost:1234/v1
 ```
 
 ## Run

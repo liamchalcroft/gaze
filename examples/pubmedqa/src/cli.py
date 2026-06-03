@@ -1,7 +1,7 @@
 """PubmedQA CLI - demonstrates text-only agentic analysis.
 
 Usage:
-    python -m examples.pubmedqa.src.cli --model openai/gpt-4o --use-search
+    python -m examples.pubmedqa.src.cli --model openai/gpt-4o --use-web-search
     python -m examples.pubmedqa.src.cli --config pqa_labeled --max-samples 100
 """
 
@@ -43,7 +43,7 @@ def _resolve_mode(
     """Normalize CLI mode into concrete processor settings."""
     if mode == "single_turn":
         if use_search:
-            raise ValueError("--use-search is only valid with --mode agentic")
+            raise ValueError("--use-web-search is only valid with --mode agentic")
         if max_turns not in (None, 1):
             raise ValueError("--mode single_turn requires --max-turns 1")
         return 1, False
@@ -283,7 +283,8 @@ def parse_args() -> argparse.Namespace:
         help="Output directory for results",
     )
     parser.add_argument(
-        "--use-search",
+        "--use-web-search",
+        dest="use_search",
         action="store_true",
         help="Enable PubMed search for additional context in agentic mode",
     )
