@@ -11,6 +11,12 @@ adheres to [Semantic Versioning](https://semver.org).
   gaze-vlm` works on Python 3.13 and 3.14. The CI matrix now covers 3.10 through
   3.14 on Linux and 3.14 on macOS.
 
+### Security
+- Bumped pinned development and CI dependencies (cryptography, pyjwt, pyarrow,
+  requests, starlette, and others) to clear advisories flagged by `pip-audit`.
+  These are build and test dependencies, not runtime dependencies of the
+  published package.
+
 ## [0.1.0] - 2026-06-02
 
 First public release. GAZE (Grounded Agentic Zero-shot Evaluation) is a modular
