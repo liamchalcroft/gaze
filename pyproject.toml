@@ -305,7 +305,7 @@ dev = [
     "pytest-cov",
     "pytest-asyncio",
     "pytest-randomly",
-    "ruff==0.15.15",
+    "ruff==0.15.16",
     "pyright==1.1.410",
     "pre-commit",
     "verifiers>=0.1.6,<1",
