@@ -46,10 +46,13 @@ class BaseMultiTurnEnv(vf.MultiTurnEnv):
             dataset_path: Path to JSONL dataset file
             max_turns: Maximum conversation turns
             name: Environment name
-            log_dir: Directory for debug logs
+            log_dir: Directory for debug logs (default: ``./logs``)
         """
         self._max_turns = max_turns
-        self._log_dir = Path(log_dir) if log_dir else Path(__file__).parent.parent / "logs"
+        # Default under the working directory, never next to the module: the
+        # installed package lives in site-packages, which is typically
+        # read-only and is not where a user expects debug output.
+        self._log_dir = Path(log_dir) if log_dir else Path.cwd() / "logs"
         self._log_path = self._log_dir / f"{name.lower()}_debug.log"
 
         # Load cases

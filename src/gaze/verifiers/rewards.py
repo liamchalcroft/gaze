@@ -10,6 +10,7 @@ import json
 import re
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 from beartype import beartype
@@ -60,6 +61,23 @@ def extract_completion_text(completion: Any) -> str:
                 return "\n".join(texts) if texts else ""
 
     return str(completion or "")
+
+
+def _first_reference(value: Any) -> str:
+    """Return the first usable reference string from a non-str gold value.
+
+    Datasets store gold answers as a bare string, a list of accepted answers,
+    or occasionally a nested one-element structure. Anything else degrades to
+    ``str(value)`` rather than raising out of a reward function.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
+        for item in value:
+            if isinstance(item, str):
+                return item
+        return ""
+    return "" if value is None else str(value)
 
 
 class BaseRewardFunction(ABC):
@@ -121,7 +139,10 @@ class ExactMatchReward(BaseRewardFunction):
     ) -> float:
         """Compute exact match reward."""
         pred = extract_completion_text(completion)
-        ref = info.get("gold", info.get("reference", info.get("answer", "")))
+        raw_ref = info.get("gold", info.get("reference", info.get("answer", "")))
+        # Datasets often carry the gold answer as a list of accepted strings;
+        # a bare str(...) would compare against "['cat']".
+        ref = raw_ref if isinstance(raw_ref, str) else _first_reference(raw_ref)
 
         if self.normalize:
             pred = self._normalize(pred)
@@ -131,15 +152,16 @@ class ExactMatchReward(BaseRewardFunction):
         return 1.0 if match else 0.0
 
     def _normalize(self, text: str) -> str:
-        """Normalize text for comparison."""
+        """Collapse whitespace, and optionally strip surrounding punctuation."""
         if not text:
             return ""
 
         if self.strip_braces:
             text = text.strip("{}().[],;")
-            text = re.sub(r"\s+", " ", text).strip()
 
-        return text
+        # Whitespace normalization is the point of `normalize`, so it must not
+        # be conditional on `strip_braces`.
+        return re.sub(r"\s+", " ", text).strip()
 
 
 class TokenF1Reward(BaseRewardFunction):
@@ -370,30 +392,14 @@ class IoUReward(BaseRewardFunction):
         reward = iou if self.continuous else (1.0 if iou >= self.iou_threshold else 0.0)
 
         # Apply area penalty for degenerate full-image boxes.
-        # For normalized coords (in [0,1]), image_area = 1.0.
-        # For pixel coords, image_area must be supplied via info dict.
+        #
+        # The coordinate space is declared by `normalized`, which the
+        # experimenter sets - the model cannot choose it - so there is no
+        # gaming vector to defend against here. Inferring the space from the
+        # predicted values instead used to zero out a *correct* pixel-space
+        # box whenever image_area was absent.
         if self.area_penalty_start < 1.0:
-            if self.normalized:
-                coords_in_range = all(0.0 <= c <= 1.0 for c in pred_floats)
-                if coords_in_range:
-                    image_area = 1.0
-                else:
-                    # Coords are pixel-scale despite normalized=True.
-                    # We cannot infer image area from the predicted box itself
-                    # (that estimate is always wrong for origin-anchored boxes).
-                    # Require image_area in info; fail closed (reward=0) if absent
-                    # to prevent gaming via coordinate-space mismatch.
-                    raw_area = info.get("image_area")
-                    if raw_area is not None:
-                        image_area = float(raw_area)
-                    else:
-                        logger.warning(
-                            "IoUReward: pixel-space coords detected but no "
-                            "image_area in info dict; returning 0.0 (fail closed)"
-                        )
-                        return 0.0
-            else:
-                image_area = float(info.get("image_area", 0.0))
+            image_area = self._resolve_image_area(info, pred_floats)
             if image_area > 0:
                 pred_area = abs(pred_floats[2] - pred_floats[0]) * abs(
                     pred_floats[3] - pred_floats[1]
@@ -404,6 +410,37 @@ class IoUReward(BaseRewardFunction):
                     reward *= penalty
 
         return reward
+
+    def _resolve_image_area(self, info: dict[str, Any], pred_box: list[float]) -> float:
+        """Return the image area to measure the predicted box against.
+
+        Returns 0.0 when the area is unknown, which skips the penalty rather
+        than discarding an otherwise correct prediction.
+        """
+        if self.normalized and all(0.0 <= c <= 1.0 for c in pred_box):
+            return 1.0
+
+        # Either pixel space was declared, or normalized was declared but the
+        # coordinates say otherwise. Both need a real image area.
+        raw_area = info.get("image_area")
+        if raw_area is not None:
+            return float(raw_area)
+
+        width, height = info.get("image_width"), info.get("image_height")
+        if width is not None and height is not None:
+            return float(width) * float(height)
+
+        # The area is genuinely unknown, so no penalty can be computed. Score
+        # the honest IoU rather than discarding a correct prediction: the
+        # coordinate space is the experimenter's declaration, not something the
+        # model can choose, so this is a configuration gap, not an exploit.
+        logger.warning(
+            "IoUReward: pixel-space coordinates {} but no image_area (or "
+            "image_width and image_height) in info; skipping the area penalty. "
+            "Supply one of those to enable degenerate-box penalties.",
+            pred_box,
+        )
+        return 0.0
 
     def _extract_bbox(self, completion: Any) -> list[float]:
         """Extract bounding box from completion.

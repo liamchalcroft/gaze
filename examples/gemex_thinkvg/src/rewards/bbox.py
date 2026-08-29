@@ -10,6 +10,8 @@ from collections.abc import Sequence
 
 from beartype import beartype
 
+from gaze.utils.iou import compute_iou as shared_compute_iou
+
 # GEMeX image dimensions after preprocessing
 IMAGE_SIZE = 336
 
@@ -95,8 +97,8 @@ def compute_iou(
 ) -> float:
     """Compute Intersection over Union between two bounding boxes.
 
-    Normalizes coordinate ordering (x1 <= x2, y1 <= y2) before computing
-    IoU, matching the shared ``gaze.utils.iou.compute_iou``.
+    Clamps both boxes to the GEMeX image bounds (which also normalizes
+    coordinate ordering), then defers to ``gaze.utils.iou.compute_iou``.
 
     Args:
         bbox1: First bbox [x1, y1, x2, y2]
@@ -105,29 +107,12 @@ def compute_iou(
     Returns:
         IoU score in [0, 1]
     """
-    # Clamp to valid coordinates (clamp_bbox normalizes ordering internally)
+    # Clamp to the GEMeX image bounds first; clamp_bbox also normalizes
+    # coordinate ordering, so the boxes handed to the shared helper are
+    # well-formed and its strict mode is the right one.
     b1 = clamp_bbox(bbox1)
     b2 = clamp_bbox(bbox2)
-
-    # Compute intersection
-    x1_inter = max(b1[0], b2[0])
-    y1_inter = max(b1[1], b2[1])
-    x2_inter = min(b1[2], b2[2])
-    y2_inter = min(b1[3], b2[3])
-
-    inter_width = max(0, x2_inter - x1_inter)
-    inter_height = max(0, y2_inter - y1_inter)
-    intersection = inter_width * inter_height
-
-    # Compute union
-    area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
-    area2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
-    union = area1 + area2 - intersection
-
-    if union <= 0:
-        return 0.0
-
-    return intersection / union
+    return shared_compute_iou([float(v) for v in b1], [float(v) for v in b2])
 
 
 @beartype

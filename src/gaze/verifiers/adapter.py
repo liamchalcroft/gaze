@@ -100,17 +100,35 @@ class GazeAdapter:
 
     @beartype
     def _collect_tool_results(self, result: AgenticResult) -> list[dict[str, Any]]:
-        """Convert tool results into serializable dictionaries."""
-        return [
-            {
-                "tool_name": tool_result.tool_name,
-                "description": tool_result.description,
-                "error": tool_result.error,
-                "metadata": deep_thaw(tool_result.metadata),
-            }
-            for turn in result.turns
-            for tool_result in turn.tool_results
-        ]
+        """Convert tool results into serializable dictionaries.
+
+        Each result carries the id of the call it answers. Pairing happens here,
+        inside the turn that knows the association: calls and results are
+        flattened independently, so matching them by position in the flattened
+        lists silently mislabels every result after the first turn whose call
+        and result counts differ.
+        """
+        turns = list(result.turns)
+        collected: list[dict[str, Any]] = []
+        for index, turn in enumerate(turns):
+            if not turn.tool_results:
+                continue
+            # A turn may carry its own calls, or (as the loop in base.py emits)
+            # be a tool_result turn following the assistant turn that made them.
+            calls = turn.tool_calls
+            if not calls and index > 0:
+                calls = turns[index - 1].tool_calls
+            for position, tool_result in enumerate(turn.tool_results):
+                collected.append(
+                    {
+                        "tool_call_id": calls[position].id if position < len(calls) else None,
+                        "tool_name": tool_result.tool_name,
+                        "description": tool_result.description,
+                        "error": tool_result.error,
+                        "metadata": deep_thaw(tool_result.metadata),
+                    }
+                )
+        return collected
 
     @beartype
     def _convert_response_to_messages(
@@ -123,24 +141,42 @@ class GazeAdapter:
         messages: Messages = []
 
         if response_text:
+            assistant_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": response_text,
+            }
+            # Without this, the tool messages below reference ids that appear
+            # nowhere in the conversation, which OpenAI-compatible servers
+            # reject as an invalid message sequence.
+            if tool_calls:
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": call["name"],
+                            "arguments": call["arguments"]
+                            if isinstance(call["arguments"], str)
+                            else json.dumps(call["arguments"]),
+                        },
+                    }
+                    for call in tool_calls
+                ]
+            messages.append(assistant_message)
+
+        for idx, tool_result in enumerate(tool_results):
+            payload = {k: v for k, v in tool_result.items() if k != "tool_call_id"}
+            tool_call_id = tool_result.get("tool_call_id")
+            if tool_call_id is None:
+                # Hand-built results without a paired id fall back to position.
+                tool_call_id = tool_calls[idx]["id"] if idx < len(tool_calls) else str(idx)
             messages.append(
                 {
-                    "role": "assistant",
-                    "content": response_text,
+                    "role": "tool",
+                    "content": json.dumps(payload),
+                    "tool_call_id": tool_call_id,
                 }
             )
-
-        if tool_results:
-            for idx, tool_result in enumerate(tool_results):
-                # Use actual tool call ID when available, fall back to index
-                tool_call_id = tool_calls[idx]["id"] if idx < len(tool_calls) else str(idx)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": json.dumps(tool_result),
-                        "tool_call_id": tool_call_id,
-                    }
-                )
 
         return messages
 

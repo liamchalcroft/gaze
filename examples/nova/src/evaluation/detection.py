@@ -229,9 +229,19 @@ def _compute_acc_and_counts(
                 fp += len(pred_boxes)  # All predictions are false positives
             continue
 
-        # Check if any prediction matches any ground truth at IoU >= threshold
+        # Match in confidence order, as COCO does: greedy matching lets the
+        # first prediction consume the best ground-truth box, so iterating in
+        # emission order makes TP/FP (and therefore recall and precision)
+        # depend on the order the model happened to list its findings.
+        pred_scores = pred.get("scores")
+        if pred_scores is not None and len(pred_scores) == len(pred_boxes):
+            order = pred_scores.argsort(descending=True)
+            ordered_boxes = [pred_boxes[i] for i in order]
+        else:
+            ordered_boxes = list(pred_boxes)
+
         sample_hit = False
-        for pred_box in pred_boxes:
+        for pred_box in ordered_boxes:
             best_iou = 0.0
             best_ref_idx = -1
             for ref_idx, ref_box in enumerate(ref_boxes):
@@ -264,7 +274,7 @@ def _per_image_ap(
     pred_scores: torch.Tensor,
     gt_boxes: torch.Tensor,
     iou_threshold: float,
-) -> float:
+) -> float | None:
     """Compute Average Precision for a single image at a given IoU threshold.
 
     Uses 11-point interpolation (PASCAL VOC style), which is the standard
@@ -277,11 +287,16 @@ def _per_image_ap(
         iou_threshold: IoU threshold for matching
 
     Returns:
-        AP value in [0, 1].
+        AP value in [0, 1], or None when the image has no ground truth and no
+        prediction, in which case it must be excluded from the mean.
     """
     n_gt = len(gt_boxes)
     if n_gt == 0:
-        return 1.0 if len(pred_boxes) == 0 else 0.0
+        # No ground truth means there is no recall axis to average over, so
+        # this image has no AP. Returning 1.0 for "predicted nothing, correctly"
+        # would pull the mean toward 1.0 precisely where labels are missing.
+        # COCO excludes such images; _mean_per_image_ap drops the None.
+        return None if len(pred_boxes) == 0 else 0.0
     if len(pred_boxes) == 0:
         return 0.0
 
@@ -326,8 +341,8 @@ def _mean_per_image_ap(
     refs_tensors: list[dict[str, torch.Tensor]],
     iou_threshold: float,
 ) -> float:
-    """Compute mean AP across all images at a given IoU threshold."""
-    aps = []
+    """Compute mean AP over images that have ground truth to score against."""
+    aps: list[float] = []
     for pred, ref in zip(preds_tensors, refs_tensors, strict=True):
         ap = _per_image_ap(
             pred["boxes"],
@@ -335,7 +350,8 @@ def _mean_per_image_ap(
             ref["boxes"],
             iou_threshold,
         )
-        aps.append(ap)
+        if ap is not None:
+            aps.append(ap)
     return sum(aps) / len(aps) if aps else 0.0
 
 

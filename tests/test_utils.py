@@ -117,24 +117,39 @@ class TestIoU:
         iou = compute_iou(box1, box2)
         assert abs(iou - 0.142857142857) < 1e-10  # Same ratio as smaller test
 
-    def test_inverted_box_normalized(self):
-        """Test that inverted coordinates (x2<x1) are auto-normalized."""
-        # [100,100,50,50] should be treated as [50,50,100,100]
+    def test_inverted_box_scores_zero_by_default(self):
+        """A transposed box is malformed, not a free full-credit match.
+
+        Silently reordering is gameable when the score feeds an RL reward, so
+        strictness is the default and the reorder lives behind ``lenient``.
+        """
         box_normal = [50.0, 50.0, 100.0, 100.0]
         box_inverted = [100.0, 100.0, 50.0, 50.0]
 
-        assert compute_iou(box_normal, box_inverted) == 1.0
+        assert compute_iou(box_normal, box_inverted) == 0.0
+        assert compute_iou(box_inverted, box_normal) == 0.0
 
-    def test_inverted_box_partial_overlap(self):
-        """Inverted coords with partial overlap compute correctly."""
-        # Normal: [0,0,10,10] vs [5,5,15,15] → IoU ≈ 0.1429
+    def test_lenient_restores_the_reordering_behaviour(self):
+        box_normal = [50.0, 50.0, 100.0, 100.0]
+        box_inverted = [100.0, 100.0, 50.0, 50.0]
+
+        assert compute_iou(box_normal, box_inverted, lenient=True) == 1.0
+
+    def test_lenient_inverted_box_matches_the_corrected_box(self):
+        """Under lenient, an inverted box scores as its reordered equivalent."""
         iou_normal = compute_iou([0.0, 0.0, 10.0, 10.0], [5.0, 5.0, 15.0, 15.0])
-        # Same with first box inverted
-        iou_inverted = compute_iou([10.0, 10.0, 0.0, 0.0], [5.0, 5.0, 15.0, 15.0])
+        iou_inverted = compute_iou([10.0, 10.0, 0.0, 0.0], [5.0, 5.0, 15.0, 15.0], lenient=True)
         assert abs(iou_normal - iou_inverted) < 1e-10
 
-    def test_both_boxes_inverted(self):
-        """Both boxes inverted still produces correct IoU."""
-        iou = compute_iou([10.0, 10.0, 0.0, 0.0], [15.0, 15.0, 5.0, 5.0])
+    def test_lenient_handles_both_boxes_inverted(self):
+        iou = compute_iou([10.0, 10.0, 0.0, 0.0], [15.0, 15.0, 5.0, 5.0], lenient=True)
         expected = compute_iou([0.0, 0.0, 10.0, 10.0], [5.0, 5.0, 15.0, 15.0])
         assert abs(iou - expected) < 1e-10
+
+    def test_degenerate_zero_area_box_scores_zero(self):
+        """A collapsed box has no area to overlap with."""
+        assert compute_iou([5.0, 5.0, 5.0, 5.0], [0.0, 0.0, 10.0, 10.0]) == 0.0
+
+    def test_integer_coordinates_are_accepted(self):
+        """JSON delivers coordinates as ints; the helper must not reject them."""
+        assert compute_iou([0, 0, 100, 100], [50, 0, 150, 100]) == pytest.approx(1 / 3)

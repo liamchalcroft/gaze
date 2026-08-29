@@ -390,3 +390,82 @@ class TestProcessWithPathImagePath:
         assert isinstance(captured["images"], Path)
         assert captured["images"] == Path("/test_data/test.png")
         assert result["is_complete"] is True
+
+
+class TestToolCallResultPairing:
+    """Results must be tagged with the call they answer, not a positional guess.
+
+    Calls and results were flattened across turns independently and zipped by
+    index, so one turn whose call and result counts differ shifted the id of
+    every later result.
+    """
+
+    def setup_method(self) -> None:
+        self.adapter = GazeAdapter(processor=_make_processor())
+
+    @staticmethod
+    def _uneven_result() -> AgenticResult:
+        """Turn 1 makes two calls but yields one result; turn 2 is balanced."""
+        turn1 = Turn(
+            role="assistant",
+            content="c1",
+            tool_calls=[
+                ToolCall(id="call_A", name="zoom", arguments="{}"),
+                ToolCall(id="call_B", name="crop", arguments="{}"),
+            ],
+            tool_results=[ToolResult(tool_name="zoom", description="zoomed")],
+        )
+        turn2 = Turn(
+            role="assistant",
+            content="c2",
+            tool_calls=[ToolCall(id="call_C", name="measure", arguments="{}")],
+            tool_results=[ToolResult(tool_name="measure", description="measured")],
+        )
+        return AgenticResult(
+            final_response={"answer": "x"},
+            turns=[turn1, turn2],
+            total_tokens=1,
+            confidence=0.5,
+        )
+
+    def test_later_turns_keep_their_own_call_ids(self) -> None:
+        results = self.adapter._collect_tool_results(self._uneven_result())
+        by_tool = {r["tool_name"]: r["tool_call_id"] for r in results}
+
+        assert by_tool["zoom"] == "call_A"
+        # Index-based pairing tagged this with turn 1's unanswered "call_B".
+        assert by_tool["measure"] == "call_C"
+
+    def test_no_tool_message_references_an_unknown_call_id(self) -> None:
+        agentic_result = self._uneven_result()
+        calls = self.adapter._collect_tool_calls(agentic_result)
+        results = self.adapter._collect_tool_results(agentic_result)
+
+        messages = self.adapter._convert_response_to_messages("resp", calls, results)
+
+        assert "tool_calls" in messages[0], "assistant message must declare its tool calls"
+        declared = {c["id"] for c in messages[0]["tool_calls"]}
+        referenced = {m["tool_call_id"] for m in messages if m["role"] == "tool"}
+        assert referenced <= declared, f"orphaned tool messages: {referenced - declared}"
+
+    def test_results_from_a_following_tool_result_turn_are_paired(self) -> None:
+        """base.py emits calls and results as two adjacent turns."""
+        assistant = Turn(
+            role="assistant",
+            content="c",
+            tool_calls=[ToolCall(id="call_X", name="zoom", arguments="{}")],
+        )
+        tool_turn = Turn(
+            role="tool_result",
+            content="r",
+            tool_results=[ToolResult(tool_name="zoom", description="zoomed")],
+        )
+        agentic_result = AgenticResult(
+            final_response={"answer": "x"},
+            turns=[assistant, tool_turn],
+            total_tokens=1,
+            confidence=0.5,
+        )
+
+        results = self.adapter._collect_tool_results(agentic_result)
+        assert [r["tool_call_id"] for r in results] == ["call_X"]

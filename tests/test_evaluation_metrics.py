@@ -202,3 +202,53 @@ class TestGroundTruthData:
         assert y2 > y1
         assert (x2 - x1) == 30  # width
         assert (y2 - y1) == 40  # height
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
+class TestDetectionMatchingIsOrderIndependent:
+    """Greedy matching must consume ground truth in confidence order.
+
+    Iterating predictions in emission order lets whichever finding the model
+    happened to list first claim the best ground-truth box, so recall and
+    precision moved with the order of the model's output rather than its
+    content. This case was found by search: it scored 2 TP / 0 FP one way and
+    1 TP / 1 FP / 1 FN the other.
+    """
+
+    _GT = [[7.0, 28.0, 29.0, 50.0], [11.0, 24.0, 30.0, 38.0]]
+    _PREDS = [[5.0, 22.0, 30.0, 42.0], [6.0, 24.0, 29.0, 43.0]]
+    _SCORES = [0.56, 0.08]
+
+    def _counts(self, order: tuple[int, ...]) -> tuple[float, int, int, int]:
+        import torch
+
+        from examples.nova.src.evaluation.detection import _compute_acc_and_counts
+
+        preds = [
+            {
+                "boxes": torch.tensor([self._PREDS[i] for i in order]),
+                "scores": torch.tensor([self._SCORES[i] for i in order]),
+            }
+        ]
+        refs = [{"boxes": torch.tensor(self._GT)}]
+        return _compute_acc_and_counts(preds, refs, 0.5)
+
+    def test_permuting_predictions_does_not_change_counts(self) -> None:
+        assert self._counts((0, 1)) == self._counts((1, 0))
+
+    def test_the_confident_prediction_claims_its_best_box(self) -> None:
+        """Both predictions match, so both orders must yield two true positives."""
+        _, tp, fp, fn = self._counts((1, 0))
+        assert (tp, fp, fn) == (2, 0, 0)
+
+    def test_missing_scores_still_matches(self) -> None:
+        """Raw box lists carry no scores; matching must not crash."""
+        import torch
+
+        from examples.nova.src.evaluation.detection import _compute_acc_and_counts
+
+        preds = [{"boxes": torch.tensor(self._PREDS)}]
+        refs = [{"boxes": torch.tensor(self._GT)}]
+        accuracy, tp, _, _ = _compute_acc_and_counts(preds, refs, 0.5)
+        assert accuracy == 1.0
+        assert tp >= 1

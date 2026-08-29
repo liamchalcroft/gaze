@@ -165,12 +165,6 @@ class TestDiagnosisImports:
             "diagnosis.py still uses 'from ..models import' which references a nonexistent module"
         )
 
-    def test_uses_openai_directly(self) -> None:
-        """Should use openai.AsyncOpenAI directly."""
-        diagnosis_path = EXAMPLE_NOVA_ROOT / "src" / "evaluation" / "diagnosis.py"
-        content = diagnosis_path.read_text()
-        assert "AsyncOpenAI" in content
-
 
 # =====================================================================
 # 4. Single-turn prompt includes "continue"

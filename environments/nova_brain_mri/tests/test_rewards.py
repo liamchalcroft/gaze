@@ -8,47 +8,6 @@ from typing import Any
 import pytest
 
 
-def test_no_gaze_imports():
-    """rewards.py must not import from gaze."""
-    from pathlib import Path
-
-    rewards_path = Path(__file__).parent.parent / "src" / "nova_brain_mri" / "rewards.py"
-    source = rewards_path.read_text()
-    assert "from gaze" not in source
-    assert "import gaze" not in source
-
-
-def test_depends_on_gaze_in_pyproject():
-    """The environment depends on the GAZE framework (gaze-vlm)."""
-    from pathlib import Path
-
-    pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
-    source = pyproject_path.read_text()
-    assert "gaze-vlm" in source
-
-
-def test_utils_reexports_from_gaze():
-    """_utils.py wires the extraction/IoU helpers to GAZE."""
-    from pathlib import Path
-
-    utils_path = Path(__file__).parent.parent / "src" / "nova_brain_mri" / "_utils.py"
-    source = utils_path.read_text()
-    assert "from gaze.utils import" in source
-    assert "from gaze.verifiers.rewards import" in source
-
-
-def test_utils_importable():
-    from nova_brain_mri._utils import (
-        compute_iou,
-        extract_completion_text,
-        extract_json_from_text,
-    )
-
-    assert callable(compute_iou)
-    assert callable(extract_json_from_text)
-    assert callable(extract_completion_text)
-
-
 def _make_completion(response: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"role": "assistant", "content": json.dumps(response)}]
 
@@ -272,40 +231,40 @@ class TestCLISchemaFlag:
 
 class TestUtilsParity:
     def test_compute_iou_basic(self):
-        from nova_brain_mri._utils import compute_iou
+        from gaze.utils import compute_iou
 
         assert compute_iou([0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 10.0, 10.0]) == pytest.approx(1.0)
         assert compute_iou([0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]) == pytest.approx(0.0)
 
     def test_compute_iou_partial(self):
-        from nova_brain_mri._utils import compute_iou
+        from gaze.utils import compute_iou
 
         iou = compute_iou([0.0, 0.0, 10.0, 10.0], [5.0, 0.0, 15.0, 10.0])
         assert iou == pytest.approx(50 / 150)
 
     def test_extract_json_from_text_basic(self):
-        from nova_brain_mri._utils import extract_json_from_text
+        from gaze.utils import extract_json_from_text
 
         assert extract_json_from_text('{"key": "value"}') == {"key": "value"}
 
     def test_extract_json_from_text_markdown(self):
-        from nova_brain_mri._utils import extract_json_from_text
+        from gaze.utils import extract_json_from_text
 
         assert extract_json_from_text('```json\n{"key": "value"}\n```') == {"key": "value"}
 
     def test_extract_json_from_text_embedded(self):
-        from nova_brain_mri._utils import extract_json_from_text
+        from gaze.utils import extract_json_from_text
 
         result = extract_json_from_text('Here is my answer: {"diagnosis": "glioma"} done.')
         assert result == {"diagnosis": "glioma"}
 
     def test_extract_completion_text_string(self):
-        from nova_brain_mri._utils import extract_completion_text
+        from gaze.verifiers.rewards import extract_completion_text
 
         assert extract_completion_text("hello") == "hello"
 
     def test_extract_completion_text_messages(self):
-        from nova_brain_mri._utils import extract_completion_text
+        from gaze.verifiers.rewards import extract_completion_text
 
         messages = [
             {"role": "user", "content": "analyze"},
@@ -314,7 +273,7 @@ class TestUtilsParity:
         assert extract_completion_text(messages) == "result text"
 
     def test_extract_completion_text_multimodal_concatenates_all(self):
-        from nova_brain_mri._utils import extract_completion_text
+        from gaze.verifiers.rewards import extract_completion_text
 
         messages = [
             {
@@ -370,15 +329,28 @@ class TestIoUCrossImplementation:
         ([10.0, 10.0, 50.0, 50.0], [10.0, 10.0, 50.0, 50.0], 1.0),
         ([0.0, 0.0, 10.0, 10.0], [10.0, 10.0, 20.0, 20.0], 0.0),
         ([0.0, 0.0, 10.0, 10.0], [9.0, 9.0, 19.0, 19.0], 1 / 199),
+    ]
+
+    # Transposed corners: scored 0 by default, and as the corrected box under
+    # lenient=True. Silently reordering awards full credit for a malformed
+    # prediction, which is gameable when the score feeds an RL reward.
+    _INVERTED_PAIRS = [
         ([50.0, 50.0, 10.0, 10.0], [10.0, 10.0, 50.0, 50.0], 1.0),
         ([100.0, 100.0, 0.0, 0.0], [50.0, 50.0, 150.0, 150.0], 2500 / 17500),
     ]
 
     @pytest.mark.parametrize("box1,box2,expected", _BOX_PAIRS)
     def test_iou_values(self, box1, box2, expected):
-        from nova_brain_mri._utils import compute_iou
+        from gaze.utils import compute_iou
 
         assert compute_iou(box1, box2) == pytest.approx(expected, abs=1e-6)
+
+    @pytest.mark.parametrize("box1,box2,lenient_expected", _INVERTED_PAIRS)
+    def test_inverted_boxes_score_zero_unless_lenient(self, box1, box2, lenient_expected):
+        from gaze.utils import compute_iou
+
+        assert compute_iou(box1, box2) == 0.0
+        assert compute_iou(box1, box2, lenient=True) == pytest.approx(lenient_expected, abs=1e-6)
 
 
 class TestNormalizeDiagnosisParity:

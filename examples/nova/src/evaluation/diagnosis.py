@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-
-# Default model for semantic matching - cost-efficient SOTA model via OpenRouter
 import os
 import re
 from collections import Counter
@@ -17,6 +15,7 @@ from beartype import beartype
 
 logger = logging.getLogger(__name__)
 
+# Cost-efficient model used for the LLM semantic-match fallback.
 DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
     "NOVA_SEMANTIC_MATCH_MODEL",
     "openai/gpt-5-nano",
@@ -25,8 +24,8 @@ DEFAULT_SEMANTIC_MATCH_MODEL = os.getenv(
 # Pre-compiled regex patterns for better performance
 _DASH_PATTERN = re.compile(r"\s*[–—]\s*")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+_PUNCTUATION_PATTERN = re.compile(r"[^\w\s-]")
 
-# Common medical abbreviation mappings - use frozenset for faster lookups
 _semantic_match_client: Any = None
 
 
@@ -109,20 +108,22 @@ def normalize_diagnosis_string(diag: str) -> str:
     """
     Normalize diagnosis strings for better matching.
 
-    Handles common variations in medical terminology:
-    - Different spacing patterns
-    - En-dash vs hyphen
-    - Common abbreviations
-    - Plural/singular variations
+    Handles common variations in medical terminology: spacing, en-dash vs
+    hyphen, surrounding punctuation, and common abbreviations. Hyphens are
+    kept because they are clinically meaningful ("septo-optic dysplasia").
 
-    Optimized with pre-compiled regex patterns for better performance.
+    Unlike ``rewards._normalize_diagnosis`` this deliberately keeps hedging
+    modifiers ("possible", "likely"), so evaluation does not credit a hedged
+    prediction as a confident one.
     """
     if not diag:
         return ""
 
-    # Use pre-compiled regex patterns for better performance
     normalized = diag.lower().strip()
     normalized = _DASH_PATTERN.sub("-", normalized)
+    # Drop punctuation except hyphens: a trailing "." or a parenthesised
+    # qualifier must not defeat an otherwise exact diagnosis match.
+    normalized = _PUNCTUATION_PATTERN.sub(" ", normalized)
     normalized = _WHITESPACE_PATTERN.sub(" ", normalized)
 
     # Expand common abbreviations as whole words

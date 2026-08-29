@@ -26,13 +26,28 @@ from typing import Any, Literal
 
 import verifiers as vf
 from datasets import Dataset
+from gaze.tools import encode_image
+from gaze.utils import extract_json_from_text
 
 from . import prompts
-from ._utils import extract_json_from_text
 from .rewards import create_nova_rubric
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 Split = Literal["train", "validation", "test"]
+
+
+def _image_data_url(image_path: str) -> str:
+    """Inline a local image as a base64 data URL.
+
+    The policy model is reached over an OpenAI-compatible HTTP API, which has no
+    access to this machine's filesystem: a ``file://`` URL silently yields a
+    text-only prompt, so the caption and localization tasks would score against
+    an image the model never saw.
+    """
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        return encode_image(image).to_data_url()
 
 
 @dataclass(frozen=True)
@@ -161,7 +176,7 @@ class NOVABrainMRIEnv(vf.MultiTurnEnv):
         if image_path:
             return [
                 {"type": "text", "text": text_content},
-                {"type": "image_url", "image_url": {"url": f"file://{image_path}"}},
+                {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
             ]
 
         return text_content

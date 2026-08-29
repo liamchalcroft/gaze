@@ -91,17 +91,18 @@ class TestIoURewardAreaPenalty:
         # IoU = 1.0, but area_ratio = 160000/262144 ≈ 0.61 > 0.5 → penalty applied
         assert 0.0 < score < 1.0
 
-    def test_pixel_coords_without_image_area_fails_closed(self) -> None:
-        """When pixel coords are detected but no image_area, fail closed (return 0.0)."""
+    def test_pixel_coords_without_image_area_skip_the_penalty(self) -> None:
+        """No image area means no computable penalty, so score the honest IoU.
+
+        This used to return 0.0 for every pixel-space box, discarding correct
+        predictions whenever the harness omitted ``image_area``. The penalty is
+        restored as soon as an area is supplied (see the test above).
+        """
         reward = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
         pred_text = '{"bbox": [0, 0, 400, 400]}'
-        info = {
-            "bbox": [0, 0, 400, 400],
-            # No image_area — fail closed to prevent gaming via coord mismatch
-        }
-        score = reward("", pred_text, info)
-        # Pixel-scale coords + no image_area → 0.0 (fail closed)
-        assert score == 0.0
+        info = {"bbox": [0, 0, 400, 400]}
+
+        assert reward("", pred_text, info) == 1.0
 
     def test_normalized_coords_still_penalized(self) -> None:
         """Normalized coords in [0,1] with large area still get penalized."""

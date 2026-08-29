@@ -23,6 +23,10 @@ from gaze.utils import extract_json_from_text
 from gaze.verifiers import BaseRewardFunction
 from gaze.verifiers import extract_completion_text
 
+# Single source of truth for the clinical vocabulary; the evaluation metric
+# and this reward must expand the same abbreviations.
+from .evaluation.diagnosis import _ABBREVIATION_MAPPING
+
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 
 
@@ -191,9 +195,14 @@ def compute_diagnosis_reward(
     if not pred_list or not ref_list:
         return 0.0
 
-    # Normalize diagnoses
-    pred_normalized = {_normalize_diagnosis(d) for d in pred_list}
-    ref_normalized = {_normalize_diagnosis(d) for d in ref_list}
+    # Drop falsy entries before comparing. Without this an empty prediction
+    # normalizes to "" and matches an empty reference, so a sample with a
+    # missing diagnosis label handed out full credit for saying nothing.
+    pred_normalized = {_normalize_diagnosis(d) for d in pred_list if d}
+    ref_normalized = {_normalize_diagnosis(d) for d in ref_list if d}
+
+    if not ref_normalized:
+        return 0.0
 
     # Top-1: does first prediction match any reference?
     top1_match = _normalize_diagnosis(pred_list[0]) in ref_normalized
@@ -210,31 +219,6 @@ def compute_diagnosis_reward(
     # Combined score: top-1 is weighted more
     return 0.6 * float(top1_match) + 0.4 * coverage
 
-
-# Must stay in sync with evaluation/diagnosis.py._ABBREVIATION_MAPPING.
-_ABBREVIATION_MAPPING: dict[str, str] = {
-    "sod": "septo-optic dysplasia",
-    "acc": "agenesis of corpus callosum",
-    "cpa": "cerebellopontine angle",
-    "avm": "arteriovenous malformation",
-    "pnet": "primitive neuroectodermal tumor",
-    "gbm": "glioblastoma multiforme",
-    "mri": "magnetic resonance imaging",
-    "ct": "computed tomography",
-    "dwi": "diffusion weighted imaging",
-    "flair": "fluid attenuated inversion recovery",
-    "dc": "dermoid cyst",
-    "ec": "epidermoid cyst",
-    "ac": "arachnoid cyst",
-    "cm": "cavernous malformation",
-    "vs": "vestibular schwannoma",
-    "an": "acoustic neuroma",
-    "da": "diffuse axonal injury",
-    "sah": "subarachnoid hemorrhage",
-    "ich": "intracerebral hemorrhage",
-    "ms": "multiple sclerosis",
-    "nph": "normal pressure hydrocephalus",
-}
 
 _DASH_PATTERN = re.compile(r"\s*[–—]\s*")
 

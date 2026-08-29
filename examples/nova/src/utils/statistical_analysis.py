@@ -1,8 +1,11 @@
 """Statistical analysis utilities for ablation study results.
 
-Provides comprehensive statistical analysis tools for evaluating
-ablation study results, including significance testing, effect sizes,
-and confidence intervals for research paper preparation.
+Provides effect sizes, confidence intervals, and descriptive comparisons.
+
+``perform_statistical_test`` runs a real test when given sample-level data.
+The ablation helpers here operate on aggregated per-configuration values, from
+which no meaningful hypothesis test can be computed, so they report descriptive
+comparisons and label their output as such.
 """
 
 from __future__ import annotations
@@ -452,7 +455,10 @@ def generate_paper_ready_statistics(
             "analysis_date": pd.Timestamp.now().isoformat(),
         },
         "summary_table": {},
-        "statistical_tests": {},
+        # Descriptive comparisons against the baseline. Named for what it holds:
+        # analyze_ablation_configurations works on aggregated values and states
+        # in its own docstring that it cannot run meaningful tests on them.
+        "descriptive_comparisons": {},
         "effect_sizes": {},
         "calibration_analysis": {},
     }
@@ -464,8 +470,8 @@ def generate_paper_ready_statistics(
     # 2. Statistical tests vs baseline
     if baseline_config in results:
         for metric in ["accuracy", "confidence", "avg_tokens"]:
-            test_results = analyze_ablation_configurations(results, baseline_config, metric)
-            statistical_results["statistical_tests"][metric] = test_results
+            comparison = analyze_ablation_configurations(results, baseline_config, metric)
+            statistical_results["descriptive_comparisons"][metric] = comparison
 
     # 3. Calibration reliability analysis
     calibration_data = {
@@ -563,14 +569,18 @@ def add_statistical_annotations(
     results: dict[str, dict[str, Any]],
     baseline_config: str = "baseline_single_shot",
 ) -> dict[str, dict[str, Any]]:
-    """Add statistical annotations to results for paper preparation.
+    """Annotate results with descriptive change magnitudes for reporting.
+
+    These are relative-change bands, not inferential statistics: no test is
+    performed and no p-value is produced, so nothing here may be reported as
+    statistically significant.
 
     Args:
         results: Original results dictionary
         baseline_config: Baseline configuration
 
     Returns:
-        Enhanced results with statistical annotations
+        Enhanced results with per-metric percentage change and a magnitude label
     """
     enhanced_results = results.copy()
 
@@ -591,14 +601,18 @@ def add_statistical_annotations(
                     improvement = ((current_val - baseline_val) / baseline_val) * 100
                     config_data[f"{metric}_improvement_pct"] = improvement
 
-                    # Add significance annotation
+                    # Descriptive magnitude only. No hypothesis test is run
+                    # here (there is no sample-level data to run one on), so
+                    # these labels deliberately avoid the word "significant":
+                    # they describe effect size, not statistical significance.
                     if improvement > 5:
-                        config_data[f"{metric}_significance"] = "Substantial improvement"
+                        label = "Substantial improvement"
                     elif improvement > 0:
-                        config_data[f"{metric}_significance"] = "Modest improvement"
+                        label = "Modest improvement"
                     elif improvement < -5:
-                        config_data[f"{metric}_significance"] = "Significant degradation"
+                        label = "Substantial degradation"
                     else:
-                        config_data[f"{metric}_significance"] = "No significant change"
+                        label = "Minimal change"
+                    config_data[f"{metric}_change_magnitude"] = label
 
     return enhanced_results
