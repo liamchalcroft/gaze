@@ -488,12 +488,33 @@ class BadContinueAdapter(AdapterProtocol):
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_non_boolean_continue_raises() -> None:
-    """Non-bool, non-string 'continue' value raises AgenticProcessingError."""
+async def test_unrecognized_continue_is_treated_as_done() -> None:
+    """An unusable 'continue' must not end the run by exception.
+
+    It is treated as False, exactly as a missing flag is: the response still
+    has to pass validate_response, and the ordinary nudge path handles it when
+    it does not. Raising here killed a 10-turn run on turn 1 over one field.
+    """
     proc_cls = _make_processor_cls(BadContinueAdapter, max_turns=1, use_tools=False)
     processor = proc_cls()
-    with pytest.raises(AgenticProcessingError, match="continue.*must be boolean"):
-        await processor.analyze(images=None, metadata={})
+
+    result = await processor.analyze(images=None, metadata={})
+
+    assert result.final_response["continue"] is False
+    assert result.final_response["result"] == "bad"
+
+
+@pytest.mark.unit
+def test_float_continue_is_coerced_like_an_int() -> None:
+    """Models that stringify then coerce emit 1.0 as readily as 1."""
+    from gaze import SimpleProcessor
+
+    processor = SimpleProcessor(system_prompt="s", user_message="u")
+
+    for raw, expected in ((1.0, True), (0.0, False), (2.5, True)):
+        parsed = {"continue": raw}
+        processor._normalize_continue_flag(parsed, 0)
+        assert parsed["continue"] is expected
 
 
 # ---------------------------------------------------------------------------
@@ -668,17 +689,21 @@ async def test_truncation_salvage_on_last_turn() -> None:
 
 
 class TestImageInputFromPil:
-    def test_from_pil_populates_all_fields(self) -> None:
+    def test_from_pil_populates_dimensions_and_defers_encoding(self) -> None:
+        """Encoding at full resolution would be discarded when downscaling."""
         img = Image.new("RGB", (64, 48), color=(255, 0, 0))
         inp = ImageInput.from_pil(img)
 
         assert inp.width == 64
         assert inp.height == 48
-        assert inp.encoded is not None
-        assert inp.encoded.mime_type == "image/jpeg"
-        assert len(inp.encoded.data) > 0
+        assert inp.encoded is None
         assert inp.pil_image is img
         assert inp.path == Path("<in-memory>")
+
+        encoded = inp.load().encoded
+        assert encoded is not None
+        assert encoded.mime_type == "image/jpeg"
+        assert len(encoded.data) > 0
 
     def test_from_pil_custom_label_and_path(self) -> None:
         img = Image.new("RGB", (32, 32))
@@ -688,9 +713,9 @@ class TestImageInputFromPil:
         assert inp.label == "T1-weighted"
         assert inp.path == custom_path
 
-    def test_load_is_noop_when_already_loaded(self) -> None:
+    def test_load_is_noop_once_encoded(self) -> None:
         img = Image.new("RGB", (32, 32))
-        inp = ImageInput.from_pil(img)
+        inp = ImageInput.from_pil(img).load()
 
         loaded = inp.load()
 

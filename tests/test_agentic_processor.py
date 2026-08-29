@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from gaze.base import AgenticProcessorBase
 from gaze.base import ImageInput
+from gaze.base import SimpleProcessor
 from gaze.exceptions import AgenticProcessingError
 from gaze.exceptions import SchemaValidationError
 from gaze.models import AdapterProtocol
@@ -845,31 +849,36 @@ class TimingAdapter(AdapterProtocol):
         )
 
 
+# Ordered record of tool lifecycle events, appended to by the two tools below.
+# Order, not elapsed time, is what distinguishes parallel from sequential.
+_tool_events: list[str] = []
+
+
 async def _slow_image_tool(registry: ToolRegistry) -> ToolResult:  # noqa: ARG001
     import asyncio
 
-    await asyncio.sleep(0.05)
+    # Yields control repeatedly, giving a sequential scheduler every chance to
+    # run the independent tool first if it were going to.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    _tool_events.append("image_finished")
     return ToolResult(tool_name="img_tool", description="image op done")
 
 
-_independent_tool_started_at: float = 0.0
-
-
 async def _independent_tool(registry: ToolRegistry) -> ToolResult:  # noqa: ARG001
-    import time
-
-    global _independent_tool_started_at  # noqa: PLW0603
-    _independent_tool_started_at = time.monotonic()
+    _tool_events.append("independent_started")
     return ToolResult(tool_name="ind_tool", description="independent done")
 
 
 @pytest.mark.asyncio
-async def test_parallel_execution_of_image_and_independent_tools() -> None:
+async def test_parallel_execution_of_image_and_independent_tools(tmp_path: Path) -> None:
     """Independent tools start while image tools are still running."""
-    import time
+    _tool_events.clear()
 
-    global _independent_tool_started_at  # noqa: PLW0603
-    _independent_tool_started_at = 0.0
+    # The registry rejects requires_image tools when it has no image, so the
+    # image tool needs a real file to actually run.
+    image_path = tmp_path / "scan.png"
+    Image.new("L", (32, 32)).save(image_path)
 
     adapter = TimingAdapter()
 
@@ -914,10 +923,9 @@ async def test_parallel_execution_of_image_and_independent_tools() -> None:
 
         def _create_tool_registry(self, images: list[ImageInput]) -> ToolRegistry | None:
             _ = images
-            return ToolRegistry(image_path=None, tools=[img_tool, ind_tool])
+            return ToolRegistry(image_path=image_path, tools=[img_tool, ind_tool])
 
     processor = ParallelToolProcessor()
-    start = time.monotonic()
     result = await processor.analyze(images=None, metadata={})
 
     assert result.final_response["result"] == "done"
@@ -925,13 +933,15 @@ async def test_parallel_execution_of_image_and_independent_tools() -> None:
     tool_result_turns = [t for t in result.turns if t.role == "tool_result"]
     assert len(tool_result_turns) == 1
     assert len(tool_result_turns[0].tool_results) == 2
+    failures = [(r.tool_name, r.error) for r in tool_result_turns[0].tool_results if not r.success]
+    assert not failures, f"both tools must actually run, but these failed: {failures}"
 
-    # The independent tool should have started before the image tool finished
-    # (image tool sleeps 50ms). If sequential, total would be >= 50ms + epsilon.
-    # With parallel execution, independent tool starts at roughly the same time.
-    assert _independent_tool_started_at > 0
-    assert _independent_tool_started_at - start < 0.04, (
-        "Independent tool should start concurrently with image tool, not after"
+    # The independent tool must start before the image tool finishes. Asserting
+    # on event order rather than elapsed wall-clock keeps this deterministic
+    # under CPU contention.
+    assert _tool_events == ["independent_started", "image_finished"], (
+        f"Independent tool should start concurrently with the image tool, "
+        f"not after it. Got: {_tool_events}"
     )
 
 
@@ -2771,3 +2781,440 @@ async def test_post_loop_wrapping_recoerces_types() -> None:
     assert cap["text"] == "A brain MRI"
     assert isinstance(cap["score"], float)
     assert cap["score"] == pytest.approx(0.85)
+
+
+# ---------------------------------------------------------------------------
+# Nudge escalation: tailored guidance first, force-finalize once budget spent
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedAdapter(AdapterProtocol):
+    """Replays a fixed script of responses, recording each prompt it received."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self, script: list[tuple[str, str]]) -> None:
+        self._script = list(script)
+        self.prompts: list[Any] = []
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 0,
+        temperature: float = 0.0,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        stream: bool = False,
+        seed: int | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = max_tokens, temperature, tools, response_format, stream, seed
+        self.prompts.append(messages[-1].get("content"))
+        text, finish_reason = self._script.pop(0)
+        return (
+            text,
+            [],
+            GenerationLog(prompt_tokens=5, completion_tokens=5, finish_reason=finish_reason),
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+_ESCALATION_SCHEMA: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "schema": {
+            "type": "object",
+            "properties": {"finding": {"type": "string"}},
+            "required": ["finding"],
+        }
+    },
+}
+
+
+async def _run_scripted(
+    script: list[tuple[str, str]], max_turns: int
+) -> tuple[Any, _ScriptedAdapter]:
+    adapter = _ScriptedAdapter(script)
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        use_tools=False,
+        max_turns=max_turns,
+    )
+    return await processor.analyze(), adapter
+
+
+def _system_prompts(adapter: _ScriptedAdapter) -> list[str]:
+    return [p for p in adapter.prompts if isinstance(p, str) and p.startswith("[System:")]
+
+
+@pytest.mark.asyncio
+async def test_nudge_escalates_from_tailored_guidance_to_force_finalize() -> None:
+    """First failure gets guidance naming the problem; the next gets the template."""
+    result, adapter = await _run_scripted(
+        [
+            ("not json at all", "stop"),
+            ("[1, 2, 3]", "stop"),
+            (json.dumps({"finding": "mass", "continue": False}), "stop"),
+        ],
+        max_turns=4,
+    )
+
+    nudges = _system_prompts(adapter)
+    assert "not valid JSON" in nudges[0]
+    assert "Copy this template" not in nudges[0]
+    # Budget is 2 consecutive nudges, so the second escalates to force-finalize.
+    assert "Copy this template" in nudges[1]
+    assert result.final_response["finding"] == "mass"
+
+
+@pytest.mark.asyncio
+async def test_truncated_turn_nudge_asks_for_brevity() -> None:
+    _, adapter = await _run_scripted(
+        [
+            ("a very long half-written answer", "length"),
+            (json.dumps({"finding": "cyst", "continue": False}), "stop"),
+        ],
+        max_turns=3,
+    )
+    assert "too long and got cut off" in _system_prompts(adapter)[0]
+
+
+@pytest.mark.asyncio
+async def test_incomplete_response_nudge_names_the_missing_field() -> None:
+    """A response failing validation is told which required key is absent."""
+    _, adapter = await _run_scripted(
+        [
+            (json.dumps({"continue": False}), "stop"),
+            (json.dumps({"finding": "edema", "continue": False}), "stop"),
+        ],
+        max_turns=3,
+    )
+    nudge = _system_prompts(adapter)[0]
+    assert "failed validation" in nudge
+    assert "finding" in nudge
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_json_objects_still_escalate_to_force_finalize() -> None:
+    """Regression: well-formed but invalid JSON must not pin the nudge counter at 1.
+
+    The counter used to reset on every parsed JSON *object*, so a model that
+    kept returning valid JSON failing ``validate_response`` never reached the
+    force-finalize template and burned every turn on the same soft nudge.
+    """
+    always_invalid = json.dumps({"wrong_key": 1, "continue": False})
+    adapter = _ScriptedAdapter([(always_invalid, "stop")] * 6)
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        use_tools=False,
+        max_turns=6,
+    )
+
+    with pytest.raises(AgenticProcessingError):
+        await processor.analyze()
+
+    nudges = _system_prompts(adapter)
+    assert any("Copy this template" in n for n in nudges), (
+        "escalation to the force-finalize template never fired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_valid_turn_refills_the_nudge_budget() -> None:
+    """Recovering mid-run must not leave the model one nudge from force-finalize."""
+    adapter = _ScriptedAdapter(
+        [
+            (json.dumps({"wrong_key": 1, "continue": True}), "stop"),
+            (json.dumps({"finding": "interim", "continue": True}), "stop"),
+            (json.dumps({"other_key": 1, "continue": False}), "stop"),
+            (json.dumps({"finding": "final", "continue": False}), "stop"),
+        ]
+    )
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        use_tools=False,
+        max_turns=6,
+    )
+
+    result = await processor.analyze()
+
+    assert result.final_response["finding"] == "final"
+    # The post-recovery failure gets tailored guidance, not the template.
+    assert "Copy this template" not in _system_prompts(adapter)[-1]
+
+
+@pytest.mark.asyncio
+async def test_analyze_does_not_close_a_caller_supplied_pil_image() -> None:
+    """Regression: passing a PIL Image used to leave it closed after analyze().
+
+    ``analyze()`` documents PIL input as a way to skip a temp-file round-trip,
+    so the caller keeps owning (and using) the image afterwards.
+    """
+    image = Image.new("L", (64, 64))
+    image.load()
+    image.putpixel((0, 0), 200)
+
+    adapter = _ScriptedAdapter([(json.dumps({"finding": "x", "continue": False}), "stop")])
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        max_turns=3,
+    )
+
+    await processor.analyze(image)
+
+    # Both of these raise "Operation on closed image" if ownership was taken.
+    assert image.size == (64, 64)
+    assert image.getpixel((0, 0)) == 200
+
+
+@pytest.mark.asyncio
+async def test_text_only_run_does_not_advertise_visual_tools(tmp_path: Path) -> None:
+    """Regression: reusing a processor leaked the image run's tool schemas.
+
+    The offered tool set depends on whether images were supplied, so the
+    per-processor schema/doc caches must be keyed on that. Otherwise a
+    text-only call advertises visual tools the registry rejects as unknown.
+    """
+    image_path = tmp_path / "scan.png"
+    Image.new("L", (32, 32)).save(image_path)
+
+    ok = json.dumps({"finding": "x", "continue": False})
+    adapter = _ScriptedAdapter([(ok, "stop")] * 3)
+    offered: list[list[str]] = []
+
+    original = adapter.generate_chat
+
+    async def recording(messages: list[dict[str, Any]], **kwargs: Any):  # type: ignore[no-untyped-def]
+        offered.append([t["function"]["name"] for t in (kwargs.get("tools") or [])])
+        return await original(messages, **kwargs)
+
+    adapter.generate_chat = recording  # type: ignore[method-assign]
+
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        use_tools=True,
+        use_web_search=True,
+        max_turns=3,
+    )
+
+    await processor.analyze(image_path)
+    await processor.analyze(None)
+    await processor.analyze(image_path)
+    await processor.aclose()
+
+    visual_per_run = [
+        [t for t in run if t not in ("search_web", "search_images")] for run in offered
+    ]
+    assert visual_per_run[0], "image run should offer visual tools"
+    assert not visual_per_run[1], (
+        f"text-only run offered unusable visual tools: {visual_per_run[1]}"
+    )
+    assert visual_per_run[2], "the image run after a text-only run still needs visual tools"
+
+
+@pytest.mark.asyncio
+async def test_salvage_accepts_valid_json_missing_the_continue_field() -> None:
+    """A model that emits both a tool call and a valid answer must be salvaged.
+
+    The salvage path used to require a boolean ``continue``, rejecting exactly
+    the omission the rest of the loop exists to absorb, and raising instead.
+    """
+
+    class _ToolCallPlusAnswerAdapter(AdapterProtocol):
+        supports_multipart_tool_content: bool = True
+
+        async def generate_chat(
+            self,
+            messages: list[dict[str, Any]],
+            max_tokens: int = 0,
+            temperature: float = 0.0,
+            tools: list[dict[str, Any]] | None = None,
+            response_format: dict[str, Any] | None = None,
+            stream: bool = False,
+            seed: int | None = None,
+        ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+            _ = messages, max_tokens, temperature, tools, response_format, stream, seed
+            return (
+                json.dumps({"finding": "mass"}),  # note: no "continue"
+                [{"id": "call_1", "name": "zoom", "arguments": "{}"}],
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop"),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=_ToolCallPlusAnswerAdapter(),
+        use_tools=False,
+        max_turns=1,
+    )
+
+    result = await processor.analyze()
+
+    assert result.final_response["finding"] == "mass"
+    assert result.final_response["continue"] is False
+
+
+class _ScriptedToolAdapter(AdapterProtocol):
+    """Replays a script where "tool" means "request a zoom call"."""
+
+    supports_multipart_tool_content: bool = True
+
+    def __init__(self, script: list[str]) -> None:
+        self._script = list(script)
+        self.calls = 0
+
+    async def generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 0,
+        temperature: float = 0.0,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        stream: bool = False,
+        seed: int | None = None,
+    ) -> tuple[str, list[dict[str, Any]] | None, GenerationLog]:
+        _ = messages, max_tokens, temperature, tools, response_format, stream, seed
+        self.calls += 1
+        item = self._script[min(self.calls - 1, len(self._script) - 1)]
+        if item == "tool":
+            return (
+                "",
+                [{"id": f"c{self.calls}", "name": "zoom", "arguments": '{"factor": 2.0}'}],
+                GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="tool_calls"),
+            )
+        return item, [], GenerationLog(prompt_tokens=1, completion_tokens=1, finish_reason="stop")
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def _run_with_tools(
+    script: list[str], image_path: Path, max_turns: int = 8
+) -> tuple[Any, _ScriptedToolAdapter]:
+    adapter = _ScriptedToolAdapter(script)
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_ESCALATION_SCHEMA,
+        validate=lambda r: "finding" in r,
+        adapter=adapter,
+        use_tools=True,
+        max_turns=max_turns,
+    )
+    try:
+        return await processor.analyze(image_path), adapter
+    finally:
+        await processor.aclose()
+
+
+@pytest.mark.asyncio
+async def test_idle_detection_counts_consecutive_tool_free_turns(tmp_path: Path) -> None:
+    """A run that uses one tool then stalls is just as stuck as one that never did.
+
+    The check previously required zero tool calls for the *whole* run, so a
+    single early call disabled it and the model burned every remaining turn.
+    """
+    image_path = tmp_path / "scan.png"
+    Image.new("L", (64, 64)).save(image_path)
+    wants_more = json.dumps({"finding": "x", "continue": True})
+
+    _, adapter = await _run_with_tools(["tool", *[wants_more] * 10], image_path, max_turns=8)
+
+    assert adapter.calls < 8, "the idle-tool guard never fired after an early tool call"
+
+
+@pytest.mark.asyncio
+async def test_idle_force_accept_requires_a_valid_response(tmp_path: Path) -> None:
+    """Force-accepting an invalid response would only fail validation later.
+
+    Ending the run on a response that cannot pass ``validate_response`` skips
+    the nudge that might still have recovered it, so the run must not stop
+    there while turns remain.
+    """
+    image_path = tmp_path / "scan.png"
+    Image.new("L", (64, 64)).save(image_path)
+    invalid = json.dumps({"wrong_key": 1, "continue": True})
+    valid = json.dumps({"finding": "recovered", "continue": False})
+
+    result, _ = await _run_with_tools([*[invalid] * 5, valid], image_path, max_turns=8)
+
+    assert result.final_response["finding"] == "recovered"
+
+
+_NESTED_SCHEMA: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "region_of_interest": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "location": {"type": "string"},
+                    },
+                    "required": ["description", "location"],
+                }
+            },
+            "required": ["region_of_interest"],
+        }
+    },
+}
+
+
+def _roi_is_complete(response: dict[str, Any]) -> bool:
+    roi = response.get("region_of_interest")
+    return isinstance(roi, dict) and "description" in roi and "location" in roi
+
+
+@pytest.mark.asyncio
+async def test_inner_schema_wrapping_recovers_on_the_first_turn() -> None:
+    """Recovery is identical wherever a response is produced.
+
+    Wrapping used to run only on the truncation-salvage and final paths, so a
+    small model returning a bare inner object mid-run was nudged repeatedly and
+    only recovered (if at all) after the loop ended.
+    """
+    bare_inner = json.dumps({"description": "mass", "location": "left frontal", "continue": False})
+    adapter = _ScriptedAdapter([(bare_inner, "stop")] * 5)
+    processor = SimpleProcessor(
+        system_prompt="system",
+        user_message="user",
+        response_schema=_NESTED_SCHEMA,
+        validate=_roi_is_complete,
+        adapter=adapter,
+        use_tools=False,
+        max_turns=5,
+    )
+
+    result = await processor.analyze()
+
+    assert len(adapter.prompts) == 1, "recovery should not have needed another turn"
+    assert result.final_response["region_of_interest"]["description"] == "mass"
+    assert result.final_response["region_of_interest"]["location"] == "left frontal"

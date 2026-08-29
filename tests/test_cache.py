@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterator
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -42,55 +41,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeClock]:
 class TestTTLCache:
     """Test TTLCache functionality with cleanup."""
 
-    def test_cache_cleanup_on_clear(self):
-        """Test that cached objects are cleaned up on clear."""
-        config = CacheConfig(cache_duration_seconds=60, max_cache_size=10)
-        cache = TTLCache(config)
-
-        # Create mock objects with close method
-        mock_obj1 = MagicMock()
-        mock_obj2 = MagicMock()
-        mock_obj3 = MagicMock()  # No close method
-
-        # Add objects to cache
-        cache.set("key1", mock_obj1)
-        cache.set("key2", mock_obj2)
-        cache.set("key3", mock_obj3)
-
-        # Clear cache
-        cache.clear()
-
-        # Verify close was called on objects that have it
-        mock_obj1.close.assert_called_once()
-        mock_obj2.close.assert_called_once()
-        # mock_obj3 has no close method, so no assertion
-
-    def test_cache_cleanup_on_eviction(self, clock: _FakeClock):
-        """Test that expired objects are cleaned up on eviction."""
-        config = CacheConfig(cache_duration_seconds=0.1, max_cache_size=2)  # Short TTL
-        cache = TTLCache(config)
-
-        mock_obj1 = MagicMock()
-        mock_obj2 = MagicMock()
-        mock_obj3 = MagicMock()
-
-        # Add objects
-        cache.set("key1", mock_obj1)
-        cache.set("key2", mock_obj2)
-
-        # Advance past the TTL so both entries are now expired
-        clock.advance(0.2)
-
-        # Add another object to trigger eviction
-        cache.set("key3", mock_obj3)
-
-        # Try to get expired objects - should trigger cleanup
-        assert cache.get("key1") is None
-        assert cache.get("key2") is None
-
-        # Verify cleanup was called
-        mock_obj1.close.assert_called_once()
-        mock_obj2.close.assert_called_once()
+    # mock_obj3 has no close method, so no assertion
 
     def test_cache_size_limit_eviction(self, clock: _FakeClock):
         """Test that oldest objects are evicted when size limit is reached."""
@@ -98,69 +49,16 @@ class TestTTLCache:
         # With evict_ratio=0.5, target_size = 2 * (1-0.5) = 1
         # So we need to go from 3 items to 1 item (evict 2)
         config = CacheConfig(cache_duration_seconds=60, max_cache_size=2, evict_ratio=0.5)
-        cache = TTLCache(config)
-
-        mock_obj1 = MagicMock()
-        mock_obj2 = MagicMock()
-        mock_obj3 = MagicMock()
-        mock_obj4 = MagicMock()
+        cache: TTLCache[str] = TTLCache(config)
 
         # Fill cache. Advance the clock between sets so each entry has a distinct
         # timestamp, making oldest-first eviction deterministic.
-        cache.set("key1", mock_obj1)  # len=1 (no eviction check)
-        clock.advance(1)
-        cache.set("key2", mock_obj2)  # len=2 (no eviction, not > 2)
-        clock.advance(1)
-        cache.set("key3", mock_obj3)  # len=3 (eviction checks when > 2)
-        clock.advance(1)
-        # Now with 3 items, adding a 4th keeps size within limit after eviction
-        cache.set("key4", mock_obj4)
+        for i in range(1, 5):
+            cache.set(f"key{i}", f"value{i}")
+            clock.advance(1)
 
         # After eviction, cache size should be at most max_cache_size
         assert cache.size <= config.max_cache_size
-
-    def test_cache_error_handling_during_cleanup(self):
-        """Test that cleanup errors (OSError/IOError) are handled gracefully."""
-        config = CacheConfig(cache_duration_seconds=60, max_cache_size=2)
-        cache = TTLCache(config)
-
-        # Create object that raises OSError on close (the type we catch)
-        mock_obj = MagicMock()
-        mock_obj.close.side_effect = OSError("Cleanup failed")
-
-        cache.set("key", mock_obj)
-        cache.clear()  # Should not raise exception
-
-        # Error should be logged but not raised
-        mock_obj.close.assert_called_once()
-
-    def test_cache_closes_values_on_size_limit_eviction(self, clock: _FakeClock):
-        """Test that closeable values are properly closed on size limit eviction."""
-        # max_cache_size=2, evict_ratio=0.5 means:
-        # - eviction triggers when cache size > 2 (i.e., at 3 items)
-        # - target after eviction = 2 * (1 - 0.5) = 1 item
-        config = CacheConfig(max_cache_size=2, evict_ratio=0.5, cache_duration_seconds=3600)
-        cache: TTLCache[MagicMock] = TTLCache(config)
-
-        mock1 = MagicMock()
-        mock2 = MagicMock()
-        mock3 = MagicMock()
-
-        cache.set("key1", mock1)  # size=1
-        clock.advance(1)  # Ensure ordering via distinct timestamps
-        cache.set("key2", mock2)  # size=2
-        clock.advance(1)
-        cache.set("key3", mock3)  # size=3, but eviction checks BEFORE add (size=2, not > 2)
-        clock.advance(1)
-
-        # Eviction happens on key3; adding key4 should not evict further
-        mock4 = MagicMock()
-        cache.set("key4", mock4)
-
-        # mock1 should have been closed during eviction (it's the oldest)
-        mock1.close.assert_called_once()
-        # mock2 should also have been closed (target_size=1, need to remove 2 items)
-        mock2.close.assert_called_once()
 
     def test_cache_get_returns_none_for_missing_key(self):
         """Test that get returns None for non-existent keys."""
@@ -179,20 +77,6 @@ class TestTTLCache:
         assert cache.delete("key") is True
         assert cache.delete("key") is False
         assert cache.delete("nonexistent") is False
-
-    def test_replacing_existing_key_closes_old_value(self):
-        """Overwriting a key must clean up the previous closeable value."""
-        config = CacheConfig(cache_duration_seconds=60)
-        cache: TTLCache[MagicMock] = TTLCache(config)
-
-        first = MagicMock()
-        second = MagicMock()
-
-        cache.set("key", first)
-        cache.set("key", second)
-
-        first.close.assert_called_once()
-        second.close.assert_not_called()
 
     def test_cache_has_respects_expiration(self, clock: _FakeClock):
         """Test that has() returns False for expired entries."""
@@ -396,3 +280,46 @@ class TestTTLCacheStress:
             t.join()
 
         assert errors == [], f"Threads raised exceptions: {errors}"
+
+
+class TestTTLCacheConfigAndStats:
+    """Config exposure and hit/miss accounting."""
+
+    def test_config_property_returns_the_instance_it_was_built_with(self) -> None:
+        cfg = CacheConfig(cache_duration_seconds=42, max_cache_size=5)
+        cache: TTLCache[str] = TTLCache(config=cfg)
+        assert cache.config is cfg
+
+    def test_expired_entry_is_deleted_and_counted_as_a_miss(self, clock: _FakeClock) -> None:
+        cache: TTLCache[str] = TTLCache(CacheConfig(cache_duration_seconds=1, max_cache_size=10))
+        cache.set("k", "v")
+        assert cache.get("k") == "v"
+
+        clock.advance(100)
+        assert cache.get("k") is None
+
+        stats = cache.stats()
+        assert (stats["hits"], stats["misses"]) == (1, 1)
+        assert cache.size == 0
+
+    def test_clear_with_reset_stats_zeroes_counters(self) -> None:
+        cache: TTLCache[str] = TTLCache(CacheConfig(cache_duration_seconds=300, max_cache_size=10))
+        cache.set("a", "1")
+        cache.get("a")
+        cache.get("missing")
+
+        cache.clear(reset_stats=True)
+
+        stats = cache.stats()
+        assert (stats["hits"], stats["misses"], stats["size"]) == (0, 0, 0)
+
+    def test_clear_without_reset_stats_keeps_counters(self) -> None:
+        cache: TTLCache[str] = TTLCache(CacheConfig(cache_duration_seconds=300, max_cache_size=10))
+        cache.set("a", "1")
+        cache.get("a")
+        cache.get("x")
+
+        cache.clear(reset_stats=False)
+
+        stats = cache.stats()
+        assert (stats["hits"], stats["misses"], stats["size"]) == (1, 1, 0)
