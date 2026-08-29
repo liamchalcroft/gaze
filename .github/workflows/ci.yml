@@ -115,7 +115,7 @@ jobs:
       # class-identity checks. Order-dependence in the library is policed by the
       # randomised check jobs on tests/.
       run: |
-        uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper -p no:randomly \
+        uv run pytest tests/ examples/ -p no:randomly \
           --cov=gaze --cov=examples/nova/src --cov-report=xml:coverage-full.xml --tb=short
     - name: Upload full coverage to Codecov
       # One matrix leg uploads to avoid duplicate integration coverage reports.

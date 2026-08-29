@@ -24,7 +24,7 @@ check: ## Run quality checks (lint, format, typecheck, lock, core tests) -- matc
 
 check-nova: ## Run torch-gated + example tests (installs the nova extra: torch etc.)
 	uv sync --extra nova
-	uv run pytest tests/ examples/ --ignore=examples/aiih2026_paper -x --tb=short
+	uv run pytest tests/ examples/ -x --tb=short
 
 test: ## Run test suite (core tests only)
 	uv run pytest tests/ -x --tb=short
