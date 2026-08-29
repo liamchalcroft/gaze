@@ -109,6 +109,20 @@ class TestDiagnosisNormalization:
     def test_empty_string(self) -> None:
         assert normalize_diagnosis_string("") == ""
 
+    def test_trailing_punctuation_does_not_defeat_exact_match(self) -> None:
+        """Regression: a trailing "." used to make an identical diagnosis mismatch."""
+        assert normalize_diagnosis_string("Glioblastoma.") == "glioblastoma"
+        assert exact_diagnosis_match("Glioblastoma.", "glioblastoma") is True
+        assert exact_diagnosis_match("Meningioma!", "meningioma") is True
+
+    def test_hyphens_survive_punctuation_stripping(self) -> None:
+        """Hyphens are clinically meaningful and must not be treated as punctuation."""
+        assert normalize_diagnosis_string("Septo-optic dysplasia.") == "septo-optic dysplasia"
+
+    def test_hedging_is_preserved_unlike_the_reward_normalizer(self) -> None:
+        """Evaluation must not silently upgrade a hedged prediction to a confident one."""
+        assert normalize_diagnosis_string("possible meningioma") == "possible meningioma"
+
 
 # =====================================================================
 # 2. Threshold tool — minimum window width
@@ -289,19 +303,22 @@ class TestIoUAreaPenaltyBypass:
             f"Area penalty was bypassed."
         )
 
-    def test_normalized_mode_pixel_coords_fails_closed_without_image_area(self) -> None:
-        """When pixel coords are detected but no image_area in info,
-        fail closed (return 0.0) to prevent gaming via coord mismatch."""
+    def test_pixel_coords_without_image_area_skip_the_penalty(self) -> None:
+        """Without an image area no penalty is computable, so score honest IoU.
+
+        This previously returned 0.0 for *any* pixel-space box, which discarded
+        correct predictions whenever the harness omitted ``image_area``. The
+        coordinate space is the experimenter's declaration rather than
+        something the model picks, so there is no exploit to fail closed
+        against; supplying ``image_area`` (as the test above does) restores the
+        penalty.
+        """
         from gaze.verifiers.rewards import IoUReward
 
         reward_fn = IoUReward(normalized=True, continuous=True, area_penalty_start=0.5)
 
-        info = {"bbox": [0, 0, 512, 512]}  # No image_area
-        completion = "[0, 0, 512, 512]"
-        reward = reward_fn("prompt", completion, info)
-
-        # Pixel-scale coords + no image_area → 0.0 (fail closed)
-        assert reward == 0.0, f"Expected reward=0.0 (fail closed), got {reward}"
+        small_correct_box = {"bbox": [10, 10, 50, 50]}
+        assert reward_fn("prompt", "[10, 10, 50, 50]", small_correct_box) == 1.0
 
     def test_normalized_mode_valid_coords_penalized(self) -> None:
         """Full-image box in [0,1] range gets full penalty."""

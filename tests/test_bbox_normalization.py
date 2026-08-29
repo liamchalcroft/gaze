@@ -2,7 +2,7 @@
 
 Covers:
 1. IoUReward._extract_bbox searches all JSON objects (not just first)
-2. _maybe_normalize_box handles zero coordinates at image edge
+2. _maybe_normalize_coords handles zero coordinates at image edge
 3. Diagnosis reward expands abbreviations (aligned with evaluation)
 """
 
@@ -14,8 +14,7 @@ from PIL import Image
 
 from examples.nova.src.rewards import _normalize_diagnosis
 from examples.nova.src.rewards import compute_diagnosis_reward
-from gaze.tools.visual import _maybe_normalize_box
-from gaze.tools.visual import _maybe_normalize_point
+from gaze.tools.visual import _maybe_normalize_coords
 from gaze.verifiers.rewards import IoUReward
 
 # =====================================================================
@@ -103,12 +102,12 @@ class TestExtractBboxAllJsonObjects:
 
 
 # =====================================================================
-# 2. _maybe_normalize_box — handle zero coordinates
+# 2. _maybe_normalize_coords — handle zero coordinates
 # =====================================================================
 
 
 class TestMaybeNormalizeBoxZeroCoords:
-    """Verify _maybe_normalize_box handles boxes starting at image edge."""
+    """Verify _maybe_normalize_coords handles boxes starting at image edge."""
 
     def _make_image(self, width: int = 480, height: int = 480) -> Image.Image:
         return Image.new("L", (width, height))
@@ -119,7 +118,7 @@ class TestMaybeNormalizeBoxZeroCoords:
         Previously failed because all(v > 1 ...) is False when x1=0.
         """
         img = self._make_image(480, 480)
-        result = _maybe_normalize_box([0.0, 50.0, 200.0, 300.0], img)
+        result = _maybe_normalize_coords([0.0, 50.0, 200.0, 300.0], img)
         assert all(0.0 <= v <= 1.0 for v in result), f"Expected normalized, got {result}"
         assert abs(result[0] - 0.0) < 1e-6  # x1 = 0/480
         assert abs(result[1] - 50.0 / 480) < 1e-6
@@ -129,13 +128,13 @@ class TestMaybeNormalizeBoxZeroCoords:
     def test_pixel_box_with_zero_y1(self) -> None:
         """[50, 0, 200, 300] — y1=0, should still normalize."""
         img = self._make_image(480, 480)
-        result = _maybe_normalize_box([50.0, 0.0, 200.0, 300.0], img)
+        result = _maybe_normalize_coords([50.0, 0.0, 200.0, 300.0], img)
         assert all(0.0 <= v <= 1.0 for v in result)
 
     def test_pixel_box_with_zero_x1_y1(self) -> None:
         """[0, 0, 200, 300] — top-left corner, should normalize."""
         img = self._make_image(480, 480)
-        result = _maybe_normalize_box([0.0, 0.0, 200.0, 300.0], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 200.0, 300.0], img)
         assert all(0.0 <= v <= 1.0 for v in result)
         assert result[0] == 0.0
         assert result[1] == 0.0
@@ -144,19 +143,19 @@ class TestMaybeNormalizeBoxZeroCoords:
         """[0.2, 0.3, 0.8, 0.9] — already in [0,1], should pass through."""
         img = self._make_image(480, 480)
         box = [0.2, 0.3, 0.8, 0.9]
-        result = _maybe_normalize_box(box, img)
+        result = _maybe_normalize_coords(box, img)
         assert result == box
 
     def test_all_pixel_coords_above_one(self) -> None:
         """[50, 50, 200, 300] — all > 1, should normalize (pre-existing behavior)."""
         img = self._make_image(480, 480)
-        result = _maybe_normalize_box([50.0, 50.0, 200.0, 300.0], img)
+        result = _maybe_normalize_coords([50.0, 50.0, 200.0, 300.0], img)
         assert all(0.0 <= v <= 1.0 for v in result)
 
     def test_point_with_zero_x(self) -> None:
-        """_maybe_normalize_point should also handle zero coords."""
+        """_maybe_normalize_coords should also handle zero coords."""
         img = self._make_image(480, 480)
-        result = _maybe_normalize_point([0.0, 240.0], img)
+        result = _maybe_normalize_coords([0.0, 240.0], img)
         assert all(0.0 <= v <= 1.0 for v in result)
         assert result[0] == 0.0
         assert abs(result[1] - 0.5) < 1e-6
@@ -164,7 +163,7 @@ class TestMaybeNormalizeBoxZeroCoords:
     def test_normalized_point_unchanged(self) -> None:
         """[0.5, 0.5] — already normalized, pass through."""
         img = self._make_image(480, 480)
-        result = _maybe_normalize_point([0.5, 0.5], img)
+        result = _maybe_normalize_coords([0.5, 0.5], img)
         assert result == [0.5, 0.5]
 
 

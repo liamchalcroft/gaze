@@ -2,8 +2,8 @@
 
 Covers:
 - Finding 1: _execute_intensity_stats string box handling
-- Finding 2: _maybe_normalize_box borderline value clamping
-- Finding 3: _maybe_normalize_box / _maybe_normalize_point test coverage
+- Finding 2: _maybe_normalize_coords borderline value clamping
+- Finding 3: _maybe_normalize_coords / _maybe_normalize_coords test coverage
 - Finding 4: window_level prompt documentation clarity
 - Finding 5: Visual tool boundary value tests
 - Finding 6: window_level preset override warning
@@ -23,8 +23,7 @@ from gaze.exceptions import ToolExecutionError
 from gaze.tools import ToolRegistry
 from gaze.tools.visual import _PIXEL_COORD_THRESHOLD
 from gaze.tools.visual import WINDOW_PRESETS
-from gaze.tools.visual import _maybe_normalize_box
-from gaze.tools.visual import _maybe_normalize_point
+from gaze.tools.visual import _maybe_normalize_coords
 from gaze.tools.visual import adjust_brightness
 from gaze.tools.visual import adjust_contrast
 from gaze.tools.visual import adjust_sharpness
@@ -95,7 +94,7 @@ class TestIntensityStatsStringBox:
             await registry.execute("get_intensity_stats", box="center")
 
 
-# ── Finding 2: _maybe_normalize_box borderline clamping ──────────
+# ── Finding 2: _maybe_normalize_coords borderline clamping ──────────
 
 
 class TestMaybeNormalizeBoxClamping:
@@ -104,13 +103,13 @@ class TestMaybeNormalizeBoxClamping:
     def test_borderline_1_001_clamped_not_normalized(self) -> None:
         """[0.5, 0.5, 1.001, 1.001] should clamp to [0.5, 0.5, 1.0, 1.0]."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_box([0.5, 0.5, 1.001, 1.001], img)
+        result = _maybe_normalize_coords([0.5, 0.5, 1.001, 1.001], img)
         assert result == [0.5, 0.5, 1.0, 1.0]
 
     def test_borderline_1_5_clamped(self) -> None:
         """Values up to (but below) threshold should be clamped."""
         img = Image.new("L", (100, 100))
-        result = _maybe_normalize_box([0.0, 0.0, 1.5, 1.5], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 1.5, 1.5], img)
         assert result == [0.0, 0.0, 1.0, 1.0]
 
     def test_threshold_constant_is_2(self) -> None:
@@ -120,20 +119,20 @@ class TestMaybeNormalizeBoxClamping:
     def test_at_threshold_triggers_normalization(self) -> None:
         """Values at threshold (2.0) should trigger pixel normalization."""
         img = Image.new("L", (100, 100))
-        result = _maybe_normalize_box([0.0, 0.0, 2.0, 2.0], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 2.0, 2.0], img)
         # 2.0/100 = 0.02, so this is now pixel-normalized
         assert result == [0.0, 0.0, 0.02, 0.02]
 
     def test_negative_values_clamped_to_zero(self) -> None:
         """Negative values in the borderline range should clamp to 0."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_box([-0.1, 0.0, 1.1, 1.0], img)
+        result = _maybe_normalize_coords([-0.1, 0.0, 1.1, 1.0], img)
         # max is 1.1 < 2.0, so clamped
         assert result[0] == 0.0
         assert result[2] == 1.0
 
 
-# ── Finding 3: _maybe_normalize_box/_point comprehensive tests ───
+# ── Finding 3: _maybe_normalize_coords/_point comprehensive tests ───
 
 
 class TestMaybeNormalizeBox:
@@ -143,63 +142,63 @@ class TestMaybeNormalizeBox:
         """Coordinates already in [0, 1] pass through unchanged."""
         img = Image.new("L", (256, 256))
         box = [0.1, 0.2, 0.8, 0.9]
-        result = _maybe_normalize_box(box, img)
+        result = _maybe_normalize_coords(box, img)
         assert result == box
 
     def test_zero_zero_one_one_passes_through(self) -> None:
         """Full image box [0, 0, 1, 1] passes through."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_box([0.0, 0.0, 1.0, 1.0], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 1.0, 1.0], img)
         assert result == [0.0, 0.0, 1.0, 1.0]
 
     def test_pixel_coords_normalized(self) -> None:
         """Large pixel coords are divided by image dimensions."""
         img = Image.new("L", (200, 100))
-        result = _maybe_normalize_box([20.0, 10.0, 180.0, 90.0], img)
+        result = _maybe_normalize_coords([20.0, 10.0, 180.0, 90.0], img)
         assert result == pytest.approx([0.1, 0.1, 0.9, 0.9])
 
     def test_pixel_coords_with_zero_origin(self) -> None:
         """Pixel coords starting at (0, 0) are still detected."""
         img = Image.new("L", (100, 100))
-        result = _maybe_normalize_box([0.0, 0.0, 50.0, 50.0], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 50.0, 50.0], img)
         assert result == [0.0, 0.0, 0.5, 0.5]
 
     def test_all_zeros_passes_through(self) -> None:
         """[0, 0, 0, 0] passes through (will fail validation later)."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_box([0.0, 0.0, 0.0, 0.0], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 0.0, 0.0], img)
         assert result == [0.0, 0.0, 0.0, 0.0]
 
     def test_exactly_one_passes_through(self) -> None:
         """Exactly 1.0 in coords doesn't trigger normalization."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_box([0.0, 0.0, 1.0, 0.5], img)
+        result = _maybe_normalize_coords([0.0, 0.0, 1.0, 0.5], img)
         assert result == [0.0, 0.0, 1.0, 0.5]
 
 
 class TestMaybeNormalizePoint:
-    """Tests for _maybe_normalize_point auto-normalization."""
+    """Tests for _maybe_normalize_coords auto-normalization."""
 
     def test_valid_normalized_passes_through(self) -> None:
         img = Image.new("L", (100, 100))
-        result = _maybe_normalize_point([0.5, 0.7], img)
+        result = _maybe_normalize_coords([0.5, 0.7], img)
         assert result == [0.5, 0.7]
 
     def test_pixel_coords_normalized(self) -> None:
         img = Image.new("L", (200, 100))
-        result = _maybe_normalize_point([100.0, 50.0], img)
+        result = _maybe_normalize_coords([100.0, 50.0], img)
         assert result == [0.5, 0.5]
 
     def test_borderline_clamped(self) -> None:
         """Point like [0.5, 1.001] should clamp, not normalize."""
         img = Image.new("L", (64, 64))
-        result = _maybe_normalize_point([0.5, 1.001], img)
+        result = _maybe_normalize_coords([0.5, 1.001], img)
         assert result == [0.5, 1.0]
 
     def test_at_threshold_normalizes(self) -> None:
         """Point at threshold [0.5, 2.0] should pixel-normalize."""
         img = Image.new("L", (100, 100))
-        result = _maybe_normalize_point([0.5, 2.0], img)
+        result = _maybe_normalize_coords([0.5, 2.0], img)
         assert result == [0.005, 0.02]
 
 
