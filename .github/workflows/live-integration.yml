@@ -14,6 +14,15 @@ on:
   schedule:
     # 04:15 UTC daily, off the hour to avoid the top-of-hour stampede.
     - cron: "15 4 * * *"
+  pull_request:
+    # Only when the retrieval code or these tests change, which is rare. An
+    # upstream outage cannot block such a PR: _skip_if_upstream_unavailable
+    # turns 5xx/429/transport failures into skips, so the job still passes and
+    # only a genuine request or parsing regression fails it.
+    paths:
+      - "src/gaze/retrieval/**"
+      - "tests/test_integration_retrieval.py"
+      - ".github/workflows/live-integration.yml"
   workflow_dispatch:
     inputs:
       ref:
