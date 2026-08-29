@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import inspect
 import re
 from collections.abc import AsyncIterator
 from typing import Any
@@ -11,9 +10,10 @@ from typing import Any
 import httpx
 from beartype import beartype
 from loguru import logger
+from openai import APIConnectionError
 from openai import APIStatusError
-from openai import APITimeoutError
 from openai import AsyncOpenAI
+from openai import InternalServerError
 from openai import OpenAIError
 from openai import RateLimitError
 from tenacity import retry
@@ -61,6 +61,38 @@ def _safe_error_summary(e: Exception) -> str:
     if body:
         parts.append(body)
     return ": ".join(parts)
+
+
+# Failures worth retrying. APITimeoutError subclasses APIConnectionError, so
+# connection resets and DNS blips are covered too; InternalServerError covers
+# 5xx. Permanent 4xx (BadRequest, Authentication, NotFound) are deliberately
+# absent - retrying those just burns the budget.
+_RETRYABLE_API_ERRORS = (APIConnectionError, RateLimitError, InternalServerError)
+
+
+def _wait_for_retry(retry_state: Any) -> float:
+    """Honour a server-supplied Retry-After, else back off exponentially.
+
+    Retrying a 429 on a blind exponential schedule ignores the one piece of
+    information the server actually gave us about when to come back.
+    """
+    fallback = wait_exponential(multiplier=1, min=1, max=60)(retry_state)
+    outcome = retry_state.outcome
+    exception = outcome.exception() if outcome is not None else None
+    response = getattr(exception, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return fallback
+    raw = headers.get("retry-after")
+    if raw is None:
+        return fallback
+    try:
+        # Only the delay-seconds form is handled; an HTTP-date falls back.
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    # Clamp so a hostile or mistaken header cannot stall the run.
+    return max(0.0, min(seconds, 60.0))
 
 
 class OpenAIAdapter(AdapterProtocol):
@@ -154,8 +186,20 @@ class OpenAIAdapter(AdapterProtocol):
                     model_name=self.model_name,
                 )
 
-            # Resolve base_url: explicit > auto-detect OpenRouter > default (OpenAI)
+            # Resolve base_url: explicit > OPENAI_BASE_URL > auto-detect
+            # OpenRouter > default (OpenAI).
+            #
+            # OPENAI_BASE_URL must be resolved and validated here rather than
+            # left to the SDK: AsyncOpenAI falls back to that env var on its
+            # own, which would route the API key to an arbitrary host without
+            # ever passing _validate_base_url — defeating both the HTTPS
+            # requirement and the GAZE_ALLOW_CUSTOM_BASE_URL opt-in.
             base_url = self._base_url
+            if base_url is None:
+                env_base_url = os.getenv("OPENAI_BASE_URL")
+                if env_base_url:
+                    self._validate_base_url(env_base_url)
+                    base_url = env_base_url
             if base_url is None and not openai_key and openrouter_key:
                 base_url = _OPENROUTER_BASE_URL
                 logger.info("Using OpenRouter base URL (OPENROUTER_API_KEY detected)")
@@ -179,8 +223,8 @@ class OpenAIAdapter(AdapterProtocol):
     @beartype
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=1, max=60),
-        retry=retry_if_exception_type((APITimeoutError, RateLimitError)),
+        wait=_wait_for_retry,
+        retry=retry_if_exception_type(_RETRYABLE_API_ERRORS),
         before_sleep=lambda retry_state: logger.warning(
             f"Retry {retry_state.attempt_number}/5 for OpenAI API: "
             f"{type(retry_state.outcome.exception()).__name__ if retry_state.outcome else 'unknown'}"  # noqa: E501
@@ -241,7 +285,7 @@ class OpenAIAdapter(AdapterProtocol):
         except OpenAIError as e:  # pragma: no cover - dependency error surface
             status_code = e.status_code if isinstance(e, APIStatusError) else None
             safe_msg = _safe_error_summary(e)
-            if isinstance(e, APITimeoutError | RateLimitError):
+            if isinstance(e, _RETRYABLE_API_ERRORS):
                 raise APIError(
                     f"OpenAI API error after retries: {safe_msg}",
                     model_name=self.model_name,
@@ -318,7 +362,7 @@ class OpenAIAdapter(AdapterProtocol):
         except OpenAIError as e:
             status_code = e.status_code if isinstance(e, APIStatusError) else None
             safe_msg = _safe_error_summary(e)
-            if isinstance(e, APITimeoutError | RateLimitError):
+            if isinstance(e, _RETRYABLE_API_ERRORS):
                 raise APIError(
                     f"OpenAI API streaming error after retries: {safe_msg}",
                     model_name=self.model_name,
@@ -335,17 +379,5 @@ class OpenAIAdapter(AdapterProtocol):
         if self._client is None:
             return
 
-        close = getattr(self._client, "close", None)
-        if callable(close):
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-            self._client = None
-            return
-
-        aclose = getattr(self._client, "aclose", None)
-        if callable(aclose):
-            result = aclose()
-            if inspect.isawaitable(result):
-                await result
+        await self._client.close()
         self._client = None

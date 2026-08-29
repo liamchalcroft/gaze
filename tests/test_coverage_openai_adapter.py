@@ -1,6 +1,6 @@
 """Coverage tests for OpenAIAdapter uncovered paths.
 
-Targets: _stream_completion (296-314), aclose (322-338).
+Targets: _stream_completion and aclose.
 """
 
 from __future__ import annotations
@@ -164,18 +164,6 @@ class TestAclose:
         assert adapter._client is None
 
     @pytest.mark.asyncio
-    async def test_client_with_sync_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        adapter = OpenAIAdapter(model_name="gpt-4o")
-        mock_client = MagicMock()
-        mock_client.close = MagicMock(return_value=None)  # sync close
-        adapter._client = mock_client
-
-        await adapter.aclose()
-        mock_client.close.assert_called_once()
-        assert adapter._client is None
-
-    @pytest.mark.asyncio
     async def test_client_with_async_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         adapter = OpenAIAdapter(model_name="gpt-4o")
@@ -185,26 +173,4 @@ class TestAclose:
 
         await adapter.aclose()
         mock_client.close.assert_awaited_once()
-        assert adapter._client is None
-
-    @pytest.mark.asyncio
-    async def test_client_with_aclose_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        adapter = OpenAIAdapter(model_name="gpt-4o")
-        mock_client = MagicMock(spec=[])  # no close attribute
-        mock_client.aclose = AsyncMock(return_value=None)
-        adapter._client = mock_client
-
-        await adapter.aclose()
-        mock_client.aclose.assert_awaited_once()
-        assert adapter._client is None
-
-    @pytest.mark.asyncio
-    async def test_client_with_no_close_methods(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        adapter = OpenAIAdapter(model_name="gpt-4o")
-        mock_client = MagicMock(spec=[])  # no close or aclose
-        adapter._client = mock_client
-
-        await adapter.aclose()
         assert adapter._client is None
