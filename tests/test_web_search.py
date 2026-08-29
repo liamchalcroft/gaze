@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import httpx
 import pytest
 
 from gaze.config import SearchConfig
@@ -25,22 +28,11 @@ class TestSearchConfigValidation:
 class TestPubMedSearchEngine:
     """Tests for PubMedSearchEngine."""
 
-    def test_rate_limit_uses_config(self) -> None:
-        """Verify PubMed engine uses configured rate limit delay."""
-        config = SearchConfig(rate_limit_delay_seconds=2.5)
-        engine = PubMedSearchEngine(config=config)
-        assert engine._rate_limit_delay == 2.5
-
-    def test_rate_limit_default_config(self) -> None:
-        """Verify PubMed engine uses default config rate limit."""
-        engine = PubMedSearchEngine()
-        assert engine._rate_limit_delay == engine.config.rate_limit_delay_seconds
-
     def test_custom_timeout(self) -> None:
         """Verify custom timeout is respected."""
         config = SearchConfig(timeout_seconds=60)
         engine = PubMedSearchEngine(config=config)
-        assert engine.timeout.total == 60
+        assert engine.timeout.read == 60
 
     def test_no_bearer_header(self) -> None:
         """API key must NOT be sent as a Bearer header (NCBI uses api_key param)."""
@@ -254,44 +246,31 @@ class TestNCBIParamsOnAllRequests:
     """esummary and efetch must include tool and email params (NCBI requirement)."""
 
     @pytest.mark.asyncio
-    async def test_esummary_efetch_include_tool_param(self) -> None:
-        """Verify _fetch_article_details builds params with 'tool' key."""
-        from contextlib import asynccontextmanager
+    async def test_esummary_efetch_include_tool_param(self, make_mock_http_client) -> None:
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        engine = PubMedSearchEngine()
+        engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.0))
         engine.email = "test@example.com"
+        captured: list[dict[str, str]] = []
 
-        captured_params: list[dict[str, str]] = []
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(dict(request.url.params))
+            if "esummary" in str(request.url):
+                return httpx.Response(200, json={"result": {}}, request=request)
+            return httpx.Response(
+                200, text="<PubmedArticleSet></PubmedArticleSet>", request=request
+            )
 
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict[str, str] | None = None):  # type: ignore[override]
-            captured_params.append(dict(params) if params else {})
-            mock_resp = AsyncMock()
-            mock_resp.status = 200
-            # raise_for_status() is synchronous in aiohttp — use MagicMock
-            mock_resp.raise_for_status = MagicMock()
-            if "esummary" in url:
-                mock_resp.json = AsyncMock(return_value={"result": {}})
-            else:
-                mock_resp.text = AsyncMock(return_value="<PubmedArticleSet></PubmedArticleSet>")
-            yield mock_resp
-
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
-        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+        client = make_mock_http_client(handler)
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=client)):
             await engine._fetch_article_details(["12345"])
 
-        # Should have 2 calls: esummary, efetch
-        assert len(captured_params) >= 2
-        for params in captured_params:
-            assert "tool" in params, f"Missing 'tool' param in {params}"
-            assert params["tool"] == "gaze"
-            assert "email" in params, f"Missing 'email' param in {params}"
-            assert params["email"] == "test@example.com"
+        assert len(captured) >= 2
+        for params in captured:
+            assert params.get("tool") == "gaze", params
+            assert params.get("email") == "test@example.com", params
+        await client.aclose()
 
 
 class TestConcurrentSummaryAndAbstracts:
@@ -578,44 +557,6 @@ class TestExtractMedicalEntitiesReturnType:
         assert "edema" in result
 
 
-class TestRateLimitSingleDelay:
-    """Rate-limit delay must happen once before gather, not inside each fetch."""
-
-    @pytest.mark.asyncio
-    async def test_single_delay_before_concurrent_fetches(self) -> None:
-        """Verify only one rate-limit sleep before the concurrent esummary/efetch."""
-        import asyncio
-        from unittest.mock import patch
-
-        engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.2))
-
-        sleep_calls: list[float] = []
-        original_sleep = asyncio.sleep
-
-        async def tracking_sleep(delay: float) -> None:
-            sleep_calls.append(delay)
-            await original_sleep(delay)
-
-        async def fake_fetch_summary(pmid_list: list[str]) -> dict:
-            return {"result": {}}
-
-        async def fake_fetch_abstracts(pmid_list: list[str]) -> dict[str, str]:
-            return {}
-
-        with (
-            patch("asyncio.sleep", side_effect=tracking_sleep),
-            patch.object(engine, "_fetch_summary", side_effect=fake_fetch_summary),
-            patch.object(engine, "_fetch_abstracts", side_effect=fake_fetch_abstracts),
-        ):
-            await engine._fetch_article_details(["12345"])
-
-        # Should have exactly one rate-limit sleep (0.2s), not two
-        rate_limit_sleeps = [s for s in sleep_calls if s == 0.2]
-        assert len(rate_limit_sleeps) == 1, (
-            f"Expected 1 rate-limit sleep, got {len(rate_limit_sleeps)}: {sleep_calls}"
-        )
-
-
 class TestDiagnosisContentTypeBoosts:
     """For diagnosis queries, guidelines/reviews must outrank case reports."""
 
@@ -873,323 +814,163 @@ class TestBigramPhraseMatching:
 
 
 class TestHTTPErrorRetry:
-    """HTTP error responses from PubMed must be retried by the base class."""
+    """Transient HTTP statuses are retried; a success is not."""
 
     @pytest.mark.asyncio
-    async def test_esearch_503_is_retried(self) -> None:
-        """PubMed returning 503 on esearch must trigger retry, not immediate failure."""
-        from contextlib import asynccontextmanager
+    async def test_esearch_503_is_retried(self, make_mock_http_client) -> None:
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        import aiohttp
+        engine = PubMedSearchEngine(
+            config=SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
+        )
+        calls = 0
 
-        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
-        engine = PubMedSearchEngine(config=config)
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(503, text="Service Unavailable", request=request)
 
-        call_count = 0
-
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            nonlocal call_count
-            call_count += 1
-            mock_resp = AsyncMock()
-            mock_resp.status = 503
-            mock_resp.raise_for_status = MagicMock(
-                side_effect=aiohttp.ClientResponseError(
-                    request_info=aiohttp.RequestInfo(
-                        url=url,
-                        method="GET",
-                        headers={},
-                        real_url=url,  # type: ignore[arg-type]
-                    ),
-                    history=(),
-                    status=503,
-                    message="Service Unavailable",
-                )
-            )
-            yield mock_resp
-
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
+        client = make_mock_http_client(handler)
         with (
-            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=client)),
             pytest.raises(SearchError, match="All search attempts failed"),
         ):
             await engine.search("test query")
 
-        # Should have retried max_retries times
-        assert call_count == 3
+        assert calls == 3
+        await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_esearch_200_no_retry(self) -> None:
-        """PubMed returning 200 should not trigger any retry."""
-        from contextlib import asynccontextmanager
+    async def test_esearch_200_no_retry(self, make_mock_http_client) -> None:
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
-        engine = PubMedSearchEngine(config=config)
-
-        call_count = 0
-
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            nonlocal call_count
-            call_count += 1
-            mock_resp = AsyncMock()
-            mock_resp.status = 200
-            mock_resp.raise_for_status = MagicMock()  # no-op for 200
-            mock_resp.json = AsyncMock(return_value={"esearchresult": {"idlist": []}})
-            yield mock_resp
-
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
-        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
-            results = await engine.search("test query")
-
-        assert call_count == 1
-        assert results == []
-
-
-class TestTreatmentDifferentialBoosts:
-    """Treatment and differential search types must have content_type_boosts."""
-
-    def test_treatment_boosts_exist(self) -> None:
-        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
-
-        boosts = _CONTENT_TYPE_BOOSTS
-        assert "treatment" in boosts
-        assert boosts["treatment"]["guidelines"] > boosts["treatment"]["case_report"]
-
-    def test_differential_boosts_exist(self) -> None:
-        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
-
-        boosts = _CONTENT_TYPE_BOOSTS
-        assert "differential" in boosts
-        assert boosts["differential"]["review"] > boosts["differential"]["case_report"]
-
-    def test_treatment_guideline_beats_case_report(self) -> None:
-        """For treatment queries, guidelines must rank above case reports."""
-        manager = WebSearchManager()
-
-        guideline = SearchResult(
-            title="Treatment protocol guideline for brain tumors",
-            url="https://pubmed.ncbi.nlm.nih.gov/1000/",
-            content="Clinical guideline for treatment of brain tumors.",
-            snippet="Guideline",
-            source="pubmed",
-            reliability_score=0.95,
-            content_type="guidelines",
-            medical_relevance=0.9,
+        engine = PubMedSearchEngine(
+            config=SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
         )
-        case_report = SearchResult(
-            title="Treatment protocol case report for brain tumors",
-            url="https://pubmed.ncbi.nlm.nih.gov/1001/",
-            content="A single case report of treatment for brain tumors.",
-            snippet="Case report",
-            source="pubmed",
-            reliability_score=0.95,
-            content_type="case_report",
-            medical_relevance=0.9,
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json={"esearchresult": {"idlist": []}}, request=request)
+
+        client = make_mock_http_client(handler)
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=client)):
+            assert await engine.search("test query") == []
+
+        assert calls == 1
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_permanent_4xx_is_not_retried(self, make_mock_http_client) -> None:
+        """A 400 is the server rejecting the request; repeating it cannot help."""
+        from unittest.mock import AsyncMock
+        from unittest.mock import patch
+
+        engine = PubMedSearchEngine(
+            config=SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
         )
+        calls = 0
 
-        ranked = manager._rank_results(
-            [case_report, guideline],
-            query="brain tumor treatment",
-            search_type="treatment",
-        )
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(400, text="Bad Request", request=request)
 
-        assert ranked[0].url.endswith("/1000/"), (
-            "Guideline should rank above case report for treatment queries"
-        )
-
-    def test_all_search_types_have_boosts(self) -> None:
-        """Every allowed search type should have at least partial boosts."""
-        from gaze.retrieval.web_search import _CONTENT_TYPE_BOOSTS
-
-        boosts = _CONTENT_TYPE_BOOSTS
-        # "general" intentionally has no boosts — it's the catch-all
-        for search_type in (
-            "diagnosis",
-            "guidelines",
-            "research",
-            "anatomy",
-            "treatment",
-            "differential",
+        client = make_mock_http_client(handler)
+        with (
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=client)),
+            pytest.raises(SearchError, match="HTTP 400"),
         ):
-            assert search_type in boosts, f"Missing content_type_boosts for '{search_type}'"
+            await engine.search("test query")
+
+        assert calls == 1, "a 400 must not be retried"
+        await client.aclose()
 
 
 class TestEfetchRetry:
-    """efetch must retry once on transient failure before degrading."""
+    """efetch retries once on transient failure, then degrades without abstracts."""
+
+    _XML = (
+        "<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>12345</PMID>"
+        "<Article><Abstract><AbstractText>Recovered abstract.</AbstractText>"
+        "</Abstract></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>"
+    )
+
+    @staticmethod
+    def _engine_with(handler: object, make_mock_http_client) -> tuple[PubMedSearchEngine, object]:
+
+        engine = PubMedSearchEngine(config=SearchConfig(rate_limit_delay_seconds=0.0))
+        return engine, make_mock_http_client(handler)
 
     @pytest.mark.asyncio
-    async def test_efetch_503_retried_then_succeeds(self) -> None:
-        """Transient 503 from efetch should be retried; abstracts recovered."""
-        from contextlib import asynccontextmanager
+    async def test_efetch_503_retried_then_succeeds(self, make_mock_http_client) -> None:
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        import aiohttp
+        calls = 0
 
-        config = SearchConfig(rate_limit_delay_seconds=0.0)
-        engine = PubMedSearchEngine(config=config)
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return httpx.Response(503, text="down", request=request)
+            return httpx.Response(200, text=self._XML, request=request)
 
-        efetch_call_count = 0
-
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            nonlocal efetch_call_count
-            mock_resp = AsyncMock()
-            if "efetch" in url:
-                efetch_call_count += 1
-                if efetch_call_count == 1:
-                    mock_resp.status = 503
-                    mock_resp.raise_for_status = MagicMock(
-                        side_effect=aiohttp.ClientResponseError(
-                            request_info=aiohttp.RequestInfo(
-                                url=url,
-                                method="GET",
-                                headers={},
-                                real_url=url,  # type: ignore[arg-type]
-                            ),
-                            history=(),
-                            status=503,
-                            message="Service Unavailable",
-                        )
-                    )
-                else:
-                    mock_resp.status = 200
-                    mock_resp.raise_for_status = MagicMock()
-                    abstract_xml = """
-                    <PubmedArticleSet>
-                      <PubmedArticle>
-                        <MedlineCitation>
-                          <PMID>12345</PMID>
-                          <Article>
-                            <Abstract>
-                              <AbstractText>Recovered abstract.</AbstractText>
-                            </Abstract>
-                          </Article>
-                        </MedlineCitation>
-                      </PubmedArticle>
-                    </PubmedArticleSet>
-                    """
-                    mock_resp.text = AsyncMock(return_value=abstract_xml)
-            else:
-                mock_resp.status = 200
-                mock_resp.raise_for_status = MagicMock()
-                mock_resp.json = AsyncMock(return_value={"result": {}})
-                mock_resp.text = AsyncMock(return_value="<PubmedArticleSet/>")
-            yield mock_resp
-
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
-        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
+        engine, client = self._engine_with(handler, make_mock_http_client)
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=client)):
             abstracts = await engine._fetch_abstracts(["12345"])
 
-        assert efetch_call_count == 2
-        assert "12345" in abstracts
+        assert calls == 2
         assert "Recovered abstract." in abstracts["12345"]
+        await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_efetch_persistent_failure_degrades(self) -> None:
-        """Persistent efetch failure must degrade gracefully, not crash."""
-        from contextlib import asynccontextmanager
+    async def test_efetch_persistent_failure_degrades(self, make_mock_http_client) -> None:
+        """Abstracts are enrichment: a hard failure must not fail the search."""
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        import aiohttp
+        calls = 0
 
-        config = SearchConfig(rate_limit_delay_seconds=0.0)
-        engine = PubMedSearchEngine(config=config)
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(503, text="down", request=request)
 
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            mock_resp = AsyncMock()
-            mock_resp.status = 503
-            mock_resp.raise_for_status = MagicMock(
-                side_effect=aiohttp.ClientResponseError(
-                    request_info=aiohttp.RequestInfo(
-                        url=url,
-                        method="GET",
-                        headers={},
-                        real_url=url,  # type: ignore[arg-type]
-                    ),
-                    history=(),
-                    status=503,
-                    message="Service Unavailable",
-                )
-            )
-            yield mock_resp
+        engine, client = self._engine_with(handler, make_mock_http_client)
+        with patch.object(engine, "_get_session", new=AsyncMock(return_value=client)):
+            assert await engine._fetch_abstracts(["12345"]) == {}
 
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
-        with patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)):
-            abstracts = await engine._fetch_abstracts(["12345"])
-
-        # Should degrade gracefully — empty dict, no crash
-        assert abstracts == {}
+        assert calls == 2
+        await client.aclose()
 
     @pytest.mark.asyncio
-    async def test_efetch_warning_includes_pmids(self) -> None:
-        """efetch failure log must include the PMIDs being fetched."""
-        from contextlib import asynccontextmanager
+    async def test_efetch_warning_includes_pmids(
+        self, caplog: pytest.LogCaptureFixture, make_mock_http_client
+    ) -> None:
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        import aiohttp
+        from loguru import logger
 
-        config = SearchConfig(rate_limit_delay_seconds=0.0)
-        engine = PubMedSearchEngine(config=config)
-        warnings: list[str] = []
+        messages: list[str] = []
+        handler_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
 
-        def capture_warning(msg: str) -> None:
-            warnings.append(msg)
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, text="down", request=request)
 
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            mock_resp = AsyncMock()
-            mock_resp.status = 500
-            mock_resp.raise_for_status = MagicMock(
-                side_effect=aiohttp.ClientResponseError(
-                    request_info=aiohttp.RequestInfo(
-                        url=url,
-                        method="GET",
-                        headers={},
-                        real_url=url,  # type: ignore[arg-type]
-                    ),
-                    history=(),
-                    status=500,
-                    message="Internal Server Error",
-                )
-            )
-            yield mock_resp
+        engine, client = self._engine_with(handler, make_mock_http_client)
+        try:
+            with patch.object(engine, "_get_session", new=AsyncMock(return_value=client)):
+                await engine._fetch_abstracts(["12345", "67890"])
+        finally:
+            logger.remove(handler_id)
 
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
-        with (
-            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
-            patch("gaze.retrieval.web_search.logger") as mock_logger,
-        ):
-            mock_logger.warning = capture_warning
-            mock_logger.debug = capture_warning
-            await engine._fetch_abstracts(["99999", "88888"])
-
-        all_msgs = " ".join(warnings)
-        assert "99999" in all_msgs
-        assert "88888" in all_msgs
+        assert any("12345,67890" in message for message in messages), messages
+        await client.aclose()
 
 
 class TestContentPreviewConfigDefault:
@@ -1203,33 +984,6 @@ class TestContentPreviewConfigDefault:
 # ---------------------------------------------------------------------------
 # Consolidated sleep and entity pattern tests
 # ---------------------------------------------------------------------------
-
-
-class TestPubMedConsolidatedSleep:
-    @pytest.mark.asyncio
-    async def test_single_sleep_before_gather(self) -> None:
-        from unittest.mock import patch as mock_patch
-
-        engine = PubMedSearchEngine()
-        sleep_calls: list[float] = []
-
-        async def _mock_sleep(seconds: float) -> None:
-            sleep_calls.append(seconds)
-
-        async def _fake_summary(_pmids: list[str]) -> dict:
-            return {"result": {}}
-
-        async def _fake_abstracts(_pmids: list[str]) -> dict[str, str]:
-            return {}
-
-        engine._fetch_summary = _fake_summary  # type: ignore[assignment]
-        engine._fetch_abstracts = _fake_abstracts  # type: ignore[assignment]
-
-        with mock_patch("gaze.retrieval.web_search.asyncio.sleep", _mock_sleep):
-            await engine._fetch_article_details(["12345"])
-
-        assert len(sleep_calls) == 1
-        assert sleep_calls[0] == engine._rate_limit_delay
 
 
 class TestPrecompiledEntityPatterns:
@@ -1406,3 +1160,138 @@ class TestEvidenceTierAdjustments:
             ct = engine._classify_content_type(pt_list)
             assert ct == expected
             assert ct in EVIDENCE_TIER_ADJUSTMENTS
+
+
+class TestMalformedApiPayloadsDegrade:
+    """External records of an unexpected shape must not crash tool execution.
+
+    ``AttributeError`` from ``"".strip()`` or ``pt.lower()`` on a non-string
+    field is neither a ``ClientError`` nor a ``SearchError``, so nothing in the
+    retry wrapper or the tool boundary catches it: it propagates out of the
+    agentic loop as an unhandled crash.
+    """
+
+    @staticmethod
+    async def _details(summary_payload: dict[str, object]) -> list[object]:
+        from unittest.mock import patch
+
+        engine = PubMedSearchEngine()
+
+        async def fake_summary(_pmids: list[str]) -> dict[str, object]:
+            return summary_payload
+
+        async def fake_abstracts(_pmids: list[str]) -> dict[str, str]:
+            return {}
+
+        with (
+            patch.object(engine, "_fetch_summary", side_effect=fake_summary),
+            patch.object(engine, "_fetch_abstracts", side_effect=fake_abstracts),
+        ):
+            return await engine._fetch_article_details(["1"])
+
+    @pytest.mark.asyncio
+    async def test_non_object_record_is_skipped(self) -> None:
+        assert await self._details({"result": {"1": "not-an-object"}}) == []
+
+    @pytest.mark.asyncio
+    async def test_non_string_fields_do_not_raise(self) -> None:
+        results = await self._details(
+            {
+                "result": {
+                    "1": {
+                        "title": 123,
+                        "authors": ["not-a-dict"],
+                        "pubtype": [7],
+                        "articleids": ["not-a-dict"],
+                    }
+                }
+            }
+        )
+        assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_null_fields_do_not_raise(self) -> None:
+        results = await self._details(
+            {"result": {"1": {"title": None, "authors": None, "pubtype": "review"}}}
+        )
+        assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_well_formed_record_still_parses(self) -> None:
+        results = await self._details(
+            {
+                "result": {
+                    "1": {
+                        "title": "Real Paper",
+                        "authors": [{"name": "Smith A"}],
+                        "pubtype": ["Review"],
+                    }
+                }
+            }
+        )
+        assert len(results) == 1
+        assert results[0].title == "Real Paper"
+
+
+class TestNcbiRequestPacing:
+    """Every NCBI request goes through one shared limiter.
+
+    NCBI enforces 3 requests/second per IP (10 with a key) by blocking the IP.
+    Sleeping *between* calls did not bound concurrent callers: esummary and
+    efetch fired simultaneously via gather, and two searches in one agentic
+    turn multiplied that again.
+    """
+
+    def test_interval_matches_ncbi_limits_without_a_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NCBI_API_KEY", raising=False)
+        engine = PubMedSearchEngine()
+        assert engine._rate_limiter.min_interval == pytest.approx(1 / 3)
+
+    def test_an_api_key_raises_the_allowed_rate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NCBI_API_KEY", "test-key")
+        engine = PubMedSearchEngine()
+        assert engine._rate_limiter.min_interval == pytest.approx(1 / 10)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_acquires_reserve_separate_slots(self) -> None:
+        """Bursts are serialised, not overlapped.
+
+        Asserted on the slots the limiter hands out rather than on measured
+        elapsed time, so a loaded machine cannot make this flap.
+        """
+        import asyncio
+
+        from gaze.retrieval.base import AsyncRateLimiter
+
+        interval = 0.05
+        limiter = AsyncRateLimiter(interval)
+        reservations: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def instant_sleep(_delay: float) -> None:
+            await real_sleep(0)
+
+        # Record the slot each waiter reserves, without actually waiting.
+        with patch("gaze.retrieval.base.asyncio.sleep", instant_sleep):
+
+            async def acquire_one() -> None:
+                await limiter.acquire()
+                reservations.append(limiter._next_allowed)
+
+            await asyncio.gather(*(acquire_one() for _ in range(4)))
+
+        gaps = [b - a for a, b in zip(reservations, reservations[1:], strict=False)]
+        assert gaps, reservations
+        assert all(gap == pytest.approx(interval) for gap in gaps), (
+            f"waiters did not reserve distinct slots one interval apart: {gaps}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_zero_interval_limiter_does_not_block(self) -> None:
+        from gaze.retrieval.base import AsyncRateLimiter
+
+        limiter = AsyncRateLimiter(0.0)
+        await limiter.acquire()
+        await limiter.acquire()

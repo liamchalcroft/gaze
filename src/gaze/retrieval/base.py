@@ -13,7 +13,7 @@ from abc import abstractmethod
 from typing import Generic
 from typing import TypeVar
 
-import aiohttp
+import httpx
 from beartype import beartype
 from loguru import logger
 
@@ -27,13 +27,20 @@ from gaze.exceptions import GazeError
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
-def _sanitize_api_field(value: str, *, max_length: int = 500) -> str:
+def _sanitize_api_field(value: object, *, max_length: int = 500) -> str:
     """Sanitize a text field from an external API response.
 
     Strips control characters and truncates to *max_length* to reduce
     prompt-injection surface when these values later appear in LLM
     conversations.
+
+    Accepts any object because the caller is handling untrusted payloads: a
+    field documented as a string can arrive as a number or null, and this is
+    the single place best positioned to absorb that rather than raising a
+    TypeError out of tool execution. Non-strings become "".
     """
+    if not isinstance(value, str):
+        return ""
     value = _CONTROL_CHAR_RE.sub("", value)
     if len(value) > max_length:
         value = value[:max_length]
@@ -46,7 +53,7 @@ _SENSITIVE_QS_RE = re.compile(r"(api_key=)[^&\s)\"']+")
 def _sanitize_exception_message(exc: Exception) -> str:
     """Produce a safe string from *exc*, redacting sensitive URL query params.
 
-    aiohttp exceptions may embed the full request URL (including query
+    HTTP client exceptions may embed the full request URL (including query
     parameters like ``api_key``) in their string representation.  This helper
     replaces known sensitive parameter values with ``[REDACTED]`` so that
     credentials are never written to log files.
@@ -67,6 +74,51 @@ _ErrorT = TypeVar("_ErrorT", bound="SearchEngineError")
 # ---------------------------------------------------------------------------
 # Shared error base
 # ---------------------------------------------------------------------------
+
+
+def _is_retryable_status(status: int) -> bool:
+    """Whether an HTTP status is worth retrying.
+
+    429 (rate limited) and 5xx (server-side) are transient. Every other 4xx is
+    a rejection of the request itself, so retrying only adds latency and, for
+    rate-limited APIs, further requests against the quota.
+    """
+    return status == 429 or status >= 500
+
+
+class AsyncRateLimiter:
+    """Spaces out requests to at most one per *min_interval* seconds.
+
+    A per-request gate rather than a sleep between requests: sleeping after a
+    call does not bound concurrent callers, so two searches issued in the same
+    turn (or two requests fired via ``gather``) can still burst past a
+    provider's per-IP limit. Waiters reserve their slot in arrival order while
+    holding the lock, so ordering is stable and no two requests share a slot.
+    """
+
+    def __init__(self, min_interval: float) -> None:
+        self._min_interval = max(0.0, min_interval)
+        self._lock = asyncio.Lock()
+        self._next_allowed = 0.0
+
+    @property
+    def min_interval(self) -> float:
+        return self._min_interval
+
+    async def acquire(self) -> None:
+        """Block until the caller may issue its request."""
+        if self._min_interval <= 0:
+            return
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            wait = self._next_allowed - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = self._next_allowed
+            self._next_allowed = now + self._min_interval
+
+
 class SearchEngineError(GazeError):
     """Base exception for all search-engine errors.
 
@@ -110,10 +162,10 @@ class BaseSearchEngine(ABC, Generic[_ResultT, _ErrorT]):
     ) -> None:
         self._config = config or get_config().search
         self.name = name
-        self.timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
+        self.timeout = httpx.Timeout(self._config.timeout_seconds)
         self.max_retries = self._config.max_retries
         self.headers = self._get_headers()
-        self._session: aiohttp.ClientSession | None = None
+        self._session: httpx.AsyncClient | None = None
 
     # -- configuration -------------------------------------------------------
 
@@ -124,19 +176,20 @@ class BaseSearchEngine(ABC, Generic[_ResultT, _ErrorT]):
 
     # -- session management --------------------------------------------------
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create a reusable aiohttp session for connection pooling."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Get or create a reusable HTTP client for connection pooling."""
+        if self._session is None or self._session.is_closed:
+            self._session = httpx.AsyncClient(
                 headers=self.headers,
                 timeout=self.timeout,
+                follow_redirects=True,
             )
         return self._session
 
     async def close(self) -> None:
-        """Close the session and release resources."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        """Close the client and release resources."""
+        if self._session is not None and not self._session.is_closed:
+            await self._session.aclose()
             self._session = None
 
     # -- headers (overridable) -----------------------------------------------
@@ -176,7 +229,20 @@ class BaseSearchEngine(ABC, Generic[_ResultT, _ErrorT]):
         for attempt in range(self.max_retries):
             try:
                 return await self._search_impl(query, max_results)
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            except httpx.HTTPStatusError as e:
+                # A 4xx is the server rejecting this request; repeating it
+                # verbatim cannot help. Only 429 and 5xx are worth another go.
+                status = e.response.status_code
+                if not _is_retryable_status(status):
+                    raise self._make_error(f"Search failed with HTTP {status}", e) from e
+                last_error = e
+                logger.warning(
+                    f"Search attempt {attempt + 1} failed for {self.name} "
+                    f"(HTTP {status}): {_sanitize_exception_message(e)}"
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+            except (httpx.HTTPError, asyncio.TimeoutError, OSError) as e:
                 last_error = e
                 logger.warning(
                     f"Search attempt {attempt + 1} failed for {self.name}: "

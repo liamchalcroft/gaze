@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
-import aiohttp
+import httpx
 from beartype import beartype
 from loguru import logger
 
@@ -309,19 +309,18 @@ class OpenISearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
         }
 
         session = await self._get_session()
-        async with session.get(self.base_url, params=params) as response:
-            # Let aiohttp raise ClientResponseError so transient HTTP errors
-            # (429, 5xx) are retried by the base-class retry wrapper.
-            response.raise_for_status()
+        response = await session.get(self.base_url, params=params)
+        # Let httpx raise HTTPStatusError so transient HTTP errors (429, 5xx)
+        # are retried by the base-class retry wrapper.
+        response.raise_for_status()
 
-            try:
-                data = await response.json()
-            except (aiohttp.ContentTypeError, json.JSONDecodeError) as e:
-                text = await response.text()
-                raise ImageSearchError(
-                    self.name,
-                    f"Open-i returned invalid JSON response: {text[:200]}",
-                ) from e
+        try:
+            data = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ImageSearchError(
+                self.name,
+                f"Open-i returned invalid JSON response: {response.text[:200]}",
+            ) from e
 
         return self._parse_results(data)
 
@@ -345,15 +344,24 @@ class OpenISearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
             return []
         skipped_no_image = 0
         skipped_non_https = 0
+        skipped_malformed = 0
 
         for item in items:
-            # Get image URL - require at least one
+            # Entries come from an external API: a non-object entry, or a
+            # non-string URL, must degrade to a skip rather than an
+            # AttributeError escaping the tool boundary as a crash.
+            if not isinstance(item, dict):
+                skipped_malformed += 1
+                continue
+
             image_url = item.get("imgLarge") or item.get("imgThumb")
-            if not image_url:
+            if not isinstance(image_url, str) or not image_url:
                 skipped_no_image += 1
                 continue
 
-            thumbnail_url = item.get("imgThumb") or None
+            thumbnail_url = item.get("imgThumb")
+            if not isinstance(thumbnail_url, str) or not thumbnail_url:
+                thumbnail_url = None
 
             # Ensure absolute URLs
             if not image_url.startswith("http"):
@@ -416,6 +424,8 @@ class OpenISearchEngine(BaseSearchEngine[ImageSearchResult, ImageSearchError]):
             logger.debug(f"Skipped {skipped_no_image} Open-i results without image URLs")
         if skipped_non_https > 0:
             logger.warning(f"Skipped {skipped_non_https} Open-i results with non-HTTPS image URLs")
+        if skipped_malformed > 0:
+            logger.warning(f"Skipped {skipped_malformed} malformed Open-i entries")
         return results
 
     @beartype
@@ -491,7 +501,6 @@ class MedicalImageSearchManager:
         if self.rate_limit_delay < 0:
             raise ValueError(f"rate_limit_delay must be >= 0, got {self.rate_limit_delay}")
 
-        # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[ImageSearchResult]] = TTLCache(self._cache_config)
 
         # Track whether we created a temp directory (for cleanup)
@@ -525,14 +534,14 @@ class MedicalImageSearchManager:
         if not self.engines:
             raise ValueError("No valid image search engines configured")
 
-        self._download_session: aiohttp.ClientSession | None = None
+        self._download_session: httpx.AsyncClient | None = None
 
-    async def _get_download_session(self) -> aiohttp.ClientSession:
-        if self._download_session is None or self._download_session.closed:
+    async def _get_download_session(self) -> httpx.AsyncClient:
+        if self._download_session is None or self._download_session.is_closed:
             import gaze
 
-            self._download_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30),
+            self._download_session = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0),
                 headers={
                     "User-Agent": f"gaze/{gaze.__version__}",
                 },
@@ -551,8 +560,8 @@ class MedicalImageSearchManager:
         await self.close()
 
     async def close(self) -> None:
-        if self._download_session is not None and not self._download_session.closed:
-            await self._download_session.close()
+        if self._download_session is not None and not self._download_session.is_closed:
+            await self._download_session.aclose()
             self._download_session = None
         for engine in self.engines:
             await engine.close()
@@ -607,7 +616,6 @@ class MedicalImageSearchManager:
         query_hash = hashlib.sha256(enhanced_query.encode()).hexdigest()[:16]
         cache_key = f"img:{query_hash}|mod={modality}|part={body_part}"
 
-        # Check cache using TTLCache (handles expiration automatically)
         cached_results = self._cache.get(cache_key)
         if cached_results is not None:
             logger.debug(f"Using cached image results for: {query}")
@@ -654,7 +662,6 @@ class MedicalImageSearchManager:
                 seen_urls.add(result.image_url)
                 unique_results.append(result)
 
-        # Cache results using TTLCache (handles expiration automatically)
         self._cache.set(cache_key, unique_results)
 
         logger.info(f"Image search complete: {len(unique_results)} unique results")
@@ -686,7 +693,7 @@ class MedicalImageSearchManager:
             session = await self._get_download_session()
             return await self._do_download(session, result, url_hash, extension)
 
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        except (httpx.HTTPError, asyncio.TimeoutError, OSError) as e:
             raise ImageDownloadError(result.image_url, str(e), e) from e
 
     # Magic byte signatures for common image formats.
@@ -716,7 +723,7 @@ class MedicalImageSearchManager:
 
     async def _do_download(
         self,
-        session: aiohttp.ClientSession,
+        session: httpx.AsyncClient,
         result: ImageSearchResult,
         url_hash: str,
         extension: str | None,
@@ -733,14 +740,15 @@ class MedicalImageSearchManager:
         # external API response (e.g. Open-i).
         await asyncio.to_thread(_validate_download_url, result.image_url)
 
-        async with session.get(
+        async with session.stream(
+            "GET",
             result.image_url,
-            timeout=aiohttp.ClientTimeout(total=30),
+            timeout=httpx.Timeout(30.0),
         ) as response:
-            if response.status != 200:
+            if response.status_code != 200:
                 raise ImageDownloadError(
                     result.image_url,
-                    f"HTTP {response.status}",
+                    f"HTTP {response.status_code}",
                 )
 
             content_type = response.headers.get("Content-Type", "")
@@ -767,7 +775,7 @@ class MedicalImageSearchManager:
             # This prevents OOM from unbounded response.read().
             chunks: list[bytes] = []
             total_read = 0
-            async for chunk in response.content.iter_chunked(64 * 1024):
+            async for chunk in response.aiter_bytes(64 * 1024):
                 total_read += len(chunk)
                 if total_read > self._MAX_DOWNLOAD_BYTES:
                     raise ImageDownloadError(

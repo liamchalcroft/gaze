@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import aiohttp
+import httpx
 import pytest
-from yarl import URL
 
 from gaze.retrieval.base import _sanitize_exception_message
 
@@ -13,27 +12,23 @@ class TestSanitizeExceptionMessage:
     """_sanitize_exception_message must redact api_key values."""
 
     def test_redacts_api_key_in_url(self) -> None:
-        raw_url = URL(
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&api_key=SECRET123&id=1234"
+        raw_url = (
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+            "?db=pubmed&api_key=SECRET123&id=1234"
         )
-        exc = aiohttp.ClientResponseError(
-            request_info=aiohttp.RequestInfo(
-                url=raw_url,
-                method="GET",
-                headers={},  # type: ignore[arg-type]
-                real_url=raw_url,
-            ),
-            history=(),
-            status=500,
-            message="Internal Server Error",
+        request = httpx.Request("GET", raw_url)
+        exc = httpx.HTTPStatusError(
+            f"Server error '500 Internal Server Error' for url '{raw_url}'",
+            request=request,
+            response=httpx.Response(500, request=request),
         )
         sanitized = _sanitize_exception_message(exc)
         assert "SECRET123" not in sanitized
         assert "api_key=[REDACTED]" in sanitized
 
     def test_redacts_api_key_in_plain_string_exception(self) -> None:
-        """aiohttp.ClientError can contain a plain URL string."""
-        exc = aiohttp.ClientError(
+        """An httpx transport error can contain a plain URL string."""
+        exc = httpx.RequestError(
             "Cannot connect to https://example.com/api?api_key=mysecretkey&db=pubmed"
         )
         sanitized = _sanitize_exception_message(exc)
@@ -58,14 +53,14 @@ class TestSanitizeExceptionMessage:
 
     def test_api_key_at_end_of_url(self) -> None:
         """api_key at end of query string (no trailing &)."""
-        exc = aiohttp.ClientError("Error at https://example.com?db=pubmed&api_key=endkey")
+        exc = httpx.RequestError("Error at https://example.com?db=pubmed&api_key=endkey")
         sanitized = _sanitize_exception_message(exc)
         assert "endkey" not in sanitized
         assert "api_key=[REDACTED]" in sanitized
 
     def test_api_key_with_special_chars(self) -> None:
         """API keys with alphanumeric and dash/underscore characters."""
-        exc = aiohttp.ClientError("https://example.com?api_key=abc-123_XYZ.456&other=val")
+        exc = httpx.RequestError("https://example.com?api_key=abc-123_XYZ.456&other=val")
         sanitized = _sanitize_exception_message(exc)
         assert "abc-123_XYZ.456" not in sanitized
         assert "api_key=[REDACTED]" in sanitized
@@ -91,7 +86,7 @@ class TestSanitizationIntegration:
         engine = PubMedSearchEngine(config=SearchConfig(max_retries=1, timeout_seconds=1))
 
         async def _fail(query: str, max_results: int) -> list:  # type: ignore[type-arg]
-            raise aiohttp.ClientError(
+            raise httpx.RequestError(
                 "GET https://eutils.ncbi.nlm.nih.gov?api_key=LEAKED_KEY&db=pubmed failed"
             )
 

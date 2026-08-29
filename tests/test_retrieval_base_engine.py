@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import aiohttp
+import httpx
 import pytest
 
 from gaze.retrieval.base import BaseSearchEngine
@@ -28,8 +28,8 @@ class TestBaseSearchEngineSession:
     async def test_get_session_creates_client_session(self) -> None:
         engine = _ConcreteEngine("test")
         session = await engine._get_session()
-        assert isinstance(session, aiohttp.ClientSession)
-        assert not session.closed
+        assert isinstance(session, httpx.AsyncClient)
+        assert not session.is_closed
         await engine.close()
 
     @pytest.mark.asyncio
@@ -47,7 +47,7 @@ class TestBaseSearchEngineSession:
         await engine.close()
         s2 = await engine._get_session()
         assert s1 is not s2
-        assert not s2.closed
+        assert not s2.is_closed
         await engine.close()
 
     @pytest.mark.asyncio
@@ -64,7 +64,13 @@ class TestBaseSearchEngineSession:
         assert engine._session is None
 
     @pytest.mark.asyncio
-    async def test_config_property_returns_search_config(self) -> None:
-        engine = _ConcreteEngine("test")
-        assert engine.config.timeout_seconds > 0
-        assert engine.config.max_retries >= 1
+    async def test_config_property_returns_the_injected_config(self) -> None:
+        """Asserting only on defaults passes even if `config` ignored its argument."""
+        from gaze.config import SearchConfig
+
+        injected = SearchConfig(timeout_seconds=17, max_retries=4)
+        engine = _ConcreteEngine("test", config=injected)
+
+        assert engine.config is injected
+        assert engine.config.timeout_seconds == 17
+        assert engine.max_retries == 4

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import aiohttp
+import httpx
 import pytest
 
 from gaze.retrieval.image_search import ImageDownloadError
@@ -150,45 +149,27 @@ class TestFetchArticleDetails:
 @pytest.mark.asyncio
 @pytest.mark.unit
 class TestPubMedSearchEdgeCases:
-    async def test_empty_idlist_returns_empty(self) -> None:
+    async def test_empty_idlist_returns_empty(self, json_route, make_mock_http_client) -> None:
         """Empty PMID list → returns [] without calling _fetch_article_details."""
+
         engine = PubMedSearchEngine()
+        client = make_mock_http_client(json_route({"esearch": {"esearchresult": {"idlist": []}}}))
 
-        mock_resp = AsyncMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = AsyncMock(return_value={"esearchresult": {"idlist": []}})
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=client):
+            assert await engine._search_impl("test query", max_results=5) == []
+        await client.aclose()
 
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-
-        with patch.object(
-            engine, "_get_session", new_callable=AsyncMock, return_value=mock_session
-        ):
-            results = await engine._search_impl("test query", max_results=5)
-
-        assert results == []
-
-    async def test_missing_esearchresult_returns_empty(self) -> None:
+    async def test_missing_esearchresult_returns_empty(
+        self, json_route, make_mock_http_client
+    ) -> None:
         """Missing esearchresult key → returns []."""
         engine = PubMedSearchEngine()
 
-        mock_resp = AsyncMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = AsyncMock(return_value={"error": "server error"})
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        client = make_mock_http_client(json_route({"esearch": {"error": "server error"}}))
 
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-
-        with patch.object(
-            engine, "_get_session", new_callable=AsyncMock, return_value=mock_session
-        ):
-            results = await engine._search_impl("test query", max_results=5)
-
-        assert results == []
+        with patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=client):
+            assert await engine._search_impl("test query", max_results=5) == []
+        await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +195,8 @@ class TestMedicalImageSearchManagerEdgeCases:
             mgr._cleanup_temp_dir()
 
     @pytest.mark.asyncio
-    async def test_download_client_error_wrapped(self) -> None:
-        """aiohttp.ClientError during download is wrapped in ImageDownloadError."""
+    async def test_download_client_error_wrapped(self, make_mock_http_client) -> None:
+        """A transport error during download is wrapped in ImageDownloadError."""
         mgr = MedicalImageSearchManager()
         result = ImageSearchResult(
             title="test",
@@ -225,16 +206,17 @@ class TestMedicalImageSearchManagerEdgeCases:
             source="openi",
         )
 
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(side_effect=aiohttp.ClientError("connection failed"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection failed", request=request)
+
+        client = make_mock_http_client(handler)
 
         with (
-            patch.object(
-                mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
-            ),
+            patch.object(mgr, "_get_download_session", new_callable=AsyncMock, return_value=client),
             pytest.raises(ImageDownloadError, match="connection failed"),
         ):
             await mgr.download_image(result)
+        await client.aclose()
 
         await mgr.close()
 
@@ -247,42 +229,21 @@ class TestMedicalImageSearchManagerEdgeCases:
 @pytest.mark.asyncio
 @pytest.mark.unit
 class TestDoDownload:
-    async def _mock_download(
-        self,
-        mgr: MedicalImageSearchManager,
-        *,
-        status: int = 200,
-        content_type: str = "image/jpeg",
-        content_length: str | None = None,
-        content: bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 100,
-    ) -> None:
-        """Helper to set up a mock download session."""
-        mock_resp = AsyncMock()
-        mock_resp.status = status
-        mock_resp.headers = {"Content-Type": content_type}
-        if content_length is not None:
-            mock_resp.headers["Content-Length"] = content_length
+    @staticmethod
+    def _install_download_client(
+        make_mock_http_client: object, mgr: MedicalImageSearchManager, handler: object
+    ) -> object:
+        """Point the manager's download client at a MockTransport handler."""
 
-        # iter_chunked yields content in chunks
-        async def _iter_chunked(size: int):
-            yield content
-
-        mock_resp.content = MagicMock()
-        mock_resp.content.iter_chunked = _iter_chunked
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-
-        self._mock_session = mock_session
+        client = make_mock_http_client(handler)
         patch.object(
-            mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
+            mgr, "_get_download_session", new_callable=AsyncMock, return_value=client
         ).__enter__()
+        return client
 
-    async def test_non_200_raises(self, tmp_path: Path) -> None:
-        mgr = MedicalImageSearchManager(download_dir=tmp_path / "dl")
-        result = ImageSearchResult(
+    @staticmethod
+    def _result() -> ImageSearchResult:
+        return ImageSearchResult(
             title="test",
             image_url="https://openi.nlm.nih.gov/imgs/test.jpg",
             thumbnail_url=None,
@@ -290,87 +251,76 @@ class TestDoDownload:
             source="openi",
         )
 
-        mock_resp = AsyncMock()
-        mock_resp.status = 404
-        mock_resp.headers = {"Content-Type": "text/html"}
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+    async def test_non_200_raises(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
 
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
+        mgr = MedicalImageSearchManager(download_dir=tmp_path / "dl")
+        client = self._install_download_client(
+            make_mock_http_client, mgr, download_route(status=404, content_type="text/html")
+        )
 
         with (
-            patch.object(
-                mgr, "_get_download_session", new_callable=AsyncMock, return_value=mock_session
-            ),
             patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="HTTP 404"),
         ):
-            await mgr._do_download(
-                mock_session,
-                result,
-                "abc123",
-                ".jpg",
-            )
+            await mgr._do_download(client, self._result(), "abc123", ".jpg")
         await mgr.close()
 
-    async def test_non_image_content_type_raises(self, tmp_path: Path) -> None:
+    async def test_non_image_content_type_raises(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
+
         mgr = MedicalImageSearchManager(download_dir=tmp_path / "dl")
-        result = ImageSearchResult(
-            title="test",
-            image_url="https://openi.nlm.nih.gov/imgs/test.jpg",
-            thumbnail_url=None,
-            source_url="https://example.com",
-            source="openi",
+        client = self._install_download_client(
+            make_mock_http_client, mgr, download_route(content_type="text/html")
         )
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {"Content-Type": "text/html"}
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
 
         with (
             patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="not an image"),
         ):
-            await mgr._do_download(mock_session, result, "abc", ".jpg")
+            await mgr._do_download(client, self._result(), "abc", ".jpg")
         await mgr.close()
 
-    async def test_content_length_too_large_raises(self, tmp_path: Path) -> None:
+    async def test_content_length_too_large_raises(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
+        """A declared size over the cap is rejected before the body is read."""
+
         mgr = MedicalImageSearchManager(download_dir=tmp_path / "dl")
-        result = ImageSearchResult(
-            title="test",
-            image_url="https://openi.nlm.nih.gov/imgs/test.jpg",
-            thumbnail_url=None,
-            source_url="https://example.com",
-            source="openi",
+        client = self._install_download_client(
+            make_mock_http_client,
+            mgr,
+            download_route(content_length=str(mgr._MAX_DOWNLOAD_BYTES + 1)),
         )
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {
-            "Content-Type": "image/jpeg",
-            "Content-Length": str(20 * 1024 * 1024),  # 20MB > 10MB limit
-        }
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
 
         with (
             patch("gaze.retrieval.image_search._validate_download_url"),
             pytest.raises(ImageDownloadError, match="too large"),
         ):
-            await mgr._do_download(mock_session, result, "abc", ".jpg")
+            await mgr._do_download(client, self._result(), "abc", ".jpg")
+        await mgr.close()
+
+    async def test_streamed_body_over_the_cap_is_rejected(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
+        """The guard must hold even when the server understates Content-Length."""
+
+        mgr = MedicalImageSearchManager(download_dir=tmp_path / "dl")
+        oversized = b"\xff\xd8\xff\xe0" + b"\x00" * (mgr._MAX_DOWNLOAD_BYTES + 1024)
+        client = self._install_download_client(
+            make_mock_http_client, mgr, download_route(content=oversized, content_length="10")
+        )
+
+        with (
+            patch("gaze.retrieval.image_search._validate_download_url"),
+            pytest.raises(ImageDownloadError, match="too large"),
+        ):
+            await mgr._do_download(client, self._result(), "abc", ".jpg")
         await mgr.close()
 
 
-@pytest.mark.unit
 def test_get_extension_from_content_type() -> None:
     """_get_extension_from_content_type returns correct extension."""
     mgr = MedicalImageSearchManager()
@@ -387,28 +337,19 @@ def test_get_extension_from_content_type() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_openi_invalid_json_raises() -> None:
+async def test_openi_invalid_json_raises(json_route, make_mock_http_client) -> None:
     """Open-i returning invalid JSON raises ImageSearchError."""
     engine = OpenISearchEngine()
 
-    mock_resp = AsyncMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json = AsyncMock(
-        side_effect=aiohttp.ContentTypeError(MagicMock(), MagicMock(), message="bad json")
-    )
-    mock_resp.text = AsyncMock(return_value="<html>not json</html>")
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
+    client = make_mock_http_client(json_route({"": "<html>not json</html>"}))
 
     with (
-        patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=mock_session),
+        patch.object(engine, "_get_session", new_callable=AsyncMock, return_value=client),
         pytest.raises(ImageSearchError, match="invalid JSON"),
     ):
         await engine._search_impl("brain MRI", max_results=5)
 
+    await client.aclose()
     await engine.close()
 
 

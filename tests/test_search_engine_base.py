@@ -88,10 +88,10 @@ class TestRetryUsesConcreteError:
 
         # _search_impl will fail with a network error; retry exhaustion
         # should raise SearchError (not generic SearchEngineError).
-        import aiohttp
+        import httpx
 
         async def _fail(query: str, max_results: int) -> list:
-            raise aiohttp.ClientError("boom")
+            raise httpx.RequestError("boom")
 
         engine._search_impl = _fail  # type: ignore[assignment]
 
@@ -105,10 +105,10 @@ class TestRetryUsesConcreteError:
 
         engine = OpenISearchEngine(config=SearchConfig(max_retries=1, timeout_seconds=1))
 
-        import aiohttp
+        import httpx
 
         async def _fail(query: str, max_results: int) -> list:
-            raise aiohttp.ClientError("boom")
+            raise httpx.RequestError("boom")
 
         engine._search_impl = _fail  # type: ignore[assignment]
 

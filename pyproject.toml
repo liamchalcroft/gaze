@@ -21,8 +21,6 @@ include = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-# aiih2026_paper is no longer tracked in git; keep it out of the lint surface.
-extend-exclude = ["examples/aiih2026_paper/"]
 
 [tool.ruff.lint]
 select = [
@@ -50,8 +48,6 @@ ignore = [
     "PLR0915", # too many statements
     "PLR0911", # too many return statements
     "PLR2004", # magic value used in comparison
-    "F722",  # syntax error in forward annotation (jaxtyping)
-    "F821",  # undefined name (jaxtyping shape annotations)
     "PLC0415", # import should be at top level (legitimate uses in functions)
     "PTH123", # use pathlib (many legitimate open() uses)
     "PERF203", # try-except in loop (sometimes necessary)
@@ -60,7 +56,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "PLR2004", "PLC0415", "E402", "ARG001", "ARG002", "ARG005", "N802", "N811"]
-"scripts/**/*.py" = ["T201", "S602", "S603", "PLW1510", "E402"]
 "src/gaze/__main__.py" = ["T201"]
 # Examples are demo/research code: linted for real pyflakes correctness and
 # bug-prone constructs (F401/F811/F841/F821/F541, B023 loop-binding, I001
@@ -115,8 +110,7 @@ typeCheckingMode = "basic"
 pythonVersion = "3.10"
 executionEnvironments = [
     { root = "src" },
-    { root = "tests", extraPaths = ["src"] },
-    { root = "scripts", extraPaths = ["src"] }
+    { root = "tests", extraPaths = ["src"] }
 ]
 reportMissingImports = true
 reportMissingTypeStubs = false
@@ -181,7 +175,6 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 source = ["gaze"]
 omit = [
     "*/tests/*",
-    "*/scripts/*",
     # torch-gated: exercised by test_huggingface_adapter.py in the integration
     # job (uv sync --extra nova), not by the default core coverage job.
     "*/huggingface_adapter.py",
@@ -243,7 +236,6 @@ dependencies = [
     "numpy>=2.2.6,<3",
     "openai>=2.40.0,<3",
     "httpx>=0.25,<1",
-    "aiohttp>=3.13.4,<4",
     "minijinja>=2.20.0,<3",
     "tenacity>=9.1.4,<10",
     "defusedxml>=0.7,<1",
