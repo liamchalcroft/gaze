@@ -23,7 +23,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # caption.py sits behind evaluation/__init__.py, which pulls in detection.py
 # and therefore torch. Load the module by path so these tests exercise the
-# real helper rather than a copy that can silently drift from it.
+# real helper rather than a copy that can silently drift from it. caption.py
+# itself needs nltk, which only the "nova" extra installs, so the keyword
+# tests run in the integration job and are skipped in the core one.
 
 
 def _load_caption_module() -> Any:
@@ -44,9 +46,18 @@ def _load_caption_module() -> Any:
     return module
 
 
-_extract_keyword_tokens = _load_caption_module()._extract_keyword_tokens
+try:
+    _extract_keyword_tokens = _load_caption_module()._extract_keyword_tokens
+    CAPTION_AVAILABLE = True
+except ImportError:
+    CAPTION_AVAILABLE = False
+
+_skip_without_caption = pytest.mark.skipif(
+    not CAPTION_AVAILABLE, reason="caption.py requires nltk (install the 'nova' extra)"
+)
 
 
+@_skip_without_caption
 class TestExtractKeywordTokens:
     """Tests for _extract_keyword_tokens helper in caption evaluation."""
 

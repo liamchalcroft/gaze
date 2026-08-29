@@ -144,25 +144,34 @@ class TestOpenAIBaseUrlEnvVarIsValidated:
     def test_plaintext_http_env_var_is_rejected(self) -> None:
         with pytest.raises(ModelError, match="HTTPS"):
             self._client_base_url(
-                {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "http://attacker.example/v1"}
+                {
+                    "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                    "OPENAI_BASE_URL": "http://attacker.example/v1",
+                }
             )
 
     def test_unlisted_https_env_var_is_rejected_without_opt_in(self) -> None:
         with pytest.raises(ModelError, match="GAZE_ALLOW_CUSTOM_BASE_URL"):
             self._client_base_url(
-                {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "https://evil.example/v1"}
+                {
+                    "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                    "OPENAI_BASE_URL": "https://evil.example/v1",
+                }
             )
 
     def test_allowlisted_env_var_is_honoured(self) -> None:
         url = self._client_base_url(
-            {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "https://api.openai.com/v1"}
+            {
+                "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                "OPENAI_BASE_URL": "https://api.openai.com/v1",
+            }
         )
         assert url.rstrip("/") == "https://api.openai.com/v1"
 
     def test_opt_in_still_permits_a_custom_host(self) -> None:
         url = self._client_base_url(
             {
-                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
                 "OPENAI_BASE_URL": "https://custom.example/v1",
                 "GAZE_ALLOW_CUSTOM_BASE_URL": "1",
             }
