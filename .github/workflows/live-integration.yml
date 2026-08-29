@@ -1,0 +1,61 @@
+# Live integration tests against real external services (NCBI E-utilities and
+# NIH Open-i).
+#
+# Deliberately NOT part of the pull-request gate. These call third-party
+# services, so an upstream outage would block unrelated merges, and running
+# them on every push would put avoidable load on public research APIs. They run
+# on a schedule and on demand instead.
+#
+# Run them before merging anything that touches src/gaze/retrieval:
+#   gh workflow run live-integration.yml --ref <branch>
+name: Live integration
+
+on:
+  schedule:
+    # 04:15 UTC daily, off the hour to avoid the top-of-hour stampede.
+    - cron: "15 4 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or SHA to test"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never run two live jobs at once: they share the per-IP rate limit budget
+  # of the same upstream services.
+  group: live-integration
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      with:
+        persist-credentials: false
+        ref: ${{ inputs.ref || github.ref }}
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        # One version only. These tests exercise network and parsing behaviour,
+        # which does not vary across interpreters, and a matrix would multiply
+        # the load on the upstream services for no extra signal.
+        python-version: "3.12"
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      with:
+        enable-cache: true
+    - name: Install dependencies
+      run: uv sync
+    - name: Run live integration tests
+      env:
+        # Raises the NCBI allowance from 3 to 10 requests/second when set, and
+        # identifies the caller. Both are optional; the run works without them.
+        NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+        NCBI_EMAIL: ${{ secrets.NCBI_EMAIL }}
+      run: uv run pytest -m integration -v -p no:randomly
