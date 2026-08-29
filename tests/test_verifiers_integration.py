@@ -186,15 +186,6 @@ class TestCombinedReward:
         assert set(info.keys()) == original_keys
 
 
-def test_verifiers_optional() -> None:
-    """Test that verifiers integration handles missing import gracefully."""
-    # This should not raise an error even if verifiers is not installed
-    from gaze.verifiers import BaseRewardFunction
-
-    assert callable(BaseRewardFunction)
-    assert callable(BaseRewardFunction)
-
-
 class TestToolEnvIntegrations:
     """Smoke tests for ToolEnv-based example environments."""
 

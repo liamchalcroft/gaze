@@ -128,9 +128,10 @@ BaseMultiTurnEnv(
 Methods to override:
 - `get_system_prompt() -> str`
 - `_build_user_message(case) -> str | list`
-- `build_initial_state(prompt, info) -> dict`
-- `is_completed(messages, state, info) -> bool`
-- `env_response(messages, state, info) -> tuple[Messages, State]`
+- `async setup_state(state) -> State` -- seed per-episode state
+- `async env_response(messages, state, **kwargs) -> Messages` -- mutate `state` in place
+- a `@vf.stop`-decorated `async` predicate for a custom stop condition
+  (the base class ships `_turn_limit_reached`)
 
 ### Reward functions
 
@@ -139,9 +140,9 @@ All inherit from `BaseRewardFunction` which defines `__call__(prompt, completion
 **ExactMatchReward** -- string equality after normalization:
 ```python
 ExactMatchReward(
-    normalize=True,       # lowercase + strip whitespace
+    normalize=True,       # collapse whitespace (see case_sensitive for casing)
     case_sensitive=False,
-    strip_braces=True,    # remove {}[]()
+    strip_braces=True,    # also strip surrounding {}[]().,;
 )
 ```
 
@@ -157,9 +158,24 @@ TokenF1Reward(
 **IoUReward** -- bounding box overlap:
 ```python
 IoUReward(
-    iou_threshold=0.5,
+    iou_threshold=0.5,    # used only when continuous=False
     normalized=True,      # coordinates in [0,1]
+    continuous=True,      # raw IoU for smooth gradients; False = step at threshold
+    area_penalty_start=0.5,  # penalise boxes covering more than this fraction
 )
+```
+
+With `area_penalty_start < 1.0` and `normalized=True`, a prediction whose
+coordinates fall outside `[0, 1]` is treated as pixel-space. The area penalty
+then needs the image area, so `info["image_area"]` is required and the reward
+**fails closed at 0.0** without it -- including for an otherwise perfect box:
+
+```python
+IoUReward()("", '{"bbox": [10, 10, 50, 50]}', {"bbox": [10, 10, 50, 50]})
+# -> 0.0, with a warning
+
+IoUReward()("", '{"bbox": [10, 10, 50, 50]}', {"bbox": [10, 10, 50, 50], "image_area": 65536})
+# -> 1.0
 ```
 
 **CombinedReward** -- weighted combination:

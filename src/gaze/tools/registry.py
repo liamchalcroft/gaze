@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections import deque
 from dataclasses import dataclass
-from dataclasses import field
+from functools import cached_property
 from io import BytesIO
 from pathlib import Path
 from types import TracebackType
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import cast
 
+import numpy as np
 from beartype import beartype
 from beartype.roar import BeartypeException
 from PIL import Image
@@ -40,6 +40,10 @@ _VALID_PARAM_TYPES = {"string", "number", "integer", "boolean", "array", "object
 
 # Image mode sets for encode_image — hoisted to avoid per-call allocation.
 _JPEG_SAFE_MODES: frozenset[str] = frozenset({"RGB", "L"})
+# Modes whose sample values exceed 8 bits. PIL's convert("L")/convert("RGB")
+# CLIPS these at 255 rather than rescaling, which silently destroys 12- and
+# 16-bit CT/MR data, so they get windowed by actual range instead.
+_HIGH_BIT_DEPTH_MODES: frozenset[str] = frozenset({"I", "I;16", "I;16B", "I;16L", "I;16N", "F"})
 _PNG_UNSAFE_MODES: frozenset[str] = frozenset({"F"})
 _SUPPORTED_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "PNG"})
 
@@ -50,17 +54,42 @@ class EncodedImage:
 
     data: str
     mime_type: str
-    _data_url: str = field(default="", repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        # Pre-compute the data URL once to avoid re-creating the ~500KB+
-        # string on every call.  Uses object.__setattr__ because the
-        # dataclass is frozen.
-        object.__setattr__(self, "_data_url", f"data:{self.mime_type};base64,{self.data}")
+    @cached_property
+    def _data_url(self) -> str:
+        return f"data:{self.mime_type};base64,{self.data}"
 
     def to_data_url(self) -> str:
-        """Convert to a data URL for embedding in HTML/messages."""
+        """Return a data URL for embedding in HTML/messages.
+
+        Built on first use and then cached. Only input images take this path;
+        the visual tools read ``data`` directly, so building it eagerly kept a
+        second ~500KB copy of every tool result alive for no reader.
+        """
         return self._data_url
+
+
+@beartype
+def to_uint8_grayscale(image: Image.Image) -> Image.Image:
+    """Return *image* as 8-bit grayscale, rescaling high-bit-depth modes.
+
+    ``Image.convert("L")`` clips samples above 255, so a 12-bit MR slice with a
+    real maximum of 4095 becomes solid white above 255 and reports a maximum of
+    255 to any measurement tool. For ``I``/``I;16*``/``F`` this instead windows
+    linearly over the image's actual min/max, preserving relative contrast.
+    Other modes are converted normally.
+    """
+    if image.mode not in _HIGH_BIT_DEPTH_MODES:
+        return image if image.mode == "L" else image.convert("L")
+
+    arr = np.asarray(image, dtype=np.float64)
+    low = float(arr.min())
+    high = float(arr.max())
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        # Uniform (or non-finite) data has no range to window over.
+        return Image.fromarray(np.zeros(arr.shape, dtype=np.uint8), mode="L")
+    scaled = ((arr - low) * (255.0 / (high - low))).round().clip(0, 255).astype(np.uint8)
+    return Image.fromarray(scaled, mode="L")
 
 
 @beartype
@@ -87,9 +116,14 @@ def encode_image(
     if fmt not in _SUPPORTED_IMAGE_FORMATS:
         raise ValueError(f"Unsupported image format: {format!r}. Use 'JPEG' or 'PNG'.")
 
-    # JPEG only supports RGB and L modes.  Medical images may use I (32-bit
-    # int), I;16 (16-bit int from DICOM-converted PNGs), or F (float32).
-    # Alpha modes (RGBA, LA, PA) and palette mode (P) also need conversion.
+    # Medical images may use I (32-bit int), I;16 (16-bit int from
+    # DICOM-converted PNGs), or F (float32). Window those to 8-bit first so the
+    # model sees the full dynamic range instead of everything above 255 as white.
+    if image.mode in _HIGH_BIT_DEPTH_MODES:
+        image = to_uint8_grayscale(image)
+
+    # JPEG only supports RGB and L modes. Alpha modes (RGBA, LA, PA) and
+    # palette mode (P) also need conversion.
     if fmt == "JPEG" and image.mode not in _JPEG_SAFE_MODES:
         image = image.convert("RGB")
 
@@ -360,7 +394,6 @@ class ToolRegistry:
         self,
         image_path: Path | None = None,
         tools: list[Tool] | None = None,
-        max_history: int = 100,
         web_search_manager: Any | None = None,
         image_search_manager: Any | None = None,
     ) -> None:
@@ -368,10 +401,6 @@ class ToolRegistry:
         # Initialize specialized managers
         self._image_manager = ImageManager()
         self._documenter = ToolDocumenter(tools)
-
-        # Tool execution history
-        self._tool_history: deque[ToolResult] = deque(maxlen=max_history)
-        self.max_history = max_history
 
         # Lazily-created search managers — reused across tool calls within a
         # single agentic session to keep TCP connections alive.
@@ -405,7 +434,6 @@ class ToolRegistry:
         sessions are properly awaited.
         """
         self._image_manager.close()
-        self._tool_history.clear()
 
     async def aclose(self) -> None:
         """Close all resources including async search manager sessions."""
@@ -507,13 +535,7 @@ class ToolRegistry:
         except (TypeError, BeartypeException) as e:
             raise ToolExecutionError(f"Tool '{tool_name}' received invalid arguments: {e}") from e
 
-        self._tool_history.append(result)
         return result
-
-    @property
-    def history(self) -> list[ToolResult]:
-        """Get the history of tool executions."""
-        return list(self._tool_history)
 
     @beartype
     def get_image_manager(self) -> ImageManager:

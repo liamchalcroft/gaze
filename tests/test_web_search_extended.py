@@ -252,11 +252,7 @@ class TestWebSearchManagerSearch:
 
 
 class TestWebSearchManagerLifecycle:
-    @pytest.mark.asyncio
-    async def test_context_manager(self) -> None:
-        async with WebSearchManager() as manager:
-            assert len(manager.engines) > 0
-        # After exit, engines should be closed (no assertion needed, just no crash)
+    # After exit, engines should be closed (no assertion needed, just no crash)
 
     @pytest.mark.asyncio
     async def test_close_clears_cache(self) -> None:

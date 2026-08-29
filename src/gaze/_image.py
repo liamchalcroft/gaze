@@ -18,6 +18,39 @@ from gaze.tools.registry import EncodedImage
 from gaze.tools.registry import encode_image
 
 
+def _open_and_decode(path: Path) -> Image.Image:
+    """Open *path* and force a full decode, closing the handle on any failure.
+
+    Gates on the header dimensions BEFORE decoding so an oversized image (a
+    decompression bomb) is rejected without allocating its pixel buffer. For
+    PNG/JPEG the header dimensions equal the decoded dimensions, so this bounds
+    the decode.
+    """
+    max_dim = get_config().image.max_image_dimension
+    try:
+        img = Image.open(path)
+    except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
+        raise ValueError(f"Failed to load image '{path}': {e}") from e
+
+    try:
+        if img.width > max_dim or img.height > max_dim:
+            raise ValueError(
+                f"Image dimensions {img.width}x{img.height} exceed "
+                f"maximum allowed dimension of {max_dim}px"
+            )
+        img.load()  # Force full pixel decode into memory
+    except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
+        # A truncated file raises here, after the header check passed. Closing
+        # is what the oversize branch already did; omitting it leaked the file
+        # handle on every failed decode.
+        img.close()
+        raise ValueError(f"Failed to load image '{path}': {e}") from e
+    except BaseException:
+        img.close()
+        raise
+    return img
+
+
 @dataclass(frozen=True)
 class ImageInput:
     """Represents a single image input with optional label.
@@ -33,6 +66,9 @@ class ImageInput:
         height: Image height in pixels (populated after loading)
         encoded: Base64-encoded image (populated after loading)
         pil_image: Loaded PIL Image kept in memory to avoid re-reading from disk
+        owns_pil_image: True when ``pil_image`` was decoded by this library and
+            may therefore be closed by it. False for a caller-supplied image
+            (see :meth:`from_pil`), which the caller keeps using afterwards.
     """
 
     path: Path
@@ -41,6 +77,7 @@ class ImageInput:
     height: int = 0
     encoded: EncodedImage | None = None
     pil_image: Image.Image | None = None
+    owns_pil_image: bool = False
 
     @staticmethod
     @beartype
@@ -64,40 +101,40 @@ class ImageInput:
                 f"Image dimensions {image.width}x{image.height} exceed "
                 f"maximum allowed dimension of {max_dim}px"
             )
+        # Encoding is deferred to load()/aload(). Encoding here would be
+        # wasted work whenever max_encode_dimension is set, because the caller
+        # then downscales and re-encodes at the smaller size.
         return ImageInput(
             path=path or Path("<in-memory>"),
             label=label,
             width=image.width,
             height=image.height,
-            encoded=encode_image(image),
+            encoded=None,
             pil_image=image,
+            owns_pil_image=False,
         )
 
     @beartype
     def load(self) -> ImageInput:
         """Load image and return a new ImageInput with populated fields.
 
-        Returns ``self`` if already loaded (e.g. via :meth:`from_pil`).
+        When pixels are already in memory (e.g. via :meth:`from_pil`) only the
+        base64 encoding is filled in; the image is not re-read from disk.
         """
         if self.pil_image is not None:
-            return self
+            if self.encoded is not None:
+                return self
+            return ImageInput(
+                path=self.path,
+                label=self.label,
+                width=self.width,
+                height=self.height,
+                encoded=encode_image(self.pil_image),
+                pil_image=self.pil_image,
+                owns_pil_image=self.owns_pil_image,
+            )
 
-        max_dim = get_config().image.max_image_dimension
-        try:
-            img = Image.open(self.path)
-            # Gate on header dimensions BEFORE forcing a full decode so an
-            # oversized image (a decompression bomb) is rejected without
-            # allocating its pixel buffer. For PNG/JPEG the header dimensions
-            # equal the decoded dimensions, so this bounds the decode.
-            if img.width > max_dim or img.height > max_dim:
-                img.close()
-                raise ValueError(
-                    f"Image dimensions {img.width}x{img.height} exceed "
-                    f"maximum allowed dimension of {max_dim}px"
-                )
-            img.load()  # Force full pixel decode into memory
-        except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
-            raise ValueError(f"Failed to load image '{self.path}': {e}") from e
+        img = _open_and_decode(self.path)
         return ImageInput(
             path=self.path,
             label=self.label,
@@ -105,6 +142,7 @@ class ImageInput:
             height=img.height,
             encoded=encode_image(img),
             pil_image=img,
+            owns_pil_image=True,
         )
 
     @beartype
@@ -128,19 +166,7 @@ class ImageInput:
         if self.pil_image is not None:
             return self
 
-        max_dim = get_config().image.max_image_dimension
-        try:
-            img = Image.open(self.path)
-            # Gate on header dimensions before the full decode (see load()).
-            if img.width > max_dim or img.height > max_dim:
-                img.close()
-                raise ValueError(
-                    f"Image dimensions {img.width}x{img.height} exceed "
-                    f"maximum allowed dimension of {max_dim}px"
-                )
-            img.load()
-        except (Image.UnidentifiedImageError, OSError, SyntaxError) as e:
-            raise ValueError(f"Failed to load image '{self.path}': {e}") from e
+        img = _open_and_decode(self.path)
         return ImageInput(
             path=self.path,
             label=self.label,
@@ -148,6 +174,7 @@ class ImageInput:
             height=img.height,
             encoded=None,
             pil_image=img,
+            owns_pil_image=True,
         )
 
     async def _aload_pil_only(self) -> ImageInput:
@@ -177,6 +204,7 @@ def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
             height=img.height,
             encoded=encode_image(img.pil_image),
             pil_image=img.pil_image,
+            owns_pil_image=img.owns_pil_image,
         )
     pil = img.pil_image.copy()
     pil.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -184,6 +212,11 @@ def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
         f"Downscaled {img.path.name} from {img.width}x{img.height} "
         f"to {pil.width}x{pil.height} (max_encode_dimension={max_dim})"
     )
+    # The full-resolution source is superseded by the thumbnail and nothing
+    # else refers to it, so release its buffer now rather than at GC time.
+    # A caller-supplied image is never ours to close.
+    if img.owns_pil_image:
+        img.pil_image.close()
     return ImageInput(
         path=img.path,
         label=img.label,
@@ -191,4 +224,5 @@ def _downscale_image(img: ImageInput, max_dim: int) -> ImageInput:
         height=pil.height,
         encoded=encode_image(pil),
         pil_image=pil,
+        owns_pil_image=True,
     )

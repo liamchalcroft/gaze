@@ -13,6 +13,49 @@ import pytest
 class TestRewardImportsAreLightweight:
     """Reward symbols must be importable without verifiers/datasets."""
 
+    def test_rewards_import_with_verifiers_and_datasets_unavailable(self) -> None:
+        """The documented lazy-import property, checked with both packages blocked.
+
+        The other tests here run in an environment where ``verifiers`` happens to
+        be installed, so they cannot detect an accidental eager import. This one
+        blocks both modules in a subprocess and imports the reward symbols.
+        """
+        import subprocess
+        import sys
+        import textwrap
+
+        program = textwrap.dedent(
+            """
+            import sys
+
+            class _Blocker:
+                def find_module(self, name, path=None):
+                    return self.find_spec(name, path)
+
+                def find_spec(self, name, path=None, target=None):
+                    root = name.split(".")[0]
+                    if root in {"verifiers", "datasets"}:
+                        raise ImportError(f"{root} is blocked for this test")
+                    return None
+
+            sys.meta_path.insert(0, _Blocker())
+            from gaze.verifiers import BaseRewardFunction, IoUReward, TokenF1Reward
+
+            assert IoUReward is not None and TokenF1Reward is not None
+            assert BaseRewardFunction is not None
+            assert "verifiers" not in sys.modules
+            assert "datasets" not in sys.modules
+            print("ok")
+            """
+        )
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no external input
+            [sys.executable, "-c", program], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, (
+            f"reward imports pulled in an optional dependency:\n{result.stderr}"
+        )
+        assert "ok" in result.stdout
+
     def test_reward_classes_importable(self) -> None:
         from gaze.verifiers import BaseRewardFunction
         from gaze.verifiers import CombinedReward

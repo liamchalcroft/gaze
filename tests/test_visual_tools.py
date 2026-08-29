@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
+from PIL import ImageFilter
 
 from gaze.config import ImageProcessingConfig
 from gaze.exceptions import ToolExecutionError
 from gaze.tools.registry import ToolRegistry
+from gaze.tools.registry import encode_image
+from gaze.tools.registry import to_uint8_grayscale
 from gaze.tools.visual import WINDOW_PRESETS
+from gaze.tools.visual import _grid_cell_label
 from gaze.tools.visual import adaptive_equalize
 from gaze.tools.visual import adjust_brightness
 from gaze.tools.visual import adjust_contrast
@@ -359,21 +365,38 @@ class TestGetIntensityStats:
 
 
 class TestMeasureDistance:
+    """Normalized points map to pixel indices, so 1.0 is the last pixel."""
+
     def test_horizontal_distance(self) -> None:
         img = _make_image(100, 100)
         result = measure_distance(img, (0.0, 0.5), (1.0, 0.5))
-        assert result["distance_pixels"] == pytest.approx(100.0)
+        assert result["distance_pixels"] == pytest.approx(99.0)
 
     def test_vertical_distance(self) -> None:
         img = _make_image(100, 200)
         result = measure_distance(img, (0.5, 0.0), (0.5, 1.0))
-        assert result["distance_pixels"] == pytest.approx(200.0)
+        assert result["distance_pixels"] == pytest.approx(199.0)
 
     def test_diagonal_distance(self) -> None:
         img = _make_image(100, 100)
         result = measure_distance(img, (0.0, 0.0), (1.0, 1.0))
-        expected = (100**2 + 100**2) ** 0.5
+        expected = (99**2 + 99**2) ** 0.5
         assert result["distance_pixels"] == pytest.approx(expected)
+
+    def test_full_span_cannot_exceed_the_image_diagonal(self) -> None:
+        """Scaling by width rather than width-1 reported a distance off the image."""
+        img = _make_image(256, 256)
+        result = measure_distance(img, (0.0, 0.0), (1.0, 1.0))
+        true_diagonal = (255**2 + 255**2) ** 0.5
+        assert result["distance_pixels"] == pytest.approx(true_diagonal)
+
+    def test_agrees_with_the_intensity_profile_endpoints(self) -> None:
+        """Both tools map a normalized point the same way."""
+        img = _make_image(200, 200)
+        profile = compute_intensity_profile(img, (0.0, 0.0), (1.0, 0.0))
+        result = measure_distance(img, (0.0, 0.0), (1.0, 0.0))
+        # The profile samples 200 pixels spanning indices 0..199.
+        assert result["distance_pixels"] == pytest.approx(len(profile["profile"]) - 1)
 
     def test_same_point_zero(self) -> None:
         img = _make_image()
@@ -390,8 +413,9 @@ class TestMeasureDistance:
     def test_returns_pixel_coords(self) -> None:
         img = _make_image(200, 100)
         result = measure_distance(img, (0.5, 0.5), (1.0, 1.0))
-        assert result["point1_pixels"] == (100.0, 50.0)
-        assert result["point2_pixels"] == (200.0, 100.0)
+        # 1.0 maps to the last index, not one past the edge.
+        assert result["point1_pixels"] == (99.5, 49.5)
+        assert result["point2_pixels"] == (199.0, 99.0)
         assert result["image_size"] == (200, 100)
 
 
@@ -1195,3 +1219,171 @@ class TestCreateVisualTools:
         clahe_params = tool_map["adaptive_equalize"].parameters["clip_limit"]
         assert clahe_params["minimum"] == 2.0
         assert clahe_params["maximum"] == 4.0
+
+
+class TestHighBitDepthMedicalImages:
+    """12/16-bit CT and MR data must be windowed, not clipped at 255.
+
+    ``Image.convert("L")`` clips, so a 4095-max slice used to be handed to the
+    model as solid white above 255 and measured as if its maximum were 255.
+    """
+
+    def _twelve_bit(self) -> Image.Image:
+        return Image.fromarray(np.array([[0, 255, 256, 1000, 4095]], dtype=np.uint16))
+
+    def test_windows_full_range_instead_of_clipping(self) -> None:
+        values = np.array(to_uint8_grayscale(self._twelve_bit())).ravel().tolist()
+
+        assert values[0] == 0
+        assert values[-1] == 255
+        # The clipping bug collapsed every sample above 255 onto 255.
+        assert len({*values}) > 2, f"distinct levels lost to clipping: {values}"
+        assert values == sorted(values), "windowing must preserve ordering"
+
+    def test_eight_bit_images_are_untouched(self) -> None:
+        original = np.array([[0, 64, 128, 192, 255]], dtype=np.uint8)
+        result = np.array(to_uint8_grayscale(Image.fromarray(original)))
+        assert np.array_equal(result, original)
+
+    def test_uniform_high_bit_depth_image_does_not_divide_by_zero(self) -> None:
+        uniform = Image.fromarray(np.full((4, 4), 1000, dtype=np.uint16))
+        assert np.array(to_uint8_grayscale(uniform)).max() == 0
+
+    def test_intensity_stats_describe_a_windowed_image(self) -> None:
+        """Stats must reflect a real distribution, not a clipped-to-white one."""
+        stats = get_intensity_stats(self._twelve_bit())
+        # Under clipping, 4 of 5 samples were 255, forcing the median to 255.
+        assert stats["median"] < 255
+
+    def test_encoding_preserves_contrast(self) -> None:
+        """The bytes sent to the model must not be a blown-out white image."""
+        encoded = encode_image(self._twelve_bit(), format="PNG")
+        decoded = np.array(Image.open(BytesIO(base64.b64decode(encoded.data))).convert("L"))
+        assert decoded.min() == 0
+        assert len(set(decoded.ravel().tolist())) > 2
+
+
+class TestMorphologicalIterations:
+    """`iterations` must scale the structuring element, not repeat a no-op.
+
+    Opening and closing are idempotent, so applying the *composite* n times
+    does exactly what one pass does. The model was told "x3" while nothing
+    beyond the first pass happened.
+    """
+
+    def _speckled(self) -> Image.Image:
+        arr = np.zeros((64, 64), dtype=np.uint8)
+        arr[10:30, 10:30] = 255
+        arr[40:44, 40:60] = 255
+        return Image.fromarray(arr)
+
+    @pytest.mark.parametrize("operation", ["erode", "dilate", "open"])
+    def test_more_iterations_changes_the_result(self, operation: str) -> None:
+        once = np.array(morphological_op(self._speckled(), operation, iterations=1))
+        thrice = np.array(morphological_op(self._speckled(), operation, iterations=3))
+        assert not np.array_equal(once, thrice), (
+            f"{operation} ignored iterations — the composite is idempotent"
+        )
+
+    def test_close_fills_progressively_larger_holes(self) -> None:
+        arr = np.full((80, 80), 255, dtype=np.uint8)
+        arr[20:24, 20:24] = 0
+        img = Image.fromarray(arr)
+
+        once = (np.array(morphological_op(img, "close", iterations=1)) == 0).sum()
+        twice = (np.array(morphological_op(img, "close", iterations=2)) == 0).sum()
+        assert twice < once, "closing with more iterations must fill larger holes"
+
+    def test_single_iteration_is_still_a_classical_opening(self) -> None:
+        """The n=1 behaviour must not change."""
+        img = self._speckled()
+        expected = (
+            img.convert("L").filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+        )
+        assert np.array_equal(
+            np.array(morphological_op(img, "open", iterations=1)), np.array(expected)
+        )
+
+
+class TestToolImageEncodingIsBounded:
+    """Tool results must not inject megabytes of base64 into every turn.
+
+    Successive zooms grow the working image (512 -> 2048 -> 8192) and the
+    encoded copy is re-sent on each following turn. Only the encoded copy is
+    capped; the manager keeps full resolution so measurements stay exact.
+    """
+
+    @pytest.mark.asyncio
+    async def test_encoded_payload_stays_bounded_across_zooms(self, tmp_path: Path) -> None:
+        image_path = tmp_path / "scan.png"
+        Image.new("L", (512, 512)).save(image_path)
+
+        registry = ToolRegistry(image_path=image_path, tools=create_visual_tools(set()))
+        try:
+            payload_sizes = []
+            for _ in range(2):
+                result = await registry.execute("zoom", factor=4.0)
+                payload_sizes.append(len(result.get_image_data_url() or ""))
+
+            limit = ImageProcessingConfig().max_tool_encode_dimension
+            # An 8192px image encodes to ~1MB of base64 without the cap.
+            assert all(size < 200_000 for size in payload_sizes), payload_sizes
+
+            manager = registry.get_image_manager()
+            assert manager.current_image is not None
+            # The working image keeps its full size for later operations.
+            assert max(manager.current_image.size) > limit
+        finally:
+            await registry.aclose()
+
+    @pytest.mark.asyncio
+    async def test_small_images_are_not_resized(self, tmp_path: Path) -> None:
+        """The cap must not touch images that already fit."""
+        image_path = tmp_path / "small.png"
+        Image.new("L", (64, 64)).save(image_path)
+
+        registry = ToolRegistry(image_path=image_path, tools=create_visual_tools(set()))
+        try:
+            before = await registry.execute("adjust_contrast", factor=1.5)
+            manager = registry.get_image_manager()
+            assert manager.current_image is not None
+            assert manager.current_image.size == (64, 64)
+            assert before.get_image_data_url()
+        finally:
+            await registry.aclose()
+
+
+class TestGridCellLabels:
+    """Drawn labels and the cell_labels metadata come from one function.
+
+    They were computed independently with the same expression, so a change to
+    one would silently disagree with the other. `chr(65 + col)` also ran off
+    the end of the alphabet into punctuation past column 25.
+    """
+
+    def test_labels_match_the_documented_scheme(self) -> None:
+        assert _grid_cell_label(0, 0) == "A1"
+        assert _grid_cell_label(2, 1) == "B3"
+
+    def test_columns_past_z_continue_as_letter_pairs(self) -> None:
+        assert _grid_cell_label(0, 25) == "Z1"
+        assert _grid_cell_label(0, 26) == "AA1"
+        assert _grid_cell_label(0, 27) == "AB1"
+
+    def test_labels_stay_alphanumeric(self) -> None:
+        """chr(65 + col) produced '[', '\\\\', ']' for columns 26 onward."""
+        for col in range(60):
+            assert _grid_cell_label(0, col).rstrip("0123456789").isalpha()
+
+    @pytest.mark.asyncio
+    async def test_metadata_labels_match_the_grid_that_was_drawn(self, tmp_path: Path) -> None:
+        image_path = tmp_path / "scan.png"
+        Image.new("L", (64, 64)).save(image_path)
+        registry = ToolRegistry(image_path=image_path, tools=create_visual_tools(set()))
+        try:
+            result = await registry.execute("show_grid", divisions=3)
+            labels = result.metadata["cell_labels"]
+            expected = [_grid_cell_label(r, c) for r in range(3) for c in range(3)]
+            assert list(labels) == expected
+        finally:
+            await registry.aclose()

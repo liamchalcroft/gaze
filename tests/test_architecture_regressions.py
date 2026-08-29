@@ -68,14 +68,29 @@ class TestFrozenResponseSerialization:
         serialized = json.dumps(thawed)
         assert json.loads(serialized) == {"continue": False, "data": {"x": [1, 2]}}
 
-    def test_adapter_uses_deep_thaw_before_json_dumps(self) -> None:
-        """Regression: adapter.py line 74 must call deep_thaw() before json.dumps()."""
+    @pytest.mark.asyncio
+    async def test_adapter_output_is_json_serializable(self) -> None:
+        """The adapter must thaw the frozen response before it is serialized.
 
-        # The adapter's process_verifiers_messages calls deep_thaw on line 74.
-        # Verify the import exists and is the correct function.
-        result = _make_result()
-        payload = deep_thaw(result.final_response)
-        json.dumps(payload)  # must not raise TypeError
+        Asserting that ``deep_thaw`` works in isolation proves nothing about
+        the adapter: deleting the real call left that version of this test
+        green. Drive the adapter instead.
+        """
+        from unittest.mock import AsyncMock
+
+        from gaze import SimpleProcessor
+        from gaze.verifiers.adapter import GazeAdapter
+
+        processor = SimpleProcessor(system_prompt="s", user_message="u")
+        nested = _make_result(final_response={"continue": False, "data": {"x": [1, 2]}})
+        processor.analyze = AsyncMock(return_value=nested)  # type: ignore[method-assign]
+
+        payload = await GazeAdapter(processor=processor).process_verifiers_messages(
+            [{"role": "user", "content": "hi"}], {}
+        )
+
+        json.dumps(payload["response"])  # must not raise TypeError
+        assert payload["response"] == {"continue": False, "data": {"x": [1, 2]}}
 
     def test_raw_mapping_proxy_not_json_serializable(self) -> None:
         """Confirm the underlying problem: MappingProxyType is NOT JSON-serializable."""
@@ -487,9 +502,9 @@ class TestVerifiersAdapterMessageHandling:
 # ===========================================================================
 
 
-class TestExtractCompletionTextParity:
-    """Core and standalone NOVA env extract_completion_text must agree on
-    multi-part assistant content."""
+class TestExtractCompletionText:
+    """extract_completion_text must concatenate every text part of a
+    multi-part assistant message, not just the first."""
 
     def test_core_concatenates_all_text_items(self) -> None:
         from gaze.verifiers.rewards import extract_completion_text
@@ -507,38 +522,6 @@ class TestExtractCompletionTextParity:
         assert "reasoning step" in result
         assert '{"answer": "glioma"}' in result
 
-    def test_standalone_env_concatenates_all_text_items(self) -> None:
-        """Standalone env must concatenate all text items (parity with core)."""
-        import sys
-
-        env_src = Path(__file__).resolve().parent.parent / "environments" / "nova_brain_mri" / "src"
-        sys.path.insert(0, str(env_src))
-        try:
-            from nova_brain_mri._utils import extract_completion_text as env_extract
-        finally:
-            sys.path.pop(0)
-
-        completion = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "reasoning step"},
-                    {"type": "text", "text": '{"answer": "glioma"}'},
-                ],
-            }
-        ]
-        env_result = env_extract(completion)
-        # Standalone env now concatenates all text items (matches core)
-        assert "reasoning step" in env_result
-        assert '{"answer": "glioma"}' in env_result
-
-        from gaze.verifiers.rewards import extract_completion_text
-
-        core_result = extract_completion_text(completion)
-        assert core_result == env_result, (
-            "Standalone and core extract_completion_text must produce identical output"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Helpers for building valid example payloads
@@ -553,12 +536,13 @@ class TestExtractCompletionTextParity:
 class TestIoUComputationParity:
     """All IoU implementations must handle reversed coordinates identically."""
 
-    def test_shared_iou_handles_reversed_coords(self) -> None:
+    def test_shared_iou_rejects_reversed_coords_unless_lenient(self) -> None:
         from gaze.utils.iou import compute_iou as shared_iou
 
         box_reversed = [100.0, 50.0, 20.0, 80.0]
         box_normal = [20.0, 50.0, 100.0, 80.0]
-        assert shared_iou(box_reversed, box_normal) == 1.0
+        assert shared_iou(box_reversed, box_normal) == 0.0
+        assert shared_iou(box_reversed, box_normal, lenient=True) == 1.0
 
     def test_gemex_iou_handles_reversed_coords(self) -> None:
         from examples.gemex_thinkvg.src.rewards.bbox import compute_iou as gemex_iou

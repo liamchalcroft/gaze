@@ -31,6 +31,7 @@ from gaze.exceptions import ToolExecutionError
 from gaze.tools.image_manager import ImageManager
 from gaze.tools.registry import EncodedImage
 from gaze.tools.registry import encode_image
+from gaze.tools.registry import to_uint8_grayscale
 from gaze.tools.tool import Tool
 from gaze.types import ToolResult
 
@@ -231,7 +232,7 @@ def apply_intensity_threshold(
             f"Narrow windows destroy diagnostic information."
         )
 
-    gray = image.convert("L")
+    gray = to_uint8_grayscale(image)
     arr = np.array(gray)
     arr = np.clip(arr, lower, upper)
     # Rescale to 0-255 with explicit clipping to prevent floating point overflow
@@ -344,7 +345,7 @@ def equalize_histogram(image: Image.Image) -> Image.Image:
     Returns:
         Histogram-equalized grayscale image
     """
-    gray = image.convert("L")
+    gray = to_uint8_grayscale(image)
     return ImageOps.equalize(gray)
 
 
@@ -366,7 +367,7 @@ def get_intensity_stats(
     Raises:
         ValueError: If box coordinates are invalid
     """
-    gray = np.array(image.convert("L"))
+    gray = np.array(to_uint8_grayscale(image))
 
     if box is not None:
         x1_n, y1_n, x2_n, y2_n = box
@@ -415,9 +416,13 @@ def measure_distance(
         if not (0 <= pt[0] <= 1 and 0 <= pt[1] <= 1):
             raise ValueError(f"{name} coordinates must be in [0, 1], got {pt}")
 
+    # Map onto pixel *indices* (0 .. w-1), matching compute_intensity_profile.
+    # Scaling by w instead treats the image as a continuous [0, w] extent, which
+    # reports 362 px across a 256 px image whose true corner-to-corner span is
+    # 360.6, and disagrees with the line the profile tool samples.
     w, h = image.size
-    p1_px = (point1[0] * w, point1[1] * h)
-    p2_px = (point2[0] * w, point2[1] * h)
+    p1_px = (point1[0] * (w - 1), point1[1] * (h - 1))
+    p2_px = (point2[0] * (w - 1), point2[1] * (h - 1))
     dist = ((p2_px[0] - p1_px[0]) ** 2 + (p2_px[1] - p1_px[1]) ** 2) ** 0.5
 
     return {
@@ -426,6 +431,23 @@ def measure_distance(
         "point2_pixels": p2_px,
         "image_size": (w, h),
     }
+
+
+def _grid_cell_label(row: int, col: int) -> str:
+    """Return the label for a grid cell, e.g. ``A1``, ``B3``.
+
+    Shared so the labels drawn onto the image and the ``cell_labels`` metadata
+    handed to the model cannot drift apart. Columns past Z continue as AA, AB,
+    rather than running off the end of the alphabet into punctuation.
+    """
+    letters = ""
+    index = col
+    while True:
+        letters = chr(ord("A") + index % 26) + letters
+        index = index // 26 - 1
+        if index < 0:
+            break
+    return f"{letters}{row + 1}"
 
 
 @beartype
@@ -459,7 +481,9 @@ def draw_grid_overlay(
         raise ValueError(f"divisions must be <= {cfg.max_grid_divisions}, got {divisions}")
 
     # Work on RGB copy
-    result = image.convert("RGB").copy()
+    # convert() already returns a new image (a copy when the mode matches),
+    # so an extra .copy() just allocates a second full buffer per call.
+    result = image.convert("RGB")
     draw = ImageDraw.Draw(result)
     w, h = result.size
     font = ImageFont.load_default()
@@ -477,7 +501,7 @@ def draw_grid_overlay(
     bg_color = (0, 0, 0)  # black
     for row in range(divisions):
         for col in range(divisions):
-            label = f"{chr(65 + col)}{row + 1}"
+            label = _grid_cell_label(row, col)
             cx = int((col + 0.5) * w / divisions)
             cy = int((row + 0.5) * h / divisions)
             bbox = font.getbbox(label)
@@ -511,7 +535,7 @@ def detect_edges(
     if method not in ("sobel", "laplacian"):
         raise ValueError(f"method must be 'sobel' or 'laplacian', got {method!r}")
 
-    gray = np.array(image.convert("L"), dtype=np.float64)
+    gray = np.array(to_uint8_grayscale(image), dtype=np.float64)
 
     if method == "sobel":
         # Sobel kernels
@@ -556,7 +580,7 @@ def compute_symmetry_diff(image: Image.Image) -> Image.Image:
     Returns:
         Grayscale difference map (bright = asymmetric regions)
     """
-    gray = np.array(image.convert("L"), dtype=np.float64)
+    gray = np.array(to_uint8_grayscale(image), dtype=np.float64)
     flipped = np.fliplr(gray)
     diff = np.abs(gray - flipped)
     # Normalize to 0-255
@@ -594,7 +618,9 @@ def annotate_region(
     if x2_n <= x1_n or y2_n <= y1_n:
         raise ValueError(f"Invalid box: x2 must be > x1 and y2 must be > y1, got {box}")
 
-    result = image.convert("RGB").copy()
+    # convert() already returns a new image (a copy when the mode matches),
+    # so an extra .copy() just allocates a second full buffer per call.
+    result = image.convert("RGB")
     w, h = result.size
     draw = ImageDraw.Draw(result)
 
@@ -631,7 +657,7 @@ def invert_image(image: Image.Image) -> Image.Image:
     Returns:
         Inverted grayscale image
     """
-    return ImageOps.invert(image.convert("L"))
+    return ImageOps.invert(to_uint8_grayscale(image))
 
 
 # Clinical window presets: (center, width)
@@ -652,13 +678,13 @@ WINDOW_PRESETS: dict[str, tuple[int, int]] = {
     "ct_soft_tissue": (40, 400),
     "ct_stroke": (32, 80),
     "ct_posterior_fossa": (36, 120),
-    # MRI presets (8-bit pixel values)
+    # MRI presets (8-bit pixel values). Unprefixed, unlike the ct_* entries.
+    # Every name here reaches the model three times per request (tool
+    # description, prompt documentation, and schema enum), so exact aliases
+    # cost tokens and present distinct-looking options that behave identically.
     "brain": (128, 230),
-    "mri_brain": (128, 230),
     "flair": (110, 200),
-    "mri_flair": (110, 200),
     "t2": (140, 220),
-    "mri_t2": (140, 220),
     "stroke": (100, 180),
     "posterior_fossa": (120, 210),
 }
@@ -719,7 +745,7 @@ def apply_window_level(
     lower = center - width / 2
     upper = center + width / 2
 
-    gray = np.array(image.convert("L"), dtype=np.float64)
+    gray = np.array(to_uint8_grayscale(image), dtype=np.float64)
 
     # Check that the window meaningfully covers the image's actual data range.
     # CT presets (e.g. bone: center=400, width=1800) applied to 8-bit images
@@ -784,22 +810,25 @@ def adaptive_equalize(
     if tile_size < 2 or tile_size > cfg.max_clahe_tile_size:
         raise ValueError(f"tile_size must be in [2, {cfg.max_clahe_tile_size}], got {tile_size}")
 
-    gray = np.array(image.convert("L"), dtype=np.float64)
+    gray = np.array(to_uint8_grayscale(image), dtype=np.float64)
     h, w = gray.shape
 
-    # Compute tile dimensions
-    th = max(1, h // tile_size)
-    tw = max(1, w // tile_size)
+    # Tile edges spread the remainder evenly instead of dumping it into the
+    # last row/column. A last tile that is tile_size-1 rows taller than the
+    # rest cannot be interpolated against a uniform-grid assumption without a
+    # visible seam along the bottom and right edges.
+    edges_y = np.linspace(0, h, tile_size + 1).round().astype(int)
+    edges_x = np.linspace(0, w, tile_size + 1).round().astype(int)
     n_bins = 256
 
     # Build per-tile CDFs
     cdfs = np.zeros((tile_size, tile_size, n_bins))
     for ty in range(tile_size):
         for tx in range(tile_size):
-            y0 = ty * th
-            x0 = tx * tw
-            y1 = h if ty == tile_size - 1 else (ty + 1) * th
-            x1 = w if tx == tile_size - 1 else (tx + 1) * tw
+            y0, y1 = int(edges_y[ty]), int(edges_y[ty + 1])
+            x0, x1 = int(edges_x[tx]), int(edges_x[tx + 1])
+            if y1 <= y0 or x1 <= x0:
+                continue
             tile = gray[y0:y1, x0:x1].astype(np.uint8)
             hist, _ = np.histogram(tile, bins=n_bins, range=(0, 255))
 
@@ -816,19 +845,22 @@ def adaptive_equalize(
                 cdf = cdf / cdf[-1] * 255
             cdfs[ty, tx] = cdf
 
-    # Map each pixel using bilinear interpolation of tile CDFs (vectorized)
-    py_coords = np.arange(h, dtype=np.float64)
-    px_coords = np.arange(w, dtype=np.float64)
-    # Shape: (h, w) via broadcasting
-    fy = (py_coords[:, np.newaxis] / th) - 0.5
-    fx = (px_coords[np.newaxis, :] / tw) - 0.5
+    # Map each pixel using bilinear interpolation of tile CDFs (vectorized).
+    # Interpolate against the tiles' actual centres rather than a nominal
+    # uniform stride, so a pixel always sits between the CDFs of the tiles it
+    # really lies between.
+    centres_y = (edges_y[:-1] + edges_y[1:] - 1) / 2.0
+    centres_x = (edges_x[:-1] + edges_x[1:] - 1) / 2.0
+    tile_indices = np.arange(tile_size, dtype=np.float64)
+    fy = np.interp(np.arange(h, dtype=np.float64), centres_y, tile_indices)[:, np.newaxis]
+    fx = np.interp(np.arange(w, dtype=np.float64), centres_x, tile_indices)[np.newaxis, :]
 
     ty0 = np.clip(np.floor(fy).astype(np.intp), 0, tile_size - 1)
     ty1 = np.clip(ty0 + 1, 0, tile_size - 1)
     tx0 = np.clip(np.floor(fx).astype(np.intp), 0, tile_size - 1)
     tx1 = np.clip(tx0 + 1, 0, tile_size - 1)
 
-    # Interpolation weights — zero when clamped to same tile index
+    # Interpolation weights, zero when both indices clamp to the same tile
     wy = np.where(ty0 != ty1, fy - np.floor(fy), 0.0)
     wx = np.where(tx0 != tx1, fx - np.floor(fx), 0.0)
 
@@ -872,7 +904,7 @@ def compute_intensity_profile(
         if not (0 <= pt[0] <= 1 and 0 <= pt[1] <= 1):
             raise ValueError(f"{name} coordinates must be in [0, 1], got {pt}")
 
-    gray = np.array(image.convert("L"))
+    gray = np.array(to_uint8_grayscale(image))
     h, w = gray.shape
 
     x0 = int(point1[0] * (w - 1))
@@ -880,10 +912,13 @@ def compute_intensity_profile(
     x1 = int(point2[0] * (w - 1))
     y1 = int(point2[1] * (h - 1))
 
-    # Sample along the line using linear interpolation
+    # Sample along the line, rounding to the nearest pixel. Truncating instead
+    # biases every off-grid sample toward the start point by up to a full pixel,
+    # so the profile would describe a different line than annotate_region draws
+    # for the same two points.
     n_samples = max(abs(x1 - x0), abs(y1 - y0), 1) + 1
-    xs = np.linspace(x0, x1, n_samples).astype(int)
-    ys = np.linspace(y0, y1, n_samples).astype(int)
+    xs = np.round(np.linspace(x0, x1, n_samples)).astype(int)
+    ys = np.round(np.linspace(y0, y1, n_samples)).astype(int)
     xs = np.clip(xs, 0, w - 1)
     ys = np.clip(ys, 0, h - 1)
 
@@ -968,7 +1003,7 @@ def morphological_op(
             f"iterations must be in [1, {cfg.max_morphological_iterations}], got {iterations}"
         )
 
-    result = image.convert("L")
+    result = to_uint8_grayscale(image)
 
     # Optional binarization
     if threshold_value is not None:
@@ -984,16 +1019,19 @@ def morphological_op(
     def _dilate(img: Image.Image) -> Image.Image:
         return img.filter(ImageFilter.MaxFilter(3))
 
+    # Opening and closing are idempotent, so repeating the *composite* does
+    # nothing past the first pass. Scaling the structuring element is what
+    # `iterations` must mean: erode n times then dilate n times (and the
+    # reverse for closing), which removes progressively larger structures.
     ops: dict[str, list[Callable[[Image.Image], Image.Image]]] = {
-        "erode": [_erode],
-        "dilate": [_dilate],
-        "open": [_erode, _dilate],  # erosion then dilation
-        "close": [_dilate, _erode],  # dilation then erosion
+        "erode": [_erode] * iterations,
+        "dilate": [_dilate] * iterations,
+        "open": [_erode] * iterations + [_dilate] * iterations,
+        "close": [_dilate] * iterations + [_erode] * iterations,
     }
 
-    for _ in range(iterations):
-        for op_fn in ops[operation]:
-            result = op_fn(result)
+    for op_fn in ops[operation]:
+        result = op_fn(result)
 
     return result
 
@@ -1018,30 +1056,31 @@ def _require_image(registry: ToolRegistry) -> Image.Image:
     return image_manager.current_image
 
 
-def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
-    """Auto-normalize pixel coordinates to [0, 1] if values indicate pixel space.
+def _maybe_normalize_coords(coords: list[float], image: Image.Image) -> list[float]:
+    """Auto-normalize coordinates to [0, 1] when they look like pixel values.
 
-    Models sometimes pass pixel coordinates (e.g. [200, 150, 380, 350] or
-    [0, 50, 200, 300]) instead of normalized [0, 1] values.
+    Accepts a point ``[x, y]`` or a box ``[x1, y1, x2, y2]``; components are
+    divided by width/height alternately, so the same rule serves both.
 
-    Detection heuristic: values are categorised into three bands:
+    Models sometimes pass pixel coordinates (e.g. ``[200, 150, 380, 350]``)
+    where normalized ones are expected. Values are categorised into three bands:
 
     1. All values in [0, 1] — already normalized, pass through.
-    2. Any value > 1.0 but max(box) < ``_PIXEL_COORD_THRESHOLD`` — likely
-       normalized coordinates with small rounding errors.  Clamp to [0, 1].
-    3. max(box) >= ``_PIXEL_COORD_THRESHOLD`` — clearly pixel coordinates.
-       Normalize by dividing by image dimensions.
+    2. Any value > 1.0 but max < ``_PIXEL_COORD_THRESHOLD`` — normalized with
+       rounding error. Clamp to [0, 1].
+    3. max >= ``_PIXEL_COORD_THRESHOLD`` — pixel coordinates. Divide by the
+       image dimensions.
     """
-    max_val = max(box)
+    max_val = max(coords)
     if max_val <= 1.0:
-        return box
+        return coords
 
     if max_val < _PIXEL_COORD_THRESHOLD:
         # Small overshoot (e.g. 1.001) — clamp, don't normalize.
-        clamped = [max(0.0, min(v, 1.0)) for v in box]
+        clamped = [max(0.0, min(v, 1.0)) for v in coords]
         logger.warning(
             "Clamped near-normalized coords {} -> {} (max {:.4f} < threshold {})",
-            box,
+            coords,
             clamped,
             max_val,
             _PIXEL_COORD_THRESHOLD,
@@ -1049,57 +1088,49 @@ def _maybe_normalize_box(box: list[float], image: Image.Image) -> list[float]:
         return clamped
 
     w, h = image.size
-    normalized = [box[0] / w, box[1] / h, box[2] / w, box[3] / h]
+    normalized = [v / (w if i % 2 == 0 else h) for i, v in enumerate(coords)]
     logger.warning(
-        "Auto-normalized pixel coords {} -> {:.3f},{:.3f},{:.3f},{:.3f} (image {}x{})",
-        box,
-        *normalized,
+        "Auto-normalized pixel coords {} -> {} (image {}x{})",
+        coords,
+        [round(v, 3) for v in normalized],
         w,
         h,
     )
     return normalized
 
 
-def _maybe_normalize_point(point: list[float], image: Image.Image) -> list[float]:
-    """Auto-normalize pixel coordinates to [0, 1] if values indicate pixel space.
+def _normalized_in_unit_range(
+    coords: list[float], image: Image.Image, *, name: str = "box"
+) -> list[float]:
+    """Auto-normalize *coords* then require every component to lie in [0, 1].
 
-    Same three-band heuristic as :func:`_maybe_normalize_box` but for
-    2-element point arrays.
+    The normalize-then-range-check pair was repeated at five call sites, each
+    with its own wording; this keeps them from drifting apart.
     """
-    max_val = max(point)
-    if max_val <= 1.0:
-        return point
-
-    if max_val < _PIXEL_COORD_THRESHOLD:
-        clamped = [max(0.0, min(v, 1.0)) for v in point]
-        logger.warning(
-            "Clamped near-normalized point {} -> {} (max {:.4f} < threshold {})",
-            point,
-            clamped,
-            max_val,
-            _PIXEL_COORD_THRESHOLD,
-        )
-        return clamped
-
-    w, h = image.size
-    normalized = [point[0] / w, point[1] / h]
-    logger.warning(
-        "Auto-normalized pixel point {} -> {:.3f},{:.3f} (image {}x{})",
-        point,
-        *normalized,
-        w,
-        h,
-    )
+    normalized = _maybe_normalize_coords(coords, image)
+    for index, value in enumerate(normalized):
+        if not 0 <= value <= 1:
+            raise ToolExecutionError(
+                f"{name} coordinates must be in [0, 1], got value {value} at index {index}"
+            )
     return normalized
 
 
-def _get_current_image(registry: ToolRegistry) -> Image.Image:
-    """Get current image after a transform (guaranteed non-None by transform_image)."""
-    image_manager = registry.get_image_manager()
-    img = image_manager.current_image
-    if img is None:
-        raise ToolExecutionError("Image unexpectedly None after transform")
-    return img
+def _downscale_for_encoding(image: Image.Image) -> Image.Image:
+    """Bound the pixels sent back to the model, keeping *image* itself intact.
+
+    Successive zooms grow the working image quickly (512 -> 2048 -> 8192), and
+    the encoded copy is injected into the conversation on every following turn.
+    Resolution beyond a VLM's vision resolution buys nothing, so cap the copy
+    that gets encoded while the manager keeps the full-size image for further
+    operations and measurements.
+    """
+    limit = _get_image_config().max_tool_encode_dimension
+    if image.width <= limit and image.height <= limit:
+        return image
+    shrunk = image.copy()
+    shrunk.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+    return shrunk
 
 
 async def _transform_and_encode(
@@ -1118,7 +1149,7 @@ async def _transform_and_encode(
         current = mgr.current_image
         if current is None:
             raise ToolExecutionError("Image unexpectedly None after transform")
-        encoded = encode_image(current)
+        encoded = encode_image(_downscale_for_encoding(current))
         return current, encoded
 
     return await asyncio.to_thread(_work, image_manager)
@@ -1138,7 +1169,7 @@ async def _read_only_encode(
 
     def _work() -> tuple[Image.Image, EncodedImage]:
         result = operation(image)
-        encoded = encode_image(result)
+        encoded = encode_image(_downscale_for_encoding(result))
         return result, encoded
 
     return await asyncio.to_thread(_work)
@@ -1186,7 +1217,7 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
 
     # Auto-normalize pixel coords before range validation
     image = _require_image(registry)
-    box = _maybe_normalize_box(box, image)
+    box = _maybe_normalize_coords(box, image)
 
     for i, value in enumerate(box):
         if not 0 <= value <= 1:
@@ -1204,7 +1235,11 @@ async def _execute_crop(registry: ToolRegistry, box: list[float]) -> ToolResult:
         raise ToolExecutionError(f"Invalid crop region: {e}") from e
 
     new_size = current.size
-    area_percentage = (x2 - x1) * (y2 - y1) * 100
+    # Derive from the crop that actually happened, not the requested box: the
+    # pixel conversion truncates, so the requested fraction overstates the
+    # region the model is now looking at.
+    original_area = original_size[0] * original_size[1]
+    area_percentage = (new_size[0] * new_size[1]) / original_area * 100 if original_area else 0.0
 
     return ToolResult(
         tool_name="crop",
@@ -1335,7 +1370,7 @@ async def _execute_reset(registry: ToolRegistry) -> ToolResult:
 
     image_manager.reset_to_original()
 
-    current = _get_current_image(registry)
+    current = _require_image(registry)
 
     # Reuse cached encoding of the original image when available
     encoded = image_manager.original_encoding
@@ -1435,12 +1470,7 @@ async def _execute_intensity_stats(
     if box is not None:
         if len(box) != 4:
             raise ToolExecutionError(f"box requires [x1, y1, x2, y2], got {len(box)} values")
-        box = _maybe_normalize_box(box, image)
-        for i, value in enumerate(box):
-            if not 0 <= value <= 1:
-                raise ToolExecutionError(
-                    f"box coordinates must be in [0, 1], got value {value} at index {i}"
-                )
+        box = _normalized_in_unit_range(box, image)
         box_tuple = (box[0], box[1], box[2], box[3])
 
     try:
@@ -1472,15 +1502,8 @@ async def _execute_measure(
             raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
 
     image = _require_image(registry)
-    point1 = _maybe_normalize_point(point1, image)
-    point2 = _maybe_normalize_point(point2, image)
-
-    for name, pt in [("point1", point1), ("point2", point2)]:
-        for i, value in enumerate(pt):
-            if not 0 <= value <= 1:
-                raise ToolExecutionError(
-                    f"{name} coordinates must be in [0, 1], got value {value} at index {i}"
-                )
+    point1 = _normalized_in_unit_range(point1, image, name="point1")
+    point2 = _normalized_in_unit_range(point2, image, name="point2")
 
     try:
         result = await asyncio.to_thread(
@@ -1515,7 +1538,7 @@ async def _execute_show_grid(registry: ToolRegistry, divisions: int) -> ToolResu
 
     # Build cell labels list
     cell_labels = [
-        f"{chr(65 + col)}{row + 1}" for row in range(divisions) for col in range(divisions)
+        _grid_cell_label(row, col) for row in range(divisions) for col in range(divisions)
     ]
 
     return ToolResult(
@@ -1592,13 +1615,7 @@ async def _execute_annotate_region(
             )
 
     image = _require_image(registry)
-    box = _maybe_normalize_box(box, image)
-
-    for i, value in enumerate(box):
-        if not 0 <= value <= 1:
-            raise ToolExecutionError(
-                f"box coordinates must be in [0, 1], got value {value} at index {i}"
-            )
+    box = _normalized_in_unit_range(box, image)
     box_tuple = (box[0], box[1], box[2], box[3])
 
     try:
@@ -1721,15 +1738,8 @@ async def _execute_intensity_profile(
             raise ToolExecutionError(f"{name} must have 2 values [x, y], got {len(pt)}")
 
     image = _require_image(registry)
-    point1 = _maybe_normalize_point(point1, image)
-    point2 = _maybe_normalize_point(point2, image)
-
-    for name, pt in [("point1", point1), ("point2", point2)]:
-        for i, value in enumerate(pt):
-            if not 0 <= value <= 1:
-                raise ToolExecutionError(
-                    f"{name} coordinates must be in [0, 1], got value {value} at index {i}"
-                )
+    point1 = _normalized_in_unit_range(point1, image, name="point1")
+    point2 = _normalized_in_unit_range(point2, image, name="point2")
 
     try:
         result = await asyncio.to_thread(

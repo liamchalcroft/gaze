@@ -49,10 +49,6 @@ from gaze.types import Turn
 from gaze.utils.json_coerce import coerce_json_types
 from gaze.utils.json_extract import extract_json_from_text
 
-# Maximum characters allowed in a single tool result message.
-# Limits prompt-injection surface from external data (PubMed abstracts, etc.).
-_MAX_TOOL_CONTENT_CHARS = 8_000
-
 # Regex for ASCII/Unicode control characters (except newline/tab).
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
@@ -89,7 +85,20 @@ _INTENSITY_MODIFYING_TOOLS = frozenset(
 )
 
 
-def _sanitize_tool_content(text: str, *, max_chars: int = _MAX_TOOL_CONTENT_CHARS) -> str:
+_SUPPORTED_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"})
+
+
+def _validate_image_path(path: Path) -> None:
+    """Reject traversal, missing files, and unsupported formats."""
+    if ".." in path.parts:
+        raise ValueError(f"Path traversal detected: {path}")
+    if not path.exists():
+        raise FileNotFoundError(f"Image file not found: {path}")
+    if path.suffix.lower() not in _SUPPORTED_IMAGE_SUFFIXES:
+        raise ValueError(f"Unsupported image format: {path.suffix}")
+
+
+def _sanitize_tool_content(text: str, *, max_chars: int) -> str:
     """Sanitize tool result text before injecting into the LLM conversation.
 
     1. Strip control characters that could confuse tokenizers.
@@ -216,13 +225,15 @@ class AgenticProcessorBase(ABC):
         self._shared_web_search_manager = None
         self._shared_image_search_manager = None
 
-        # Per-processor caches — tools, schemas, and docs are invariant across
-        # analyze() calls because use_tools/use_web_search/_disabled_tools are
-        # fixed at construction time.
+        # Per-processor caches. use_tools/use_web_search/_disabled_tools are
+        # fixed at construction, but the offered tool set still differs between
+        # an image run (visual + search) and a text-only run (search only), so
+        # the schema and doc caches are keyed on whether images were supplied.
+        # Getting this wrong advertises visual tools the registry then rejects.
         self._visual_tools_cache: list[Tool] | None = None
         self._search_tools_cache: list[Tool] | None = None
-        self._tool_schemas_cache: list[dict[str, Any]] | None = None
-        self._tool_docs_cache: str | None = None
+        self._tool_schemas_cache: dict[bool, list[dict[str, Any]]] = {}
+        self._tool_docs_cache: dict[bool, str] = {}
 
     @beartype
     def _ensure_initialized(self) -> None:
@@ -345,9 +356,10 @@ class AgenticProcessorBase(ABC):
         active_image = images[0]
 
         # If the PIL Image was kept from load(), hand it directly to the
-        # ImageManager to avoid re-reading the file from disk.
-        # transfer_ownership=True avoids an extra ~12MB copy; the
-        # ImageInput.pil_image reference is not used after this point.
+        # ImageManager to avoid re-reading the file from disk. Ownership is
+        # transferred (skipping a full-size copy) only for pixels this library
+        # decoded; a caller-supplied Image is copied, because the registry
+        # closes what it owns and the caller keeps using theirs.
         if active_image.pil_image is not None:
             registry = ToolRegistry(
                 tools=tools,
@@ -358,7 +370,7 @@ class AgenticProcessorBase(ABC):
             mgr.set_preloaded_image(
                 active_image.pil_image,
                 active_image.path,
-                transfer_ownership=True,
+                transfer_ownership=active_image.owns_pil_image,
             )
             if active_image.encoded is not None:
                 mgr.original_encoding = active_image.encoded
@@ -500,10 +512,12 @@ class AgenticProcessorBase(ABC):
         if raw is None:
             parsed["continue"] = False
             logger.warning(f"Turn {turn_idx + 1}: coerced null 'continue' to False")
-        elif isinstance(raw, int):
+        elif isinstance(raw, int | float) and not isinstance(raw, bool):
+            # Models that stringify then coerce emit 1.0 as readily as 1.
             parsed["continue"] = bool(raw)
             logger.warning(
-                f"Turn {turn_idx + 1}: coerced int 'continue' value {raw!r} to bool {bool(raw)!r}"
+                f"Turn {turn_idx + 1}: coerced numeric 'continue' value {raw!r} "
+                f"to bool {bool(raw)!r}"
             )
         elif isinstance(raw, str) and raw.strip().lower() in ("true", "false", "yes", "no"):
             coerced = raw.strip().lower() in ("true", "yes")
@@ -512,11 +526,59 @@ class AgenticProcessorBase(ABC):
                 f"Turn {turn_idx + 1}: coerced string 'continue' value {raw!r} to bool {coerced!r}"
             )
         else:
-            raise AgenticProcessingError(
-                "Response field 'continue' must be boolean",
-                turns_completed=turn_idx + 1,
-                partial_response={"error": "invalid_continue_flag"},
+            # Treat an unrecognized flag as "done", exactly as a missing one is
+            # treated. Raising here ended the whole run on turn 1 of 10 over a
+            # single malformed field, while every neighbouring malformed-output
+            # case is nudge-recoverable: the response still has to pass
+            # validate_response, and the normal nudge path handles it if not.
+            parsed["continue"] = False
+            logger.warning(
+                f"Turn {turn_idx + 1}: unrecognized 'continue' value {raw!r}; treating as False"
             )
+
+    @beartype
+    def _recover_response(
+        self,
+        raw: dict[str, Any],
+        response_schema: dict[str, Any] | None,
+        turn_idx: int,
+    ) -> tuple[dict[str, Any], bool]:
+        """Normalize a parsed response and report whether it satisfies the task.
+
+        One pipeline for every place a response is recovered: per turn, the two
+        salvage paths, and the final check. Each of those grew its own step
+        order, so a response accepted on one path could be rejected on another
+        purely by which branch produced it.
+
+        Order: coerce declared types, normalize the reserved ``continue`` flag,
+        then (only if validation fails) try wrapping keys that match a
+        sub-schema rather than the top level, which is how small models return
+        a bare inner object.
+
+        Returns the response to use and whether it validates.
+        """
+        if response_schema is not None:
+            coerce_json_types(raw, response_schema)
+        self._normalize_continue_flag(raw, turn_idx)
+
+        if self.validate_response(raw):
+            return raw, True
+
+        if response_schema is not None:
+            wrapped = _try_wrap_inner_schema(raw, response_schema)
+            if wrapped is not raw:
+                # Coercion above ran on the un-wrapped structure, where nested
+                # field names did not match the schema; now that they sit under
+                # the right parent, it can reach them.
+                coerce_json_types(wrapped, response_schema)
+                if self.validate_response(wrapped):
+                    logger.warning(
+                        f"Recovered response via inner-schema wrapping "
+                        f"(original keys: {list(raw.keys())[:10]})"
+                    )
+                    return wrapped, True
+
+        return raw, False
 
     @beartype
     async def analyze(
@@ -584,49 +646,21 @@ class AgenticProcessorBase(ABC):
         if images is None:
             return []
 
-        # --- Single PIL Image ---
-        if isinstance(images, Image.Image):
-            if labels is not None and len(labels) != 1:
-                raise ValueError(
-                    f"Number of labels ({len(labels)}) must match number of images (1)"
-                )
-            label = labels[0] if labels else None
-            return [ImageInput.from_pil(images, label=label)]
-
-        # --- Single Path ---
-        if isinstance(images, Path):
-            if labels is not None and len(labels) != 1:
-                raise ValueError(
-                    f"Number of labels ({len(labels)}) must match number of images (1)"
-                )
-            if ".." in images.parts:
-                raise ValueError(f"Path traversal detected: {images}")
-            if not images.exists():
-                raise FileNotFoundError(f"Image file not found: {images}")
-            if images.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
-                raise ValueError(f"Unsupported image format: {images.suffix}")
-            label = labels[0] if labels else None
-            return [ImageInput(path=images, label=label)]
-
-        # --- List inputs ---
-        if labels is not None and len(images) != len(labels):
+        items: list[Path | Image.Image] = (
+            [images] if isinstance(images, Path | Image.Image) else list(images)
+        )
+        if labels is not None and len(labels) != len(items):
             raise ValueError(
-                f"Number of labels ({len(labels)}) must match number of images ({len(images)})"
+                f"Number of labels ({len(labels)}) must match number of images ({len(items)})"
             )
 
         result: list[ImageInput] = []
-        for i, item in enumerate(images):
-            label = labels[i] if labels and i < len(labels) else None
+        for i, item in enumerate(items):
+            label = labels[i] if labels else None
             if isinstance(item, Image.Image):
                 result.append(ImageInput.from_pil(item, label=label))
             else:
-                # Path
-                if ".." in item.parts:
-                    raise ValueError(f"Path traversal detected: {item}")
-                if not item.exists():
-                    raise FileNotFoundError(f"Image file not found: {item}")
-                if item.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}:
-                    raise ValueError(f"Unsupported image format: {item.suffix}")
+                _validate_image_path(item)
                 result.append(ImageInput(path=item, label=label))
         return result
 
@@ -744,12 +778,12 @@ class AgenticProcessorBase(ABC):
                 system_prompt += f"\n\nField descriptions:\n{hints_block}"
 
         if tool_registry and self.max_turns > 1:
-            # Reuse cached docs across analyze() calls — tools are invariant.
-            if self._tool_docs_cache is None:
-                self._tool_docs_cache = (
+            has_images = bool(images)
+            if has_images not in self._tool_docs_cache:
+                self._tool_docs_cache[has_images] = (
                     tool_registry.get_documenter().generate_prompt_documentation()
                 )
-            tool_docs = self._tool_docs_cache
+            tool_docs = self._tool_docs_cache[has_images]
             if tool_docs:
                 system_prompt = (
                     f"{system_prompt}\n\n"
@@ -793,17 +827,20 @@ class AgenticProcessorBase(ABC):
         if model_adapter is None:
             raise RuntimeError("Model adapter not initialized after _ensure_initialized()")
 
-        # Reuse cached schemas across analyze() calls — tools are invariant.
         if tool_registry is not None:
-            if self._tool_schemas_cache is None:
-                self._tool_schemas_cache = tool_registry.get_tool_schemas()
-            tool_schemas = self._tool_schemas_cache
+            has_images = bool(images)
+            if has_images not in self._tool_schemas_cache:
+                self._tool_schemas_cache[has_images] = tool_registry.get_tool_schemas()
+            tool_schemas = self._tool_schemas_cache[has_images]
         else:
             tool_schemas = None
 
         total_tokens: int = 0
         nudge_count: int = 0
-        total_tool_calls: int = 0
+        # Consecutive turns without a tool call. A run that used one tool early
+        # and then stalled is just as stuck as one that never used any, so the
+        # idle check counts a streak rather than the run total.
+        idle_turns: int = 0
         coord_space_modified: bool = False
         intensity_modified: bool = False
         idle_tool_nudged: bool = False
@@ -818,6 +855,26 @@ class AgenticProcessorBase(ABC):
                 "Replace every placeholder with your actual findings. "
                 'Set "continue": false. Output ONLY the JSON.]'
             )
+
+        def _nudge(reason: str, guidance: str) -> None:
+            """Append a recovery prompt after an unusable model response.
+
+            *reason* is logged; *guidance* is what the model is told. Once the
+            nudge budget is spent, the force-finalize template replaces the
+            tailored guidance so the model gets one unambiguous instruction.
+            """
+            nonlocal nudge_count
+            nudge_count += 1
+            logger.warning(
+                f"Turn {turn_idx + 1} {reason.rstrip('.')}. "
+                f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
+            )
+            content = (
+                _force_finalize_message()
+                if nudge_count >= self._max_consecutive_nudges
+                else f"[System: {guidance}]"
+            )
+            messages.append({"role": "user", "content": content})
 
         for turn_idx in range(self.max_turns):
             is_last_turn = turn_idx == self.max_turns - 1
@@ -922,24 +979,22 @@ class AgenticProcessorBase(ABC):
                 # text alongside the tool calls — some models do both.  If the
                 # text is a valid, complete response we can salvage it.
                 if response_text.strip():
-                    salvaged = extract_json_from_text(response_text)
-                    if salvaged is not None and response_schema is not None:
-                        coerce_json_types(salvaged, response_schema)
-                    if (
-                        salvaged is not None
-                        and isinstance(salvaged.get("continue"), bool)
-                        and self.validate_response(salvaged)
-                    ):
-                        logger.warning(
-                            f"Turn {turn_idx + 1}: Model returned tool calls on "
-                            f"{'final turn' if is_last_turn else 'tools-unavailable turn'} "
-                            f"alongside a valid JSON response — salvaging text response."
+                    extracted = extract_json_from_text(response_text)
+                    if extracted is not None:
+                        salvaged, salvaged_ok = self._recover_response(
+                            extracted, response_schema, turn_idx
                         )
-                        salvaged["continue"] = False
-                        # Record the turn (without executing the spurious tool calls)
-                        turns.append(Turn(role="assistant", content=response_text))
-                        final_response = salvaged
-                        break
+                        if salvaged_ok:
+                            logger.warning(
+                                f"Turn {turn_idx + 1}: Model returned tool calls on "
+                                f"{'final turn' if is_last_turn else 'tools-unavailable turn'} "
+                                f"alongside a valid JSON response — salvaging text response."
+                            )
+                            salvaged["continue"] = False
+                            # Record the turn without executing the spurious calls.
+                            turns.append(Turn(role="assistant", content=response_text))
+                            final_response = salvaged
+                            break
 
                 reason = (
                     "tools were withheld on final turn"
@@ -1038,7 +1093,7 @@ class AgenticProcessorBase(ABC):
                 )
                 turns.append(tool_turn)
                 nudge_count = 0  # Successful tool calls reset nudge counter
-                total_tool_calls += len(typed_tool_calls)
+                idle_turns = 0
                 # Inject turn counter so the model can budget remaining turns
                 messages.append(
                     {
@@ -1063,28 +1118,12 @@ class AgenticProcessorBase(ABC):
             # Detect truncated responses before attempting JSON parsing
             if gen_log.finish_reason == "length":
                 if not is_last_turn:
-                    nudge_count += 1
-                    # Truncated on intermediate turn — nudge model to use tools
-                    # or produce concise JSON on the next turn.
-                    logger.warning(
-                        f"Turn {turn_idx + 1} truncated (completion_tokens="
-                        f"{gen_log.completion_tokens}). Nudge {nudge_count}/"
-                        f"{self._max_consecutive_nudges}."
+                    _nudge(
+                        f"truncated (completion_tokens={gen_log.completion_tokens})",
+                        "Your previous response was too long and got cut off. Be more "
+                        "concise. Respond with ONLY a short JSON object — no explanations "
+                        f"outside the JSON. Required structure:\n{skeleton_str}",
                     )
-                    if nudge_count >= self._max_consecutive_nudges:
-                        messages.append({"role": "user", "content": _force_finalize_message()})
-                    else:
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "[System: Your previous response was too long and got "
-                                    "cut off. Be more concise. Respond with ONLY a short "
-                                    "JSON object — no explanations outside the JSON. "
-                                    f"Required structure:\n{skeleton_str}]"
-                                ),
-                            }
-                        )
                     continue
                 # Last turn truncated — try to salvage partial JSON before failing.
                 # Thinking models often consume most of the token budget on
@@ -1092,15 +1131,11 @@ class AgenticProcessorBase(ABC):
                 if response_text.strip():
                     salvaged = extract_json_from_text(response_text)
                     if salvaged is not None and isinstance(salvaged, dict):
+                        # Truncated output often starts an inner object (e.g.
+                        # caption fields) before being cut off, which the
+                        # wrapping step inside _recover_response handles.
+                        salvaged, _ = self._recover_response(salvaged, response_schema, turn_idx)
                         salvaged["continue"] = False
-                        if response_schema is not None:
-                            coerce_json_types(salvaged, response_schema)
-                        # If salvaged keys don't match top-level schema but DO
-                        # match a sub-schema property, wrap them.  This handles
-                        # truncated output where the model started generating an
-                        # inner object (e.g. caption fields) before being cut off.
-                        if response_schema is not None and not self.validate_response(salvaged):
-                            salvaged = _try_wrap_inner_schema(salvaged, response_schema)
                         logger.warning(
                             f"Turn {turn_idx + 1} truncated but salvaged partial JSON "
                             f"(keys: {list(salvaged.keys())[:10]})"
@@ -1133,25 +1168,12 @@ class AgenticProcessorBase(ABC):
             # Handle empty or non-JSON responses on intermediate turns:
             # nudge the model instead of crashing.
             if not response_text.strip() and not is_last_turn:
-                nudge_count += 1
-                logger.warning(
-                    f"Turn {turn_idx + 1} returned empty response with no tool calls. "
-                    f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
+                _nudge(
+                    "returned empty response with no tool calls",
+                    "You returned an empty response. Respond with ONLY a JSON object. "
+                    "Use tools if you need more information, or set 'continue': false "
+                    f"to finalize. Required structure:\n{skeleton_str}",
                 )
-                if nudge_count >= self._max_consecutive_nudges:
-                    messages.append({"role": "user", "content": _force_finalize_message()})
-                else:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[System: You returned an empty response. Respond with "
-                                "ONLY a JSON object. Use tools if you need more "
-                                "information, or set 'continue': false to finalize. "
-                                f"Required structure:\n{skeleton_str}]"
-                            ),
-                        }
-                    )
                 continue
 
             try:
@@ -1163,26 +1185,12 @@ class AgenticProcessorBase(ABC):
                 fallback = extract_json_from_text(response_text)
                 if fallback is None:
                     if not is_last_turn:
-                        nudge_count += 1
-                        # On intermediate turns, nudge instead of crashing
-                        logger.warning(
-                            f"Turn {turn_idx + 1} returned non-JSON text. "
-                            f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
+                        _nudge(
+                            "returned non-JSON text",
+                            "Your response was not valid JSON. Respond with ONLY a JSON "
+                            "object — no markdown, no explanation outside the JSON. "
+                            f"Required structure:\n{skeleton_str}",
                         )
-                        if nudge_count >= self._max_consecutive_nudges:
-                            messages.append({"role": "user", "content": _force_finalize_message()})
-                        else:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        "[System: Your response was not valid JSON. "
-                                        "Respond with ONLY a JSON object — no markdown, "
-                                        "no explanation outside the JSON. Required "
-                                        f"structure:\n{skeleton_str}]"
-                                    ),
-                                }
-                            )
                         continue
                     raise AgenticProcessingError(
                         f"No valid JSON found on turn {turn_idx + 1}. "
@@ -1193,26 +1201,12 @@ class AgenticProcessorBase(ABC):
 
             if not isinstance(parsed_obj, dict):
                 if not is_last_turn:
-                    nudge_count += 1
-                    logger.warning(
-                        f"Turn {turn_idx + 1} returned non-object JSON "
-                        f"(got {type(parsed_obj).__name__}). "
-                        f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
+                    _nudge(
+                        f"returned non-object JSON (got {type(parsed_obj).__name__})",
+                        f"Your response was a JSON {type(parsed_obj).__name__}, not an "
+                        "object. Respond with ONLY a JSON object matching this "
+                        f"structure:\n{skeleton_str}",
                     )
-                    if nudge_count >= self._max_consecutive_nudges:
-                        messages.append({"role": "user", "content": _force_finalize_message()})
-                    else:
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "[System: Your response was a JSON "
-                                    f"{type(parsed_obj).__name__}, not an object. "
-                                    "Respond with ONLY a JSON object matching this "
-                                    f"structure:\n{skeleton_str}]"
-                                ),
-                            }
-                        )
                     continue
                 raise AgenticProcessingError(
                     "Model response must be a JSON object",
@@ -1221,24 +1215,24 @@ class AgenticProcessorBase(ABC):
                 )
 
             parsed: dict[str, Any] = parsed_obj
-            nudge_count = 0  # Valid JSON resets nudge counter
+            idle_turns += 1
 
-            # Coerce types centrally so processors don't need to call it
-            # individually.  Runs before validate_response() to prevent
-            # unnecessary nudges from string-vs-number mismatches.
-            if response_schema is not None:
-                coerce_json_types(parsed, response_schema)
-
-            # Normalize the reserved continue flag, then consult the hook.
-            self._normalize_continue_flag(parsed, turn_idx)
+            parsed, response_is_valid = self._recover_response(parsed, response_schema, turn_idx)
             wants_continue = self.should_continue(parsed)
+
+            # Only a response that actually satisfies the task refills the nudge
+            # budget. Resetting on any parsed JSON object would pin the counter
+            # at 1 for a model that keeps returning well-formed but invalid
+            # output, the most common local-model failure, so the escalation to
+            # the force-finalize template would never fire.
+            if response_is_valid:
+                nudge_count = 0
 
             if not wants_continue:
                 # Model says it's done — but if the response is incomplete
                 # (fails validation) and we have turns left, nudge instead
                 # of accepting a garbage final response.
-                if not is_last_turn and not self.validate_response(parsed):
-                    nudge_count += 1
+                if not is_last_turn and not response_is_valid:
                     # Identify missing required fields from schema to guide the model
                     missing_hint = ""
                     if response_schema is not None:
@@ -1257,26 +1251,14 @@ class AgenticProcessorBase(ABC):
                                 " invalid types or values (check numbers, booleans,"
                                 " nested objects)."
                             )
-                    logger.warning(
-                        f"Turn {turn_idx + 1} returned incomplete response "
-                        f"(keys: {list(parsed.keys())[:10]}).{missing_hint} "
-                        f"Nudge {nudge_count}/{self._max_consecutive_nudges}."
+                    _nudge(
+                        f"returned incomplete response "
+                        f"(keys: {list(parsed.keys())[:10]}).{missing_hint}",
+                        f"Your response is incomplete — it failed validation.{missing_hint} "
+                        f"Respond with a complete JSON object matching this structure:\n"
+                        f"{skeleton_str}\n"
+                        "Set 'continue': true if you need more turns.",
                     )
-                    if nudge_count >= self._max_consecutive_nudges:
-                        messages.append({"role": "user", "content": _force_finalize_message()})
-                    else:
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "[System: Your response is incomplete — it failed "
-                                    f"validation.{missing_hint} Respond with a complete "
-                                    "JSON object matching this structure:\n"
-                                    f"{skeleton_str}\n"
-                                    "Set 'continue': true if you need more turns.]"
-                                ),
-                            }
-                        )
                     continue
                 final_response = parsed
                 break
@@ -1292,13 +1274,12 @@ class AgenticProcessorBase(ABC):
             # used any after several turns, force finalize to avoid token waste.
             # After the first nudge, if the model *still* doesn't use tools,
             # force-accept whatever it returned rather than burning more turns.
-            if (
-                tool_registry is not None
-                and total_tool_calls == 0
-                and turn_idx >= self._idle_tool_turns_limit - 1
-            ):
-                if idle_tool_nudged:
-                    # Already nudged once — accept this response as final.
+            if tool_registry is not None and idle_turns >= self._idle_tool_turns_limit:
+                if idle_tool_nudged and response_is_valid:
+                    # Already nudged once, and this response would pass as a
+                    # final answer. Accepting an *invalid* one here would end
+                    # the run only to fail schema validation below, skipping
+                    # the nudge that could still have recovered it.
                     logger.warning(
                         f"Turn {turn_idx + 1}: Still no tools after idle-tool nudge. "
                         f"Force-accepting current response."
@@ -1332,49 +1313,26 @@ class AgenticProcessorBase(ABC):
                 turns_completed=len(turns),
             )
 
-        # Coerce types on the final response (catches salvaged paths that
-        # bypassed the per-turn coerce above).
-        if response_schema is not None:
-            coerce_json_types(final_response, response_schema)
-
+        # Every path that reaches here produced final_response through
+        # _recover_response, so this is a contract check rather than another
+        # recovery attempt.
         if not self.validate_response(final_response):
-            # Small/local models sometimes return a sub-object (e.g. the
-            # inner keys of ``region_of_interest``) instead of the full
-            # top-level schema.  The same wrapping logic used for truncated
-            # responses can recover these cases.
+            missing_fields: list[str] = []
             if response_schema is not None:
-                wrapped = _try_wrap_inner_schema(final_response, response_schema)
-                if wrapped is not final_response:
-                    # Re-run coerce on the wrapped dict — the pre-wrapping coerce
-                    # at line 1516 operated on the un-wrapped structure where field
-                    # names didn't match the top-level schema, so nested fields
-                    # went uncoerced.  Now that wrapping placed them under the
-                    # correct parent key, coercion can find and fix them.
-                    coerce_json_types(wrapped, response_schema)
-                    if self.validate_response(wrapped):
-                        logger.warning(
-                            f"Recovered response via inner-schema wrapping "
-                            f"(original keys: {list(final_response.keys())[:10]})"
-                        )
-                        final_response = wrapped
-
-            if not self.validate_response(final_response):
-                top_keys = list(final_response.keys())[:10]
-                missing_fields: list[str] = []
-                if response_schema is not None:
-                    schema_obj = response_schema.get("json_schema", {}).get("schema", {})
-                    required_raw = schema_obj.get("required", [])
-                    if isinstance(required_raw, list):
-                        required_list = cast("list[str]", required_raw)
-                        missing_fields = [
-                            field for field in required_list if field not in final_response
-                        ]
-                raise SchemaValidationError(
-                    f"Final response failed schema validation. Top-level keys: {top_keys}",
-                    turns_completed=len(turns),
-                    missing_fields=missing_fields,
-                    response=final_response,
-                )
+                schema_obj = response_schema.get("json_schema", {}).get("schema", {})
+                required_raw = schema_obj.get("required", [])
+                if isinstance(required_raw, list):
+                    required_list = cast("list[str]", required_raw)
+                    missing_fields = [
+                        field for field in required_list if field not in final_response
+                    ]
+            raise SchemaValidationError(
+                f"Final response failed schema validation. "
+                f"Top-level keys: {list(final_response.keys())[:10]}",
+                turns_completed=len(turns),
+                missing_fields=missing_fields,
+                response=final_response,
+            )
 
         confidence = self.calculate_confidence(final_response, turns)
 

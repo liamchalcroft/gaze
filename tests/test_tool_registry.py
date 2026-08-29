@@ -79,44 +79,6 @@ async def test_requires_image_without_path(tmp_path: Path) -> None:
     assert result.image_base64
 
 
-@pytest.mark.asyncio
-async def test_execution_records_history() -> None:
-    tool = Tool(
-        name="echo",
-        description="simple echo",
-        parameters={"value": {"type": "integer", "description": "number to echo"}},
-        execute=_echo_tool,
-        requires_image=False,
-    )
-
-    registry = ToolRegistry(tools=[tool])
-    result = await registry.execute("echo", value=2)
-    assert result.metadata["value"] == 2
-    assert registry.history[-1].tool_name == "echo"
-
-
-@pytest.mark.asyncio
-async def test_history_limit_prevents_memory_leak() -> None:
-    """Test that history limit prevents unbounded memory growth."""
-    tool = Tool(
-        name="echo",
-        description="simple echo",
-        parameters={"value": {"type": "integer", "description": "number to echo"}},
-        execute=_echo_tool,
-        requires_image=False,
-    )
-
-    registry = ToolRegistry(max_history=3, tools=[tool])
-
-    # Execute tool more times than history limit
-    for i in range(5):
-        await registry.execute("echo", value=i)
-
-    # History should not exceed limit
-    assert len(registry.history) <= 3
-    assert len(registry._tool_history) <= 3
-
-
 def test_sync_context_manager_cleanup(tmp_path: Path) -> None:
     """Test that sync context manager properly cleans up resources."""
     image_path = _create_temp_image(tmp_path)

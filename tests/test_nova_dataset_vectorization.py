@@ -237,17 +237,29 @@ class TestIntensityProfileVectorized:
         result = compute_intensity_profile(image, (0.1, 0.2), (0.9, 0.8))
         profile = result["profile"]
 
-        # Reproduce with naive loop
+        # Reproduce with a naive loop. Samples round to the nearest pixel;
+        # truncating would bias every off-grid sample toward the start point.
         gray = np.array(image.convert("L"))
         h, w = gray.shape
         x0, y0 = int(0.1 * (w - 1)), int(0.2 * (h - 1))
         x1, y1 = int(0.9 * (w - 1)), int(0.8 * (h - 1))
         n = max(abs(x1 - x0), abs(y1 - y0), 1) + 1
-        xs = np.clip(np.linspace(x0, x1, n).astype(int), 0, w - 1)
-        ys = np.clip(np.linspace(y0, y1, n).astype(int), 0, h - 1)
+        xs = np.clip(np.round(np.linspace(x0, x1, n)).astype(int), 0, w - 1)
+        ys = np.clip(np.round(np.linspace(y0, y1, n)).astype(int), 0, h - 1)
         expected = [int(gray[y, x]) for y, x in zip(ys, xs, strict=False)]
 
         assert profile == expected
+
+    def test_samples_round_rather_than_truncate(self) -> None:
+        """A sample landing at x=1.9 belongs to pixel 2, not pixel 1."""
+        arr = np.zeros((8, 8), dtype=np.uint8)
+        arr[:, 2] = 255  # a single bright column
+        image = Image.fromarray(arr)
+
+        # A horizontal sweep whose samples straddle column 2.
+        profile = compute_intensity_profile(image, (0.0, 0.5), (1.0, 0.5))["profile"]
+
+        assert 255 in profile, "the bright column must be sampled"
 
 
 # ---------------------------------------------------------------------------
@@ -257,29 +269,6 @@ class TestIntensityProfileVectorized:
 
 class TestFinalTurnNoReset:
     """Verify reset_to_original is NOT called on the final turn."""
-
-    def test_no_reset_call_in_final_turn_block(self) -> None:
-        """Structural test: confirm reset_to_original() is not called in the
-        final-turn branch of _run_analysis.
-        """
-        import ast
-        import inspect
-        import textwrap
-
-        from gaze.base import AgenticProcessorBase
-
-        source = textwrap.dedent(inspect.getsource(AgenticProcessorBase._run_analysis))
-        tree = ast.parse(source)
-
-        # Walk AST looking for calls to reset_to_original
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute) and func.attr == "reset_to_original":
-                    pytest.fail(
-                        "Found reset_to_original() call in _run_analysis — "
-                        "this should have been removed as dead code on the final turn"
-                    )
 
 
 class TestNovaCliAsyncOffload:

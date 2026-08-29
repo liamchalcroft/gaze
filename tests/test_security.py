@@ -125,6 +125,60 @@ class TestOpenAIAdapterBaseUrlValidation:
             logger.remove(handler_id)
 
 
+class TestOpenAIBaseUrlEnvVarIsValidated:
+    """OPENAI_BASE_URL must not bypass the allowlist.
+
+    ``AsyncOpenAI`` falls back to ``OPENAI_BASE_URL`` on its own, so leaving it
+    to the SDK routed the API key to an arbitrary host without ever running
+    ``_validate_base_url`` — including in plaintext over HTTP.
+    """
+
+    @staticmethod
+    def _client_base_url(env: dict[str, str]) -> str:
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, env, clear=True):
+            return str(OpenAIAdapter(model_name="test").client.base_url)
+
+    def test_plaintext_http_env_var_is_rejected(self) -> None:
+        with pytest.raises(ModelError, match="HTTPS"):
+            self._client_base_url(
+                {
+                    "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                    "OPENAI_BASE_URL": "http://attacker.example/v1",
+                }
+            )
+
+    def test_unlisted_https_env_var_is_rejected_without_opt_in(self) -> None:
+        with pytest.raises(ModelError, match="GAZE_ALLOW_CUSTOM_BASE_URL"):
+            self._client_base_url(
+                {
+                    "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                    "OPENAI_BASE_URL": "https://evil.example/v1",
+                }
+            )
+
+    def test_allowlisted_env_var_is_honoured(self) -> None:
+        url = self._client_base_url(
+            {
+                "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                "OPENAI_BASE_URL": "https://api.openai.com/v1",
+            }
+        )
+        assert url.rstrip("/") == "https://api.openai.com/v1"
+
+    def test_opt_in_still_permits_a_custom_host(self) -> None:
+        url = self._client_base_url(
+            {
+                "OPENAI_API_KEY": "unit-test-key",  # pragma: allowlist secret
+                "OPENAI_BASE_URL": "https://custom.example/v1",
+                "GAZE_ALLOW_CUSTOM_BASE_URL": "1",
+            }
+        )
+        assert url.rstrip("/") == "https://custom.example/v1"
+
+
 # ---------------------------------------------------------------------------
 # SearchConfig SSRF protection tests
 # ---------------------------------------------------------------------------
@@ -199,15 +253,15 @@ class TestSanitizeToolContent:
     """Verify tool result sanitization for prompt injection defense."""
 
     def test_wraps_in_markers_with_boundary(self) -> None:
-        result = _sanitize_tool_content("hello world")
+        result = _sanitize_tool_content("hello world", max_chars=8_000)
         assert result.startswith("[Tool Result - External Data - ")
         assert "[End Tool Result - " in result
         assert "hello world" in result
 
     def test_boundary_is_unique_per_call(self) -> None:
         """Each invocation should produce a different boundary."""
-        r1 = _sanitize_tool_content("a")
-        r2 = _sanitize_tool_content("a")
+        r1 = _sanitize_tool_content("a", max_chars=8_000)
+        r2 = _sanitize_tool_content("a", max_chars=8_000)
         # Extract boundaries
         b1 = r1.split("[Tool Result - External Data - ")[1].split("]")[0]
         b2 = r2.split("[Tool Result - External Data - ")[1].split("]")[0]
@@ -215,14 +269,14 @@ class TestSanitizeToolContent:
 
     def test_boundary_matches_open_and_close(self) -> None:
         """The open and close markers must use the same boundary."""
-        result = _sanitize_tool_content("test")
+        result = _sanitize_tool_content("test", max_chars=8_000)
         open_boundary = result.split("[Tool Result - External Data - ")[1].split("]")[0]
         close_boundary = result.split("[End Tool Result - ")[1].split("]")[0]
         assert open_boundary == close_boundary
 
     def test_strips_control_characters(self) -> None:
         text_with_controls = "normal\x00hidden\x01evil\x7fmore"
-        result = _sanitize_tool_content(text_with_controls)
+        result = _sanitize_tool_content(text_with_controls, max_chars=8_000)
         assert "\x00" not in result
         assert "\x01" not in result
         assert "\x7f" not in result
@@ -230,12 +284,12 @@ class TestSanitizeToolContent:
 
     def test_preserves_newlines_and_tabs(self) -> None:
         text = "line1\nline2\ttabbed"
-        result = _sanitize_tool_content(text)
+        result = _sanitize_tool_content(text, max_chars=8_000)
         assert "line1\nline2\ttabbed" in result
 
     def test_truncates_long_content(self) -> None:
         long_text = "A" * 20_000
-        result = _sanitize_tool_content(long_text)
+        result = _sanitize_tool_content(long_text, max_chars=8_000)
         assert "[...truncated]" in result
         # Marker overhead + 8000 chars + truncation notice + boundary
         assert len(result) < 8_300
@@ -247,7 +301,7 @@ class TestSanitizeToolContent:
 
     def test_short_content_not_truncated(self) -> None:
         text = "short text"
-        result = _sanitize_tool_content(text)
+        result = _sanitize_tool_content(text, max_chars=8_000)
         assert "[...truncated]" not in result
 
 

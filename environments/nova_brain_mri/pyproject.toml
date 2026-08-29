@@ -8,17 +8,15 @@ version = "0.1.0"
 description = "GAZE-powered NOVA brain-MRI evaluation environment for the Prime Intellect Environments Hub"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 authors = [
     {name = "Liam Chalcroft", email = "liamchalcroft@gmail.com"},
 ]
 tags = ["medical", "radiology", "vision", "brain-mri", "neuroimaging", "eval"]
 dependencies = [
     "verifiers>=0.1.6,<1",
-    "gaze-vlm>=0.1.0",
-    "datasets>=2.14.0,<3",
-    "pillow>=10.0.0,<12",
-    "numpy>=1.24.0,<3",
+    "gaze-vlm>=0.1.1",
+    "datasets>=4.8.5",
 ]
 
 [project.urls]

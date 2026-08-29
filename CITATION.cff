@@ -12,7 +12,7 @@ authors:
 repository-code: "https://github.com/liamchalcroft/gaze"
 url: "https://liamchalcroft.github.io/gaze/"
 license: MIT
-version: 0.1.0
+version: 0.2.0
 preferred-citation:
   type: article
   title: "GAZE: Grounded Agentic Zero-shot Evaluation with Viewer-Level Tools and Literature Retrieval on Rare Brain MRI"

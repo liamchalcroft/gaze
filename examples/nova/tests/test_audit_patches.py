@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,19 +10,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_ROOT = REPO_ROOT / "examples" / "nova"
-PAPER_ROOT = REPO_ROOT / "examples" / "aiih2026_paper"
 if str(EXAMPLE_ROOT) not in sys.path:
     sys.path.insert(0, str(EXAMPLE_ROOT))
-if str(PAPER_ROOT) not in sys.path:
-    sys.path.insert(0, str(PAPER_ROOT))
-
-# A few tests below exercise code that lives only in the gitignored
-# examples/aiih2026_paper research directory, which is absent from clean
-# checkouts (e.g. CI). Skip them when that directory is not present.
-_skip_without_paper = pytest.mark.skipif(
-    not (PAPER_ROOT / "experiments").exists(),
-    reason="examples/aiih2026_paper is gitignored and absent in clean checkouts",
-)
 
 
 class TestAreaPenaltyEdgeCases:
@@ -300,66 +288,6 @@ class TestDashPatternSync:
         assert _DIAG_DASH.pattern == _REWARD_DASH.pattern, (
             f"Dash patterns diverge: diag={_DIAG_DASH.pattern!r} vs rewards={_REWARD_DASH.pattern!r}"
         )
-
-
-@_skip_without_paper
-class TestLocalizationAnalysisLoading:
-    def test_compute_model_ious_uses_box_annotations_only(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        pytest.importorskip("matplotlib")
-        from experiments import plot
-
-        run_dir = tmp_path / "runs" / "main_results" / "run_a"
-        run_dir.mkdir(parents=True)
-        (run_dir / "summary.json").write_text(
-            json.dumps(
-                {
-                    "config": {
-                        "model": "google/gemini-3-flash-preview",
-                        "mode": "agentic",
-                    }
-                }
-            )
-        )
-        (run_dir / "sample_0.json").write_text(
-            json.dumps(
-                {
-                    "sample_id": 0,
-                    "response": {
-                        "localization": {"localizations": [{"bounding_box": [0, 0, 10, 10]}]}
-                    },
-                }
-            )
-        )
-
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(
-            plot,
-            "_load_nova_box_annotations",
-            lambda _n: [{"gt_boxes": [(0.0, 0.0, 10.0, 10.0)]}],  # type: ignore[arg-type]
-        )
-
-        def _unexpected_image_loader(_n: int) -> None:
-            raise AssertionError("_compute_model_ious should not load pixel data")
-
-        monkeypatch.setattr(plot, "_load_nova_images_and_gt", _unexpected_image_loader)
-
-        runs = {
-            "run_a": {
-                "summary": {
-                    "config": {
-                        "model": "google/gemini-3-flash-preview",
-                        "mode": "agentic",
-                    }
-                }
-            }
-        }
-        model_ious = plot._compute_model_ious(runs, n_samples=1)
-
-        assert model_ious["Gemini Flash"] == [1.0]
 
 
 class TestRewardBboxKeyStrictness:
@@ -676,29 +604,3 @@ class TestAreaPenaltySwappedCoordinates:
         assert abs(normal - swapped) < 1e-6, (
             f"Swapped y coords should give same penalty: {normal} vs {swapped}"
         )
-
-
-@_skip_without_paper
-class TestSampleStdAggregation:
-    """aggregate.py must use sample std (n-1 denominator)."""
-
-    def test_std_uses_bessel_correction(self) -> None:
-        """Population std of [0, 2] is 1.0, sample std is ~1.414."""
-        import math
-
-        # Verify Bessel correction: std([0, 2]) with n-1 = sqrt(2) ≈ 1.414
-        values = [0.0, 2.0]
-        mean = 1.0
-        sample_var = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
-        expected_std = math.sqrt(sample_var)
-
-        assert abs(expected_std - math.sqrt(2)) < 1e-10
-        assert expected_std > 1.0, "Sample std of [0, 2] should be > 1.0 (Bessel correction)"
-
-    def test_aggregate_source_uses_n_minus_1(self) -> None:
-        """Verify sample_std uses (len(xs) - 1) denominator (Bessel correction)."""
-        paper_experiments = (
-            REPO_ROOT / "examples" / "aiih2026_paper" / "experiments" / "__init__.py"
-        )
-        content = paper_experiments.read_text()
-        assert "(len(xs) - 1)" in content, "sample_std must use Bessel correction"

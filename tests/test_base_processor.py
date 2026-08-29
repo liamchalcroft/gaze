@@ -140,10 +140,22 @@ class TestImageInputImmutability:
         assert loaded.width == 50
         assert original.width == 0
 
-    def test_load_returns_self_when_already_loaded(self) -> None:
-        """load() on an already-loaded instance returns the same object."""
-        inp = ImageInput.from_pil(Image.new("RGB", (10, 10)))
+    def test_load_returns_self_when_already_encoded(self) -> None:
+        """load() on a fully-populated instance returns the same object."""
+        inp = ImageInput.from_pil(Image.new("RGB", (10, 10))).load()
         assert inp.load() is inp
+
+    def test_load_encodes_without_rereading_from_disk(self) -> None:
+        """from_pil defers encoding; load() fills it in from the pixels in hand."""
+        pil = Image.new("RGB", (10, 10))
+        inp = ImageInput.from_pil(pil)
+        assert inp.encoded is None
+
+        loaded = inp.load()
+
+        assert loaded.encoded is not None
+        assert loaded.pil_image is pil
+        assert loaded.path == Path("<in-memory>")
 
 
 class TestImageInputLoad:

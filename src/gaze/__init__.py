@@ -58,11 +58,13 @@ from gaze.models import list_lmstudio_model_ids
 from gaze.models import require_lmstudio_model
 
 if TYPE_CHECKING:
-    from gaze.models.huggingface_adapter import HuggingFaceAdapter
-    from gaze.models.huggingface_adapter import HuggingFaceVLMAdapter
+    from gaze.models.huggingface_adapter import HuggingFaceAdapter as HuggingFaceAdapter
+    from gaze.models.huggingface_adapter import HuggingFaceVLMAdapter as HuggingFaceVLMAdapter
 
-# HuggingFace adapters are lazily imported to avoid torch dependency
-# Use: from gaze import HuggingFaceAdapter, HuggingFaceVLMAdapter
+# The HuggingFace adapters are lazily imported (see __getattr__ below) so that
+# torch stays optional. They are deliberately absent from __all__: a star
+# import resolves every name in it through __getattr__, which would defeat
+# the laziness. Import them by name instead.
 from gaze.prompts import AnalysisMode
 from gaze.prompts import combine_prompts
 from gaze.prompts import create_prompt
@@ -81,7 +83,7 @@ from gaze.types import ToolResult
 from gaze.types import Turn
 from gaze.utils.json_coerce import coerce_json_types
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     # Core
@@ -117,8 +119,6 @@ __all__ = [
     "LMStudioAdapter",
     "list_lmstudio_model_ids",
     "require_lmstudio_model",
-    "HuggingFaceAdapter",
-    "HuggingFaceVLMAdapter",
     "GenerationLog",
     "AdapterProtocol",
     # Prompts

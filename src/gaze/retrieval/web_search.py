@@ -14,8 +14,8 @@ from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse
 
-import aiohttp
 import defusedxml.ElementTree as ET  # noqa: N817
+import httpx
 from beartype import beartype
 from defusedxml import DefusedXmlException
 from loguru import logger
@@ -24,6 +24,7 @@ from gaze.cache import TTLCache
 from gaze.config import CacheConfig
 from gaze.config import SearchConfig
 from gaze.config import get_config
+from gaze.retrieval.base import AsyncRateLimiter
 from gaze.retrieval.base import BaseSearchEngine
 from gaze.retrieval.base import SearchEngineError
 from gaze.retrieval.base import _sanitize_api_field
@@ -100,12 +101,34 @@ def _get_ncbi_email() -> str | None:
 # Systematic reviews and guidelines represent higher evidence quality than
 # individual case reports.  These offsets reflect the evidence hierarchy
 # used in evidence-based medicine (EBM) pyramid.
+# NCBI E-utilities allow 3 requests/second per IP, or 10 with an API key.
+# https://www.ncbi.nlm.nih.gov/books/NBK25497/
+_NCBI_MIN_INTERVAL_NO_KEY = 1.0 / 3.0
+_NCBI_MIN_INTERVAL_WITH_KEY = 1.0 / 10.0
+
 EVIDENCE_TIER_ADJUSTMENTS: dict[str, float] = {
     "guidelines": 0.04,  # Highest: clinical practice guidelines
     "review": 0.02,  # Systematic reviews / meta-analyses
     "article": 0.0,  # Standard journal articles (baseline)
     "case_report": -0.05,  # Lower evidence: individual case reports
 }
+
+
+def _as_text(value: object) -> str:
+    """Coerce an external API field to a string, treating anything odd as empty.
+
+    NCBI fields are documented as strings but a malformed or hostile record can
+    carry a number, null, or nested structure; those must not reach ``.strip()``
+    or ``.lower()``.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _as_dict_list(value: object) -> list[dict[str, Any]]:
+    """Return only the object entries of an external list field."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
@@ -207,7 +230,12 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
 
         # NCBI E-utilities authenticate via the api_key query parameter,
         # not via Bearer token headers.  Do NOT inject the key into headers.
-        self._rate_limit_delay = self._config.rate_limit_delay_seconds
+        # NCBI enforces 3 requests/second per IP, or 10 with an API key, by
+        # blocking the IP. One shared limiter per engine paces every request
+        # (esearch, esummary, efetch) including ones issued concurrently.
+        self._rate_limiter = AsyncRateLimiter(
+            _NCBI_MIN_INTERVAL_WITH_KEY if self.api_key else _NCBI_MIN_INTERVAL_NO_KEY
+        )
 
     async def _search_impl(self, query: str, max_results: int) -> list[SearchResult]:
         """Search PubMed with enhanced metadata extraction."""
@@ -228,13 +256,12 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
             search_params["api_key"] = self.api_key
 
         session = await self._get_session()
-        async with session.get(search_url, params=search_params) as response:
-            # Let aiohttp raise ClientResponseError for 4xx/5xx so the
-            # base-class retry wrapper can catch and retry transient failures
-            # (e.g. 429, 503).  Previously this raised SearchError which
-            # bypassed retry entirely.
-            response.raise_for_status()
-            search_data = await response.json()
+        await self._rate_limiter.acquire()
+        response = await session.get(search_url, params=search_params)
+        # Let httpx raise HTTPStatusError for 4xx/5xx so the base-class retry
+        # wrapper decides what is transient (429, 5xx) and what is permanent.
+        response.raise_for_status()
+        search_data = response.json()
 
         if "esearchresult" not in search_data or "idlist" not in search_data["esearchresult"]:
             return []
@@ -252,17 +279,30 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
         not return abstract text).  The two requests are independent so we
         fire them concurrently via asyncio.gather to halve the wait time.
         """
-        # Rate-limit: single delay after esearch, before the concurrent fetches.
-        # Previously each fetch slept independently, but since they run via
-        # asyncio.gather the sleeps overlapped and both requests fired at the
-        # same instant — defeating the stagger intent.
-        await asyncio.sleep(self._rate_limit_delay)
-
-        # Run esummary and efetch concurrently — they share no data dependency
-        summary_data, abstracts = await asyncio.gather(
+        # Run esummary and efetch concurrently: they share no data dependency.
+        # return_exceptions keeps a failure in one from abandoning the other
+        # mid-flight; a bare gather propagates immediately without cancelling
+        # the sibling, which then runs on against a session the retry path may
+        # already have closed, and still counts against the NCBI quota.
+        summary_result, abstracts_result = await asyncio.gather(
             self._fetch_summary(pmid_list),
             self._fetch_abstracts(pmid_list),
+            return_exceptions=True,
         )
+        if isinstance(summary_result, BaseException):
+            raise summary_result
+        summary_data = summary_result
+        # Abstracts are optional enrichment; _fetch_abstracts already degrades
+        # to {} on its own failures, so anything here is unexpected.
+        if isinstance(abstracts_result, BaseException):
+            logger.warning(
+                f"efetch raised {type(abstracts_result).__name__} "
+                f"({_sanitize_exception_message(abstracts_result)}); "
+                f"proceeding without abstracts"
+            )
+            abstracts = {}
+        else:
+            abstracts = abstracts_result
 
         if "result" not in summary_data:
             return []
@@ -273,15 +313,21 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
                 continue
 
             article = summary_data["result"][pmid]
+            # Records come from an external API. A record of an unexpected
+            # shape must be skipped, not raise an AttributeError out of tool
+            # execution where no caller catches it.
+            if not isinstance(article, dict):
+                logger.warning(f"Skipping PubMed record {pmid}: not an object")
+                continue
 
             # Extract and sanitize metadata (defense-in-depth against
             # prompt injection via crafted PubMed records).
-            title = _sanitize_api_field(article.get("title", "").strip(), max_length=300)
-            authors = article.get("authors", [])
-            journal = _sanitize_api_field(article.get("fulljournalname", ""), max_length=200)
-            pub_date = _sanitize_api_field(article.get("pubdate", ""), max_length=30)
-            doi = _sanitize_api_field(article.get("doi", ""), max_length=100)
-            article_ids: list[dict[str, str]] = article.get("articleids", [])
+            title = _sanitize_api_field(_as_text(article.get("title")).strip(), max_length=300)
+            authors = _as_dict_list(article.get("authors"))
+            journal = _sanitize_api_field(_as_text(article.get("fulljournalname")), max_length=200)
+            pub_date = _sanitize_api_field(_as_text(article.get("pubdate")), max_length=30)
+            doi = _sanitize_api_field(_as_text(article.get("doi")), max_length=100)
+            article_ids: list[dict[str, str]] = _as_dict_list(article.get("articleids"))
 
             # Check for open access (PMC ID present → open access)
             open_access = any(
@@ -289,7 +335,12 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
             )
 
             # Determine content type from PubMed's pubtype field.
-            publication_types = article.get("pubtype", [])
+            raw_pubtypes = article.get("pubtype")
+            publication_types = (
+                [pt for pt in raw_pubtypes if isinstance(pt, str)]
+                if isinstance(raw_pubtypes, list)
+                else []
+            )
             content_type = self._classify_content_type(publication_types)
 
             # Use abstract from efetch if available, else title
@@ -322,7 +373,7 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
                 reliability_score=reliability,
                 publication_date=pub_date,
                 author=_sanitize_api_field(
-                    ", ".join([a.get("name", "") for a in authors[:3]]),
+                    ", ".join([_as_text(a.get("name")) for a in authors[:3]]),
                     max_length=200,
                 ),
                 journal=journal,
@@ -357,11 +408,12 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
             summary_params["api_key"] = self.api_key
 
         session = await self._get_session()
-        async with session.get(summary_url, params=summary_params) as response:
-            # Let aiohttp raise ClientResponseError so transient HTTP errors
-            # (429, 5xx) are retried by the base-class retry wrapper.
-            response.raise_for_status()
-            return await response.json()
+        await self._rate_limiter.acquire()
+        response = await session.get(summary_url, params=summary_params)
+        # Let httpx raise HTTPStatusError so transient HTTP errors (429, 5xx)
+        # are retried by the base-class retry wrapper.
+        response.raise_for_status()
+        return response.json()
 
     async def _fetch_abstracts(self, pmid_list: list[str]) -> dict[str, str]:
         """Fetch abstracts via efetch XML (esummary does not include them).
@@ -388,11 +440,11 @@ class PubMedSearchEngine(BaseSearchEngine[SearchResult, SearchError]):
         session = await self._get_session()
         for attempt in range(2):
             try:
-                async with session.get(fetch_url, params=fetch_params) as response:
-                    response.raise_for_status()
-                    xml_text = await response.text()
-                return self._parse_abstracts_xml(xml_text)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                await self._rate_limiter.acquire()
+                response = await session.get(fetch_url, params=fetch_params)
+                response.raise_for_status()
+                return self._parse_abstracts_xml(response.text)
+            except (httpx.HTTPError, asyncio.TimeoutError) as exc:
                 if attempt == 0:
                     logger.debug(
                         f"efetch attempt 1 failed ({_sanitize_exception_message(exc)}) "
@@ -595,7 +647,6 @@ class WebSearchManager:
         if self.max_total_results < 1:
             raise ValueError(f"max_total_results must be >= 1, got {self.max_total_results}")
 
-        # Use shared TTLCache instead of manual cache management
         self._cache: TTLCache[list[SearchResult]] = TTLCache(self._cache_config)
 
         # Initialize search engines
@@ -698,7 +749,6 @@ class WebSearchManager:
                 f":{self.max_total_results}:{engine_names}"
             )
 
-            # Check cache using TTLCache (handles expiration automatically)
             cached_results = self._cache.get(cache_key)
             if cached_results is not None:
                 logger.debug(f"Using cached results for: {search_query}")
@@ -735,7 +785,6 @@ class WebSearchManager:
                 # Limit results
                 final_results = ranked_results[: self.max_total_results]
 
-                # Cache results using TTLCache (handles expiration automatically)
                 self._cache.set(cache_key, final_results)
 
                 if variant_idx > 0:

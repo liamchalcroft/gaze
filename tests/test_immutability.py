@@ -21,20 +21,14 @@ from gaze.types import Turn
 class TestGenerationLogFrozen:
     """GenerationLog must be frozen — attribute assignment should raise."""
 
-    def test_cannot_reassign_prompt_tokens(self) -> None:
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("prompt_tokens", 99), ("completion_tokens", 99), ("finish_reason", "length")],
+    )
+    def test_fields_cannot_be_reassigned(self, field: str, value: object) -> None:
         log = GenerationLog(prompt_tokens=10, completion_tokens=20, finish_reason="stop")
         with pytest.raises(FrozenInstanceError):
-            log.prompt_tokens = 99  # type: ignore[misc]
-
-    def test_cannot_reassign_completion_tokens(self) -> None:
-        log = GenerationLog(prompt_tokens=10, completion_tokens=20, finish_reason="stop")
-        with pytest.raises(FrozenInstanceError):
-            log.completion_tokens = 99  # type: ignore[misc]
-
-    def test_cannot_reassign_finish_reason(self) -> None:
-        log = GenerationLog(prompt_tokens=10, completion_tokens=20, finish_reason="stop")
-        with pytest.raises(FrozenInstanceError):
-            log.finish_reason = "length"  # type: ignore[misc]
+            setattr(log, field, value)
 
     def test_tokens_property(self) -> None:
         log = GenerationLog(prompt_tokens=10, completion_tokens=20, finish_reason="stop")

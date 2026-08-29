@@ -7,7 +7,7 @@ Provides verifiers-compatible reward functions for:
 
 These can be used individually or combined for multi-task evaluation.
 
-Utilities are inlined in _utils.py so this package is fully standalone.
+Extraction and IoU helpers come from the ``gaze`` framework.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from collections import Counter
 from typing import Any, Literal
 
 import verifiers as vf
-
-from ._utils import compute_iou, extract_completion_text, extract_json_from_text
+from gaze.utils import compute_iou, extract_json_from_text
+from gaze.verifiers.rewards import extract_completion_text
 
 NOVATask = Literal["caption", "diagnosis", "localization", "all"]
 

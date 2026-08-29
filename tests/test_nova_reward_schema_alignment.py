@@ -196,10 +196,10 @@ class TestRewardParity:
         )
 
     def test_iou_coordinate_normalization(self) -> None:
-        """Core compute_iou normalizes swapped coordinates; env must too."""
+        """Swapped coordinates score 0 by default, and reorder under lenient."""
         from gaze.utils.iou import compute_iou
 
-        # Swapped coords: x1 > x2
         box_normal = [0.0, 0.0, 10.0, 10.0]
         box_swapped = [10.0, 10.0, 0.0, 0.0]
-        assert compute_iou(box_normal, box_swapped) == 1.0
+        assert compute_iou(box_normal, box_swapped) == 0.0
+        assert compute_iou(box_normal, box_swapped, lenient=True) == 1.0

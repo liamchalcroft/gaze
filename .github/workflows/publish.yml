@@ -27,9 +27,15 @@ jobs:
       run: |
         TAG="${GITHUB_REF_NAME#v}"
         PKG="$(grep -oE '__version__ = "[^"]+"' src/gaze/__init__.py | cut -d'"' -f2)"
-        echo "tag=$TAG package=$PKG"
+        CFF="$(grep -oE '^version: .+' CITATION.cff | cut -d' ' -f2)"
+        echo "tag=$TAG package=$PKG citation=$CFF"
         if [ "$TAG" != "$PKG" ]; then
           echo "::error::Release tag '$TAG' does not match package version '$PKG'"
+          exit 1
+        fi
+        # CITATION.cff drifted unnoticed through 0.1.1 because nothing checked it.
+        if [ "$TAG" != "$CFF" ]; then
+          echo "::error::Release tag '$TAG' does not match CITATION.cff version '$CFF'"
           exit 1
         fi
     - name: Install dependencies

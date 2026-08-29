@@ -25,7 +25,7 @@ examples/
     pubmedqa/                 # PubMedQA text-only QA
     vqa_rad/                  # VQA-RAD radiology VQA
 environments/nova_brain_mri/  # Standalone MedMarks-compatible environment
-tests/                        # ~65 test files, pytest + pytest-asyncio
+tests/                        # ~70 test files, pytest + pytest-asyncio
 ```
 
 # Development Commands
@@ -51,8 +51,8 @@ uv run pytest --cov=gaze --cov-report=html     # Coverage
 - All `ToolCall.arguments` are frozen via `deep_freeze()`. Use `deep_thaw()` before JSON serialization. See `src/gaze/_frozen.py`.
 - `coerce_json_types(response, schema)` handles type mismatches from local models centrally. Do not add per-field coercion in processors. See `src/gaze/utils/json_coerce.py`.
 - `clamp_confidence()` clamps out-of-range values to [0,1] but rejects NaN/inf/bool. All example validators use it.
-- Ruff config: `line-length = 100`, `target-version = "py310"`, `extend-exclude = ["examples/"]`. See `pyproject.toml` for full rule set.
-- Pyright: `typeCheckingMode = "basic"`. Excludes `huggingface_adapter.py`, `openai_adapter.py`, and `verifiers/`.
+- Ruff config: `line-length = 100`, `target-version = "py310"`. All of `examples/` is linted, under a relaxed per-file-ignore set. See `pyproject.toml` for the full rule set.
+- Pyright: `typeCheckingMode = "basic"`. Excludes `huggingface_adapter.py` and `verifiers/` only.
 
 # Testing
 
@@ -69,7 +69,7 @@ uv run pytest --cov=gaze --cov-report=html     # Coverage
 - LMStudioAdapter: no retries, no `response_format`, allows HTTP (not just HTTPS), 300s timeout. Context overflow detection on 400 status with "context size"/"n_ctx" in error.
 - `SchemaValidationError` is a subclass of `AgenticProcessingError`, not `GazeError` directly.
 - HuggingFace adapters are lazy-imported to avoid torch dependency. The `__getattr__` in `__init__.py` handles this.
-- `examples/` is excluded from ruff via `extend-exclude`. Example code has its own conventions.
+- `examples/` is linted for real pyflakes correctness, with CLI/naming/pathlib rules relaxed per-file.
 - GLM-4.6V and Qwen 3.5 put content in `reasoning_content` — the content-empty fallback in `base.py` handles this.
 - Thinking models (Qwen 3.5) need `max_tokens >= 4096` because reasoning tokens count against the limit.
 - LM Studio can only run one model at a time on current hardware. Health checks for other models cause unloads.

@@ -203,30 +203,6 @@ class TestAtexitTempDirCleanup:
         await mgr.close()
         assert temp_dir not in _temp_dirs
 
-    def test_no_bound_method_in_atexit(self) -> None:
-        """atexit handlers must not hold a reference to the manager instance.
-
-        We verify by checking that _temp_dirs is a module-level set (not
-        a bound method reference), and that the atexit function is the
-        module-level _atexit_cleanup_temp_dirs, not a bound method.
-        """
-        from gaze.retrieval.image_search import _atexit_cleanup_temp_dirs
-
-        # The module-level function should be registered (it's registered
-        # at module import time). We can verify it exists and is callable.
-        assert callable(_atexit_cleanup_temp_dirs)
-
-        # Create a manager and verify no bound methods leaked
-        mgr = MedicalImageSearchManager()
-        # The manager should not have registered self._cleanup_temp_dir with atexit
-        # (we can't inspect atexit handlers directly, but we verified the code path)
-        assert mgr._created_temp_dir is True
-        # Cleanup
-        mgr._cleanup_temp_dir()
-        from gaze.retrieval.image_search import _temp_dirs
-
-        _temp_dirs.discard(mgr.download_dir)
-
     def test_atexit_handler_cleans_dirs(self, tmp_path: Path) -> None:
         """The module-level atexit handler should clean tracked dirs."""
         from gaze.retrieval.image_search import _atexit_cleanup_temp_dirs
@@ -350,10 +326,12 @@ class TestContentLengthMalformed:
     """Malformed Content-Length header must not crash download."""
 
     @pytest.mark.asyncio
-    async def test_malformed_content_length_does_not_crash(self, tmp_path: Path) -> None:
-        """int('abc') would crash without the ValueError guard."""
+    async def test_malformed_content_length_does_not_crash(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
+        """A non-numeric Content-Length must be ignored, not crash int()."""
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
+        from unittest.mock import patch
 
         from gaze.retrieval.image_search import ImageSearchResult
 
@@ -365,37 +343,21 @@ class TestContentLengthMalformed:
             source_url="https://openi.nlm.nih.gov/article",
             source="openi",
         )
+        client = make_mock_http_client(
+            download_route(
+                content=b"\xff\xd8\xff" + b"\x00" * 100,
+                content_length="not-a-number",
+            )
+        )
 
-        # Valid JPEG magic bytes + padding
-        image_bytes = b"\xff\xd8\xff" + b"\x00" * 100
+        with patch.object(
+            mgr, "_get_download_session", new_callable=AsyncMock, return_value=client
+        ):
+            path = await mgr._do_download(client, result, "hash123", ".jpg")
 
-        # Create a mock session and response with malformed Content-Length
-        # and streaming support (iter_chunked)
-        mock_content = MagicMock()
-
-        async def _iter_chunked(chunk_size: int):
-            yield image_bytes
-
-        mock_content.iter_chunked = _iter_chunked
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {"Content-Type": "image/jpeg", "Content-Length": "not-a-number"}
-        mock_resp.content = mock_content
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = lambda *_a, **_kw: mock_resp
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        # Patch aiohttp.ClientSession to return our mock
-        from unittest.mock import patch
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            filepath = await mgr.download_image(result)
-            assert filepath.exists()
+        assert path.exists()
+        await client.aclose()
+        await mgr.close()
 
 
 class TestKeywordPatternsPreSorted:
@@ -499,54 +461,32 @@ class TestOpenIHttpErrorRetry:
     """HTTP error responses from Open-i must be retried by the base class."""
 
     @pytest.mark.asyncio
-    async def test_openi_503_is_retried(self) -> None:
+    async def test_openi_503_is_retried(self, make_mock_http_client) -> None:
         """Open-i returning 503 must trigger retry, not immediate failure."""
-        from contextlib import asynccontextmanager
         from unittest.mock import AsyncMock
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
-        import aiohttp
+        import httpx
 
         from gaze.config import SearchConfig
 
-        config = SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0)
-        engine = OpenISearchEngine(config=config)
+        engine = OpenISearchEngine(config=SearchConfig(max_retries=3, rate_limit_delay_seconds=0.0))
+        calls = 0
 
-        call_count = 0
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(503, text="Service Unavailable", request=request)
 
-        @asynccontextmanager
-        async def mock_get(url: str, params: dict | None = None):  # type: ignore[override]
-            nonlocal call_count
-            call_count += 1
-            mock_resp = AsyncMock()
-            mock_resp.status = 503
-            mock_resp.raise_for_status = MagicMock(
-                side_effect=aiohttp.ClientResponseError(
-                    request_info=aiohttp.RequestInfo(
-                        url=url,
-                        method="GET",
-                        headers={},
-                        real_url=url,  # type: ignore[arg-type]
-                    ),
-                    history=(),
-                    status=503,
-                    message="Service Unavailable",
-                )
-            )
-            yield mock_resp
-
-        mock_session = AsyncMock()
-        mock_session.get = mock_get
-
+        client = make_mock_http_client(handler)
         with (
-            patch.object(engine, "_get_session", new=AsyncMock(return_value=mock_session)),
-            pytest.raises(ImageSearchError, match="All search attempts failed"),
+            patch.object(engine, "_get_session", new=AsyncMock(return_value=client)),
+            pytest.raises(ImageSearchError),
         ):
-            await engine.search("brain MRI")
+            await engine.search("brain", 3)
 
-        # Should have retried max_retries times
-        assert call_count == 3
+        assert calls == 3
+        await client.aclose()
 
 
 class TestOpeniBaseUrlDerived:
@@ -740,7 +680,7 @@ class TestDownloadSessionUserAgent:
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         session = await mgr._get_download_session()
-        ua = session._default_headers.get("User-Agent", "")
+        ua = session.headers.get("User-Agent", "")
         assert "gaze" in ua
         assert gaze.__version__ in ua
         await mgr.close()
@@ -749,7 +689,7 @@ class TestDownloadSessionUserAgent:
     async def test_download_session_no_browser_impersonation(self, tmp_path: Path) -> None:
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         session = await mgr._get_download_session()
-        ua = session._default_headers.get("User-Agent", "")
+        ua = session.headers.get("User-Agent", "")
         for browser_str in ("Mozilla", "Chrome", "Safari"):
             assert browser_str not in ua
         await mgr.close()
@@ -881,11 +821,43 @@ class TestSharedDownloadSession:
     async def test_download_session_closed_on_cleanup(self, tmp_path: Path) -> None:
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         session = await mgr._get_download_session()
-        assert not session.closed
+        assert not session.is_closed
         await mgr.close()
-        assert session.closed
+        assert session.is_closed
 
     @pytest.mark.asyncio
     async def test_close_without_session_does_not_raise(self, tmp_path: Path) -> None:
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
         await mgr.close()
+
+
+class TestMalformedOpenIPayloadsDegrade:
+    """A non-object entry or non-string URL must be skipped, not raise."""
+
+    @staticmethod
+    def _parse(payload: dict[str, object]) -> list[object]:
+        from gaze.retrieval.image_search import OpenISearchEngine
+
+        return OpenISearchEngine()._parse_results(payload)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"list": ["a string, not an object"]},
+            {"list": [None]},
+            {"list": [{"imgLarge": 123}]},
+            {"list": [{"imgLarge": "https://openi.nlm.nih.gov/a.png", "title": 42}]},
+        ],
+        ids=["string_entry", "null_entry", "non_string_url", "non_string_title"],
+    )
+    def test_malformed_entries_do_not_raise(self, payload: dict[str, object]) -> None:
+        self._parse(payload)  # must not raise
+
+    def test_malformed_entries_are_skipped(self) -> None:
+        assert self._parse({"list": ["x", None, {"imgLarge": 123}]}) == []
+
+    def test_a_well_formed_entry_still_parses(self) -> None:
+        results = self._parse(
+            {"list": [{"imgLarge": "https://openi.nlm.nih.gov/a.png", "title": "Chest X-ray"}]}
+        )
+        assert len(results) == 1

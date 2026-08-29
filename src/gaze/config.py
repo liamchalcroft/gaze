@@ -1,7 +1,7 @@
 """Configuration classes for GAZE.
 
-Provides centralized configuration for constants, limits, and tunable parameters.
-All previously hardcoded values are now configurable via these dataclasses.
+Centralized, frozen configuration for the constants, limits, and tunable
+parameters used across the framework.
 """
 
 from __future__ import annotations
@@ -35,6 +35,11 @@ class ImageProcessingConfig:
         min_window_width: Minimum intensity window width for the window_level
             tool (distinct from the threshold tool's min_threshold_window).
         default_jpeg_quality: Default JPEG quality for encoding (1-100)
+        max_tool_encode_dimension: Longest side, in pixels, of an image sent
+            back to the model in a tool result. The ImageManager keeps the
+            full-resolution image for subsequent operations and measurements;
+            this only bounds the base64 payload, which otherwise reaches
+            megabytes after successive zooms and is re-sent every turn.
     """
 
     min_image_size: int = 10
@@ -45,6 +50,7 @@ class ImageProcessingConfig:
     max_contrast_factor: float = 3.0
     min_threshold_window: int = 50
     default_jpeg_quality: int = 85
+    max_tool_encode_dimension: int = 1024
     min_brightness_factor: float = 0.5
     max_brightness_factor: float = 2.0
     min_sharpness_factor: float = 0.1
@@ -79,6 +85,11 @@ class ImageProcessingConfig:
         if not 1 <= self.min_threshold_window <= 255:
             raise ValueError(
                 f"min_threshold_window must be between 1 and 255, got {self.min_threshold_window}"
+            )
+        if self.max_tool_encode_dimension < self.min_image_size:
+            raise ValueError(
+                f"max_tool_encode_dimension ({self.max_tool_encode_dimension}) must be "
+                f">= min_image_size ({self.min_image_size})"
             )
         if not 1 <= self.default_jpeg_quality <= 100:
             raise ValueError(

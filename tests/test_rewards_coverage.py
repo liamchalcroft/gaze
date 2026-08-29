@@ -36,10 +36,15 @@ class TestExactMatchNormalize:
         result = reward._normalize("{  hello   world  }")
         assert result == "hello world"
 
-    def test_normalize_disabled_returns_unchanged(self) -> None:
+    def test_normalize_disabled_keeps_whitespace_significant(self) -> None:
+        """With normalization off, padding must actually change the verdict.
+
+        The previous version compared two byte-identical strings, so it passed
+        whether or not `normalize` was honoured.
+        """
         reward = ExactMatchReward(normalize=False)
-        score = reward("", "  hello  ", {"gold": "  hello  "})
-        assert score == 1.0
+        assert reward("", "  hello  ", {"gold": "  hello  "}) == 1.0
+        assert reward("", "  hello  ", {"gold": "hello"}) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +172,68 @@ class TestCombinedRewardValidation:
         score = combined("", "hello", {"gold": "hello world"})
         expected = 0.5 * 0.0 + 0.5 * (2.0 / 3.0)
         assert abs(score - expected) < 1e-9
+
+
+class TestIoURewardPixelCoordinatesFailClosed:
+    """The default IoUReward path with pixel coords was entirely untested.
+
+    Every other test passes ``area_penalty_start=1.0`` to disable the penalty,
+    so nothing pinned what plain ``IoUReward()`` does when a model emits pixel
+    coordinates. It fails closed at 0.0 — deliberately, to stop a model dodging
+    the area penalty by switching coordinate space — which means a *perfect*
+    box scores zero unless ``info["image_area"]`` is supplied.
+    """
+
+    _PERFECT_PIXEL_BOX = '{"bbox": [10, 10, 50, 50]}'
+
+    def test_perfect_pixel_box_scores_full_credit_without_image_area(self) -> None:
+        """Regression: this used to fail closed at 0.0 for a correct box."""
+        reward = IoUReward()("", self._PERFECT_PIXEL_BOX, {"bbox": [10, 10, 50, 50]})
+        assert reward == pytest.approx(1.0)
+
+    def test_degenerate_box_is_still_penalized_when_area_is_known(self) -> None:
+        """Skipping the penalty must not become a way to game full-image boxes."""
+        reward = IoUReward()(
+            "", '{"bbox": [0, 0, 512, 512]}', {"bbox": [0, 0, 512, 512], "image_area": 512 * 512}
+        )
+        assert reward == 0.0
+
+    def test_image_width_and_height_are_accepted_in_place_of_image_area(self) -> None:
+        reward = IoUReward()(
+            "",
+            '{"bbox": [0, 0, 512, 512]}',
+            {"bbox": [0, 0, 512, 512], "image_width": 512, "image_height": 512},
+        )
+        assert reward == 0.0
+
+    def test_supplying_image_area_restores_the_score(self) -> None:
+        reward = IoUReward()(
+            "", self._PERFECT_PIXEL_BOX, {"bbox": [10, 10, 50, 50], "image_area": 65536}
+        )
+        assert reward == pytest.approx(1.0)
+
+    def test_normalized_coordinates_need_no_image_area(self) -> None:
+        reward = IoUReward()("", '{"bbox": [0.1, 0.1, 0.3, 0.3]}', {"bbox": [0.1, 0.1, 0.3, 0.3]})
+        assert reward == pytest.approx(1.0)
+
+
+class TestExactMatchReferenceHandling:
+    """Gold answers are not always bare strings, and `normalize` must normalize."""
+
+    def test_list_gold_uses_the_first_string_instead_of_crashing(self) -> None:
+        """A list gold used to reach ``.strip()`` and raise AttributeError."""
+        assert ExactMatchReward()("", "cat", {"gold": ["cat"]}) == 1.0
+        assert ExactMatchReward()("", "dog", {"gold": ["cat"]}) == 0.0
+
+    def test_normalize_strips_surrounding_whitespace(self) -> None:
+        """Whitespace collapsing used to happen only when strip_braces was on."""
+        reward = ExactMatchReward(normalize=True, strip_braces=False)
+        assert reward("", "  Cat  ", {"gold": "cat"}) == 1.0
+
+    def test_normalize_disabled_stays_strict(self) -> None:
+        reward = ExactMatchReward(normalize=False, case_sensitive=True)
+        assert reward("", "  Cat  ", {"gold": "cat"}) == 0.0
+
+    def test_non_string_gold_degrades_instead_of_raising(self) -> None:
+        assert ExactMatchReward()("", "42", {"gold": 42}) == 1.0
+        assert ExactMatchReward()("", "cat", {"gold": None}) == 0.0

@@ -178,30 +178,6 @@ class NovaGroundTruth:
         return self._ground_truth.get(filename)
 
     @beartype
-    def get_ground_truth_by_subject_id(self, subject_id: int) -> GroundTruth:
-        """Get ground truth by subject ID (matches prediction subject IDs).
-
-        Args:
-            subject_id: Numeric subject ID (0-indexed)
-
-        Returns:
-            GroundTruth data for the subject
-
-        Raises:
-            IndexError: If subject_id is out of range
-        """
-        filenames = list(self._ground_truth.keys())
-
-        if not (0 <= subject_id < len(filenames)):
-            raise IndexError(
-                f"Subject ID {subject_id} out of range. "
-                f"Valid range: 0-{len(filenames) - 1} ({len(filenames)} samples)"
-            )
-
-        filename = filenames[subject_id]
-        return self._ground_truth[filename]
-
-    @beartype
     def list_all_filenames(self) -> list[str]:
         """Get list of all available filenames."""
         return list(self._ground_truth.keys())

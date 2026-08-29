@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-import re
+from typing import Any
 
 import pytest
 
@@ -21,23 +21,43 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # 1. Keyword tokenization helper
 # ---------------------------------------------------------------------------
-# The caption module imports through evaluation/__init__.py which pulls in
-# detection.py → torch. We replicate the helper here to test independently.
-
-_WORD_PATTERN = re.compile(r"\b[\w][\w-]*[\w]\b|\b\w\b")
-
-
-def _extract_keyword_tokens(text: str) -> set[str]:
-    """Local copy of the helper from caption.py for testing without torch."""
-    tokens: set[str] = set()
-    for match in _WORD_PATTERN.finditer(text.lower()):
-        word = match.group()
-        tokens.add(word)
-        if "-" in word:
-            tokens.update(word.split("-"))
-    return tokens
+# caption.py sits behind evaluation/__init__.py, which pulls in detection.py
+# and therefore torch. Load the module by path so these tests exercise the
+# real helper rather than a copy that can silently drift from it. caption.py
+# itself needs nltk, which only the "nova" extra installs, so the keyword
+# tests run in the integration job and are skipped in the core one.
 
 
+def _load_caption_module() -> Any:
+    import importlib.util
+
+    path = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "examples"
+        / "nova"
+        / "src"
+        / "evaluation"
+        / "caption.py"
+    )
+    spec = importlib.util.spec_from_file_location("_gaze_caption_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+try:
+    _extract_keyword_tokens = _load_caption_module()._extract_keyword_tokens
+    CAPTION_AVAILABLE = True
+except ImportError:
+    CAPTION_AVAILABLE = False
+
+_skip_without_caption = pytest.mark.skipif(
+    not CAPTION_AVAILABLE, reason="caption.py requires nltk (install the 'nova' extra)"
+)
+
+
+@_skip_without_caption
 class TestExtractKeywordTokens:
     """Tests for _extract_keyword_tokens helper in caption evaluation."""
 
@@ -110,24 +130,6 @@ class TestExtractKeywordTokens:
         expected = {"flair", "t2", "axial", "coronal", "dwi", "weighted"}
         for term in expected:
             assert term in result, f"Expected modality term '{term}' in tokens"
-
-
-class TestKeywordTokenSourceParity:
-    """Verify our local copy matches the real source code."""
-
-    def test_source_contains_identical_regex(self) -> None:
-        """The regex and helper in caption.py should match this test's copy."""
-        source = (
-            pathlib.Path(__file__).resolve().parents[1]
-            / "examples"
-            / "nova"
-            / "src"
-            / "evaluation"
-            / "caption.py"
-        ).read_text()
-        assert r"\b[\w][\w-]*[\w]\b|\b\w\b" in source
-        assert "def _extract_keyword_tokens(text: str)" in source
-        assert 'tokens.update(word.split("-"))' in source
 
 
 # ---------------------------------------------------------------------------

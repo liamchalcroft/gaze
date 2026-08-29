@@ -53,25 +53,50 @@ def test_nova_example_lazy_exports_are_listed_in_all() -> None:
 
 
 def test_lazy_import_huggingface_adapter() -> None:
-    """HuggingFaceAdapter is listed in __all__ and accessible via __getattr__."""
-    import gaze
+    """HuggingFaceAdapter is reachable by name but kept out of __all__.
 
-    assert "HuggingFaceAdapter" in gaze.__all__
+    A star import resolves every name in __all__ through __getattr__, which
+    would import torch and defeat the deferral.
+    """
     import contextlib
 
+    import gaze
+
+    assert "HuggingFaceAdapter" not in gaze.__all__
     with contextlib.suppress(ImportError):
         _ = gaze.HuggingFaceAdapter
 
 
 def test_lazy_import_huggingface_vlm_adapter() -> None:
-    """HuggingFaceVLMAdapter is listed in __all__ and accessible via __getattr__."""
-    import gaze
-
-    assert "HuggingFaceVLMAdapter" in gaze.__all__
+    """Same contract as the adapter above: importable by name, not via star."""
     import contextlib
 
+    import gaze
+
+    assert "HuggingFaceVLMAdapter" not in gaze.__all__
     with contextlib.suppress(ImportError):
         _ = gaze.HuggingFaceVLMAdapter
+
+
+def test_star_import_does_not_pull_in_torch() -> None:
+    """The whole point of keeping the adapters out of __all__."""
+    import subprocess
+    import sys
+    import textwrap
+
+    program = textwrap.dedent(
+        """
+        import sys
+        exec("from gaze import *")
+        assert "torch" not in sys.modules, "star import pulled in torch"
+        print("ok")
+        """
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no external input
+        [sys.executable, "-c", program], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
 
 
 def test_getattr_raises_attribute_error_for_unknown() -> None:
@@ -82,3 +107,24 @@ def test_getattr_raises_attribute_error_for_unknown() -> None:
 
     with pytest.raises(AttributeError, match="has no attribute"):
         _ = gaze.NoSuchAdapter
+
+
+def test_unknown_gaze_models_attribute_raises_attribute_error() -> None:
+    """The lazy __getattr__ must still reject names it does not provide."""
+    import pytest
+
+    from gaze import models
+
+    with pytest.raises(AttributeError, match="has no attribute 'NonExistent'"):
+        _ = models.NonExistent
+
+
+def test_gaze_models_lazy_import_returns_the_real_adapters() -> None:
+    """Accessing the names triggers the deferred import of the torch-backed module."""
+    import contextlib
+
+    from gaze import models
+
+    with contextlib.suppress(ImportError):
+        assert models.HuggingFaceAdapter.__name__ == "HuggingFaceAdapter"
+        assert models.HuggingFaceVLMAdapter.__name__ == "HuggingFaceVLMAdapter"

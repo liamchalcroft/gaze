@@ -237,9 +237,10 @@ class TestDownloadSsrfValidation:
             await mgr.download_image(result)
 
     @pytest.mark.asyncio
-    async def test_valid_https_url_proceeds_to_download(self, tmp_path: Path) -> None:
+    async def test_valid_https_url_proceeds_to_download(
+        self, tmp_path: Path, download_route, make_mock_http_client
+    ) -> None:
         """A valid HTTPS URL should pass validation and attempt download."""
-        from unittest.mock import MagicMock
         from unittest.mock import patch
 
         mgr = MedicalImageSearchManager(download_dir=tmp_path)
@@ -251,41 +252,23 @@ class TestDownloadSsrfValidation:
             source="openi",
         )
 
-        # Valid JPEG magic bytes + padding
-        image_bytes = b"\xff\xd8\xff" + b"\x00" * 100
-
-        # Create mock with streaming support (iter_chunked)
-        mock_content = MagicMock()
-
-        async def _iter_chunked(_chunk_size: int):
-            yield image_bytes
-
-        mock_content.iter_chunked = _iter_chunked
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {"Content-Type": "image/jpeg"}
-        mock_resp.content = mock_content
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = lambda *_a, **_kw: mock_resp
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        client = make_mock_http_client(download_route())
+        with patch.object(
+            mgr, "_get_download_session", new_callable=AsyncMock, return_value=client
+        ):
             filepath = await mgr.download_image(result)
             assert filepath.exists()
+        await client.aclose()
 
     @pytest.mark.asyncio
     async def test_download_validation_runs_via_to_thread(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        download_route,
+        make_mock_http_client,
     ) -> None:
         """URL validation should be offloaded so DNS resolution can't block the loop."""
-        from unittest.mock import MagicMock
 
         import gaze.retrieval.image_search as image_search_module
 
@@ -310,26 +293,10 @@ class TestDownloadSsrfValidation:
         monkeypatch.setattr(image_search_module, "_validate_download_url", _fake_validate)
         monkeypatch.setattr(image_search_module.asyncio, "to_thread", _tracking_to_thread)
 
-        image_bytes = b"\xff\xd8\xff" + b"\x00" * 100
-        mock_content = MagicMock()
-
-        async def _iter_chunked(_chunk_size: int):
-            yield image_bytes
-
-        mock_content.iter_chunked = _iter_chunked
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.headers = {"Content-Type": "image/jpeg"}
-        mock_resp.content = mock_content
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = lambda *_a, **_kw: mock_resp
+        client = make_mock_http_client(download_route())
 
         async def _fake_get_download_session():
-            return mock_session
+            return client
 
         monkeypatch.setattr(mgr, "_get_download_session", _fake_get_download_session)
 

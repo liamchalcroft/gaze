@@ -11,7 +11,6 @@ from typing import Generic
 from typing import TypeVar
 
 from beartype import beartype
-from loguru import logger
 
 from gaze.config import CacheConfig
 from gaze.config import get_config
@@ -83,8 +82,6 @@ class TTLCache(Generic[T]):
 
             timestamp, value = self._cache[key]
             if time.time() - timestamp > self._config.cache_duration_seconds:
-                # Expired - remove and return None
-                self._close_value(key, value, "expired")
                 del self._cache[key]
                 self._misses += 1
                 return None
@@ -107,9 +104,8 @@ class TTLCache(Generic[T]):
         with self._lock:
             if key not in self._cache:
                 return False
-            timestamp, value = self._cache[key]
+            timestamp, _ = self._cache[key]
             if time.time() - timestamp > self._config.cache_duration_seconds:
-                self._close_value(key, value, "expired")
                 del self._cache[key]
                 return False
             return True
@@ -119,7 +115,6 @@ class TTLCache(Generic[T]):
         """Store a value in the cache.
 
         Automatically triggers eviction if cache is over size limit.
-        Replacing an existing key closes the old value before overwriting it.
 
         Args:
             key: Cache key
@@ -128,17 +123,11 @@ class TTLCache(Generic[T]):
         with self._lock:
             # Evict before insert so the cache never exceeds max_cache_size
             self._evict_stale()
-            if key in self._cache:
-                _, existing_value = self._cache[key]
-                if existing_value is not value:
-                    self._close_value(key, existing_value, "replaced")
             self._cache[key] = (time.time(), value)
 
     @beartype
     def delete(self, key: str) -> bool:
         """Remove a key from the cache.
-
-        Calls close() on the cached value if it supports it.
 
         Args:
             key: Cache key to remove
@@ -148,36 +137,18 @@ class TTLCache(Generic[T]):
         """
         with self._lock:
             if key in self._cache:
-                _, value = self._cache[key]
-                self._close_value(key, value, "deleted")
                 del self._cache[key]
                 return True
             return False
 
-    def _close_value(self, key: str, value: object, reason: str) -> None:
-        """Close a cached value if it exposes a callable ``close``.
-
-        Duck-typed rather than an ``isinstance`` Protocol check: the latter is
-        not version-stable for test doubles (Python 3.12 stopped ``Mock``
-        instances from satisfying ``runtime_checkable`` protocols).
-        """
-        close = getattr(value, "close", None)
-        if callable(close):
-            try:
-                close()
-            except OSError as e:
-                logger.warning(f"Error closing {reason} cached value for key {key}: {e}")
-
     @beartype
     def clear(self, reset_stats: bool = False) -> None:
-        """Remove all entries from the cache with cleanup.
+        """Remove all entries from the cache.
 
         Args:
             reset_stats: If True, also reset hit/miss counters
         """
         with self._lock:
-            for key, (_, value) in self._cache.items():
-                self._close_value(key, value, "cached")
             self._cache.clear()
             if reset_stats:
                 self._hits = 0
@@ -198,15 +169,12 @@ class TTLCache(Generic[T]):
         """
         current_time = time.time()
 
-        # First, remove expired entries with cleanup
         expired_keys = [
             key
             for key, (timestamp, _) in self._cache.items()
             if current_time - timestamp > self._config.cache_duration_seconds
         ]
         for key in expired_keys:
-            _, value = self._cache[key]
-            self._close_value(key, value, "expired")
             del self._cache[key]
 
         # If at or over limit, evict oldest entries to make room
@@ -219,8 +187,6 @@ class TTLCache(Generic[T]):
             keys_to_remove = sorted_keys[: len(self._cache) - target_size]
 
             for key in keys_to_remove:
-                _, value = self._cache[key]
-                self._close_value(key, value, "evicted")
                 del self._cache[key]
 
     @property

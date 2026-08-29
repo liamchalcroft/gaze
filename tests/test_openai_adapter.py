@@ -532,3 +532,78 @@ class TestOpenAIAdapterTimeout:
         assert timeout.read == 90.0
         assert timeout.write == 10.0
         assert timeout.pool == 30.0
+
+
+class TestRetryPolicy:
+    """Transient failures must be retried; permanent ones must not.
+
+    The client is built with ``max_retries=0`` so the SDK does nothing on its
+    own. Omitting connection errors and 5xx from the tenacity predicate meant a
+    single 503 or DNS blip aborted an entire multi-turn run.
+    """
+
+    @pytest.mark.parametrize(
+        "error_name",
+        ["APITimeoutError", "APIConnectionError", "InternalServerError", "RateLimitError"],
+    )
+    def test_transient_errors_are_retried(self, error_name: str) -> None:
+        import openai
+
+        from gaze.models.openai_adapter import _RETRYABLE_API_ERRORS
+
+        assert issubclass(getattr(openai, error_name), _RETRYABLE_API_ERRORS)
+
+    @pytest.mark.parametrize(
+        "error_name",
+        ["BadRequestError", "AuthenticationError", "NotFoundError", "PermissionDeniedError"],
+    )
+    def test_permanent_errors_are_not_retried(self, error_name: str) -> None:
+        import openai
+
+        from gaze.models.openai_adapter import _RETRYABLE_API_ERRORS
+
+        assert not issubclass(getattr(openai, error_name), _RETRYABLE_API_ERRORS)
+
+
+class TestRetryAfterHonoured:
+    """A 429 carries the server's own guidance about when to come back."""
+
+    @staticmethod
+    def _retry_state(exception: Exception) -> Any:
+        class _Outcome:
+            def exception(self) -> Exception:
+                return exception
+
+        class _State:
+            outcome = _Outcome()
+            attempt_number = 1
+            idle_for = 0.0
+            next_action = None
+
+        return _State()
+
+    def _wait_for(self, status: int, headers: dict[str, str] | None) -> float:
+        import httpx
+        import openai
+
+        from gaze.models.openai_adapter import _wait_for_retry
+
+        request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        response = httpx.Response(status, headers=headers or {}, request=request)
+        error_cls = openai.RateLimitError if status == 429 else openai.InternalServerError
+        error = error_cls("boom", response=response, body=None)
+        return _wait_for_retry(self._retry_state(error))
+
+    def test_retry_after_seconds_is_used(self) -> None:
+        assert self._wait_for(429, {"retry-after": "7"}) == 7.0
+
+    def test_missing_header_falls_back_to_exponential_backoff(self) -> None:
+        assert self._wait_for(500, None) == 1.0
+
+    def test_unparseable_header_falls_back(self) -> None:
+        """An HTTP-date Retry-After is not parsed; it must not raise."""
+        assert self._wait_for(429, {"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}) == 1.0
+
+    def test_absurd_header_is_clamped(self) -> None:
+        """A mistaken or hostile header must not stall the run for hours."""
+        assert self._wait_for(429, {"retry-after": "99999"}) == 60.0

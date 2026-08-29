@@ -22,9 +22,9 @@ JSONL line schema (grounded in the consuming code):
       "boxes": [[x1, y1, x2, y2], ...]                 # rewards.py _extract_ref_boxes line 357
     }
 
-``image_path`` is an absolute filesystem path; the environment prepends
-``file://`` itself when building the user message (``__init__.py`` line 266),
-so the path here must NOT carry a scheme.
+``image_path`` is an absolute filesystem path. The environment reads the file
+and inlines it as a base64 ``data:`` URL when building the user message, so the
+path here must NOT carry a scheme.
 
 NOVA only ships a single pool of cases (no official train/val/test split in the
 parquet), so by default the whole dataset is written to the requested split
