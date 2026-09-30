@@ -14,6 +14,8 @@
 
 A radiologist rarely reads a scan in a single glance: they zoom, adjust the window, compare regions, and consult the literature before writing a report. A vision-language model, by contrast, reads an image once and produces text in a single forward pass. GAZE closes that gap by giving a VLM viewer-level tools (zoom, windowing, contrast, edge detection) and literature retrieval (PubMed, Open-i), then running it as a multi-turn loop with schema-validated outputs and full tool-call traces for auditability. It applies to any visual reasoning task, not only medical imaging.
 
+The [GAZE research page](https://liamchalcroft.com/publication/2026-gaze-grounded-agentic-zero-shot-evaluation/) includes the paper abstract, method figure and publication links.
+
 ## Features
 
 - **Multi-turn agentic loop** -- JSON-structured tool-calling with configurable turn limits, schema validation, and automatic error recovery
